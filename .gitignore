@@ -1,0 +1,39 @@
+# Ignore build folders
+ESP_Communication_espressif/build/
+ESP_Communication_espressif/csi_recv/build/
+ESP_Communication_espressif/csi_send/build/
+
+# Binaries
+*.bin
+*.elf
+*.map
+*.hex
+
+# Temporary files
+*.ninja_log
+*.ninja_deps
+*.ninja_command
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# IDE / editor files
+.vscode/
+*.code-workspace
+*.pio/
+
+# OS generated
+.DS_Store
+Thumbs.db
+
+# Large media and docs
+*.mp4
+*.avi
+*.mov
+*.jpg
+*.png
+*.jpeg
+*.gif
+*.docx
+*.pdf

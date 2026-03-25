@@ -1,0 +1,271 @@
+/*
+ * SPDX-FileCopyrightText: 2025-2026 Espressif Systems (Shanghai) CO LTD
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Modified for Seeed Studio XIAO ESP32-C6:
+ * - External antenna init (GPIO3/GPIO14)
+ * - ESP-NOW send callback
+ * - Auto-reinit on consecutive failures
+ * - Configurable channel & frequency via Kconfig
+ * - Task Watchdog Timer (TWDT)
+ */
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#include "nvs_flash.h"
+#include "esp_mac.h"
+#include "esp_log.h"
+#include "esp_wifi.h"
+#include "esp_netif.h"
+#include "esp_now.h"
+#include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_task_wdt.h"           // ← νέο
+
+/* ── Channel & frequency ────────────────────────────────────────────────── */
+#ifndef CONFIG_LESS_INTERFERENCE_CHANNEL
+#define CONFIG_LESS_INTERFERENCE_CHANNEL   11
+#endif
+
+#ifndef CONFIG_SEND_FREQUENCY
+#define CONFIG_SEND_FREQUENCY              100
+#endif
+
+/* ── Watchdog timeout ───────────────────────────────────────────────────── */
+#define CONFIG_WDT_TIMEOUT_MS   10000   // 10 δευτερόλεπτα
+
+/* ── Band / bandwidth ───────────────────────────────────────────────────── */
+#if CONFIG_IDF_TARGET_ESP32C5 || CONFIG_IDF_TARGET_ESP32C61 || \
+    (CONFIG_IDF_TARGET_ESP32C6 && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 4, 0))
+#define CONFIG_WIFI_BAND_MODE       WIFI_BAND_MODE_2G_ONLY
+#define CONFIG_WIFI_2G_BANDWIDTHS   WIFI_BW_HT40
+#define CONFIG_WIFI_5G_BANDWIDTHS   WIFI_BW_HT40
+#define CONFIG_WIFI_2G_PROTOCOL     WIFI_PROTOCOL_11N
+#define CONFIG_WIFI_5G_PROTOCOL     WIFI_PROTOCOL_11N
+#else
+#define CONFIG_WIFI_BANDWIDTH       WIFI_BW_HT40
+#endif
+
+#define CONFIG_ESP_NOW_PHYMODE      WIFI_PHY_MODE_HT40
+#define CONFIG_ESP_NOW_RATE         WIFI_PHY_RATE_MCS0_LGI
+
+/* ── XIAO ESP32-C6 antenna GPIOs ────────────────────────────────────────── */
+#define WIFI_ENABLE     GPIO_NUM_3    // LOW  = RF switch enabled
+#define WIFI_ANT_CONFIG GPIO_NUM_14   // LOW  = internal, HIGH = external
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+#define ESP_IF_WIFI_STA ESP_MAC_WIFI_STA
+#endif
+
+static const uint8_t CONFIG_CSI_SEND_MAC[] = {0x1a, 0x00, 0x00, 0x00, 0x00, 0x00};
+static const char *TAG = "csi_send";
+
+/* ════════════════════════════════════════════════════════════════════════
+   1. ANTENNA INIT
+   ════════════════════════════════════════════════════════════════════════ */
+static void antenna_init()
+{
+    gpio_set_direction(WIFI_ENABLE, GPIO_MODE_OUTPUT);
+    gpio_set_level(WIFI_ENABLE, 0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    gpio_set_direction(WIFI_ANT_CONFIG, GPIO_MODE_OUTPUT);
+    gpio_set_level(WIFI_ANT_CONFIG, 1);
+
+    ESP_LOGI(TAG, "External antenna enabled (GPIO3=LOW, GPIO14=HIGH)");
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   2. WIFI INIT
+   ════════════════════════════════════════════════════════════════════════ */
+static void wifi_init()
+{
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(esp_netif_init());
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+
+#if CONFIG_IDF_TARGET_ESP32C5
+    ESP_ERROR_CHECK(esp_wifi_start());
+    esp_wifi_set_band_mode(CONFIG_WIFI_BAND_MODE);
+    wifi_protocols_t protocols = {
+        .ghz_2g = CONFIG_WIFI_2G_PROTOCOL,
+        .ghz_5g = CONFIG_WIFI_5G_PROTOCOL
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_protocols(ESP_IF_WIFI_STA, &protocols));
+    wifi_bandwidths_t bandwidth = {
+        .ghz_2g = CONFIG_WIFI_2G_BANDWIDTHS,
+        .ghz_5g = CONFIG_WIFI_5G_BANDWIDTHS
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_bandwidths(ESP_IF_WIFI_STA, &bandwidth));
+
+#elif (CONFIG_IDF_TARGET_ESP32C6 && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 4, 0)) || \
+       CONFIG_IDF_TARGET_ESP32C61
+    ESP_ERROR_CHECK(esp_wifi_start());
+    esp_wifi_set_band_mode(CONFIG_WIFI_BAND_MODE);
+    wifi_protocols_t protocols = {
+        .ghz_2g = CONFIG_WIFI_2G_PROTOCOL,
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_protocols(ESP_IF_WIFI_STA, &protocols));
+    wifi_bandwidths_t bandwidth = {
+        .ghz_2g = CONFIG_WIFI_2G_BANDWIDTHS,
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_bandwidths(ESP_IF_WIFI_STA, &bandwidth));
+
+#else
+    ESP_ERROR_CHECK(esp_wifi_set_bandwidth(ESP_IF_WIFI_STA, CONFIG_WIFI_BANDWIDTH));
+    ESP_ERROR_CHECK(esp_wifi_start());
+#endif
+
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+
+#if CONFIG_IDF_TARGET_ESP32C5
+    if ((CONFIG_WIFI_BAND_MODE == WIFI_BAND_MODE_2G_ONLY &&
+         CONFIG_WIFI_2G_BANDWIDTHS == WIFI_BW_HT20) ||
+        (CONFIG_WIFI_BAND_MODE == WIFI_BAND_MODE_5G_ONLY &&
+         CONFIG_WIFI_5G_BANDWIDTHS == WIFI_BW_HT20)) {
+        ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_LESS_INTERFERENCE_CHANNEL,
+                                             WIFI_SECOND_CHAN_NONE));
+    } else {
+        ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_LESS_INTERFERENCE_CHANNEL,
+                                             WIFI_SECOND_CHAN_BELOW));
+    }
+#elif (CONFIG_IDF_TARGET_ESP32C6 && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 4, 0)) || \
+       CONFIG_IDF_TARGET_ESP32C61
+    if (CONFIG_WIFI_BAND_MODE == WIFI_BAND_MODE_2G_ONLY &&
+        CONFIG_WIFI_2G_BANDWIDTHS == WIFI_BW_HT20) {
+        ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_LESS_INTERFERENCE_CHANNEL,
+                                             WIFI_SECOND_CHAN_NONE));
+    } else {
+        ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_LESS_INTERFERENCE_CHANNEL,
+                                             WIFI_SECOND_CHAN_BELOW));
+    }
+#else
+    if (CONFIG_WIFI_BANDWIDTH == WIFI_BW_HT20) {
+        ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_LESS_INTERFERENCE_CHANNEL,
+                                             WIFI_SECOND_CHAN_NONE));
+    } else {
+        ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_LESS_INTERFERENCE_CHANNEL,
+                                             WIFI_SECOND_CHAN_BELOW));
+    }
+#endif
+
+    ESP_ERROR_CHECK(esp_wifi_set_mac(WIFI_IF_STA, CONFIG_CSI_SEND_MAC));
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   3. ESP-NOW SEND CALLBACK
+   ════════════════════════════════════════════════════════════════════════ */
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+static void esp_now_send_cb(const esp_now_send_info_t *send_info, esp_now_send_status_t status)
+#else
+static void esp_now_send_cb(const uint8_t *mac, esp_now_send_status_t status)
+#endif
+{
+    if (status != ESP_NOW_SEND_SUCCESS) {
+        ESP_LOGW(TAG, "Packet NOT delivered");
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   4. ESP-NOW INIT
+   ════════════════════════════════════════════════════════════════════════ */
+static void wifi_esp_now_init(esp_now_peer_info_t peer)
+{
+    ESP_ERROR_CHECK(esp_now_init());
+    ESP_ERROR_CHECK(esp_now_register_send_cb(esp_now_send_cb));
+    ESP_ERROR_CHECK(esp_now_set_pmk((uint8_t *)"pmk1234567890123"));
+    ESP_ERROR_CHECK(esp_now_add_peer(&peer));
+
+    esp_now_rate_config_t rate_config = {
+        .phymode = CONFIG_ESP_NOW_PHYMODE,
+        .rate    = CONFIG_ESP_NOW_RATE,
+        .ersu    = false,
+        .dcm     = false
+    };
+    ESP_ERROR_CHECK(esp_now_set_peer_rate_config(peer.peer_addr, &rate_config));
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   5. WATCHDOG INIT
+   ════════════════════════════════════════════════════════════════════════ */
+static void watchdog_init()
+{
+    // Αφού το ESP-IDF το έχει ήδη κάνει init, του λέμε απλά να παρακολουθεί το main_task μας
+    esp_err_t err = esp_task_wdt_add(NULL); 
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Watchdog successfully attached to main task");
+    } else {
+        ESP_LOGW(TAG, "Failed to attach Watchdog: %s", esp_err_to_name(err));
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   6. MAIN
+   ════════════════════════════════════════════════════════════════════════ */
+void app_main()
+{
+    /* NVS */
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
+        ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    /* Σειρά αρχικοποίησης — η σειρά είναι κρίσιμη */
+    antenna_init();       // 1. κεραία πρώτα
+    wifi_init();          // 2. WiFi stack
+                          
+    esp_now_peer_info_t peer = {
+        .channel   = CONFIG_LESS_INTERFERENCE_CHANNEL,
+        .ifidx     = WIFI_IF_STA,
+        .encrypt   = false,
+        .peer_addr = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+    };
+    wifi_esp_now_init(peer);  // 3. ESP-NOW
+    watchdog_init();          // 4. watchdog τελευταίο
+
+    ESP_LOGI(TAG, "=========== CSI SEND ===========");
+    ESP_LOGI(TAG, "Channel: %d | Freq: %d Hz | MAC: " MACSTR,
+             CONFIG_LESS_INTERFERENCE_CHANNEL,
+             CONFIG_SEND_FREQUENCY,
+             MAC2STR(CONFIG_CSI_SEND_MAC));
+
+    /* Send loop */
+    uint32_t fail_count = 0;
+    for (uint32_t count = 0; ; ++count) {
+
+        esp_task_wdt_reset();   // ← "είμαι ζωντανός" κάθε iteration
+
+        ret = esp_now_send(peer.peer_addr,
+                           (const uint8_t *)&count,
+                           sizeof(count));
+
+        if (ret != ESP_OK) {
+            fail_count++;
+            ESP_LOGW(TAG, "Queue error [%lu/%lu]: %s",
+                     fail_count, count, esp_err_to_name(ret));
+
+            if (fail_count > 20) {
+                ESP_LOGE(TAG, "Too many errors — reinit ESP-NOW");
+                esp_now_deinit();
+                vTaskDelay(pdMS_TO_TICKS(500));
+                wifi_esp_now_init(peer);
+                fail_count = 0;
+            }
+        } else {
+            fail_count = 0;
+        }
+
+        usleep(1000 * 1000 / CONFIG_SEND_FREQUENCY);
+    }
+}
