@@ -1,15 +1,13 @@
 /*
- * SPDX-FileCopyrightText: 2025-2026 Espressif Systems (Shanghai) CO LTD
- * SPDX-License-Identifier: Apache-2.0
- *
  * ESP32-C6 Production Receiver (Thesis Grade)
  * Features: FreeRTOS Queue, AGC Lock (FORCE_GAIN), Magic Header Parser, 
- * Queue Overflow Metrics, NVS Protection, HT40 Wi-Fi 4 Init Fix
+ * Queue Overflow Metrics (Atomic/RISC-V), NVS Protection, HT40 Wi-Fi 4 Init Fix
  */
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdatomic.h> // <--- Lock-Free Race Condition Handling
 
 #include "esp_system.h"
 #include "nvs_flash.h"
@@ -56,7 +54,9 @@ typedef struct {
 } csi_queue_item_t;
 
 static QueueHandle_t s_csi_queue = NULL;
-static uint32_t s_drop_count = 0; // Μετρητής χαμένων πακέτων λόγω Queue
+
+/* ✅ ATOMIC DROPPED FRAMES COUNTER (RISC-V RV32IMAC 'A' Extension) */
+static atomic_uint s_drop_count = 0;
 
 /* ── Αρχικοποιήσεις ─────────────────────────────────────────────────────── */
 static void antenna_init(void) {
@@ -167,9 +167,9 @@ static void wifi_csi_rx_cb(void *ctx, wifi_csi_info_t *info) {
     item.len = (info->len <= CSI_BUF_MAX_LEN) ? info->len : CSI_BUF_MAX_LEN;
     memcpy(item.buf, info->buf, item.len);
 
-    /* ✅ NON-BLOCKING QUEUE PUSH ME OVERFLOW TRACKING */
+    /* ✅ NON-BLOCKING QUEUE PUSH ΜΕ ATOMIC OVERFLOW TRACKING */
     if (xQueueSend(s_csi_queue, &item, 0) != pdTRUE) {
-        s_drop_count++; 
+        atomic_fetch_add(&s_drop_count, 1); 
     }
 }
 
@@ -181,10 +181,10 @@ static void csi_print_task(void *arg) {
     while (true) {
         if (xQueueReceive(s_csi_queue, &item, portMAX_DELAY) != pdTRUE) continue;
 
-        /* ✅ Queue Overflow Warning Logging */
-        if (s_drop_count > 0) {
-            ESP_LOGW(TAG, "WARNING: %lu CSI frames dropped! (UART Bottleneck)", (unsigned long)s_drop_count);
-            s_drop_count = 0;
+        /* ✅ Queue Overflow Warning Logging (Lock-Free) */
+        unsigned int drops = atomic_exchange(&s_drop_count, 0);
+        if (drops > 0) {
+            ESP_LOGW(TAG, "WARNING: %u CSI frames dropped! (UART Bottleneck)", drops);
         }
 
         if (!s_header_printed) {
@@ -246,7 +246,8 @@ void app_main(void) {
     ESP_ERROR_CHECK(ret);
 
     s_csi_queue = xQueueCreate(CSI_QUEUE_SIZE, sizeof(csi_queue_item_t));
-    xTaskCreate(csi_print_task, "csi_print", 4096, NULL, 5, NULL);
+    /* ✅ ΑΥΞΗΜΕΝΟ STACK ΣΤΑ 8192 BYTES */
+    xTaskCreate(csi_print_task, "csi_print", 8192, NULL, 5, NULL);
 
     antenna_init();
     wifi_init();

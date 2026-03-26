@@ -1,7 +1,4 @@
 /*
- * SPDX-FileCopyrightText: 2025-2026 Espressif Systems (Shanghai) CO LTD
- * SPDX-License-Identifier: Apache-2.0
- *
  * ESP32-C6 Production Sender (Thesis Grade)
  * Features: Magic Header Payload, Deterministic Timing, TX Power Lock, 
  * External Antenna, NVS Wear-out Protection, HT40 Wi-Fi 4 Init Fix
