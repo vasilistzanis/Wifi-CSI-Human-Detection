@@ -2,18 +2,16 @@
  * SPDX-FileCopyrightText: 2025-2026 Espressif Systems (Shanghai) CO LTD
  * SPDX-License-Identifier: Apache-2.0
  *
- * Modified for Seeed Studio XIAO ESP32-C6:
- * - External antenna init (GPIO3/GPIO14)
- * - Task Watchdog Timer (TWDT) με keep-alive loop
- * - Configurable channel via Kconfig
- * - ESP_LOGI → ESP_LOGD μέσα στο CSI callback (100Hz flood fix)
- * - CSI callback null-check βελτιωμένο
+ * ESP32-C6 Production Receiver (Thesis Grade)
+ * Features: FreeRTOS Queue, AGC Lock (FORCE_GAIN), Magic Header Parser, 
+ * Queue Overflow Metrics, NVS Protection, HT40 Wi-Fi 4 Init Fix
  */
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
+#include "esp_system.h"
 #include "nvs_flash.h"
 #include "esp_mac.h"
 #include "rom/ets_sys.h"
@@ -25,300 +23,194 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_task_wdt.h"
 
-/* ── Channel ────────────────────────────────────────────────────────────── */
-#ifndef CONFIG_LESS_INTERFERENCE_CHANNEL
-#define CONFIG_LESS_INTERFERENCE_CHANNEL   11
-#endif
+#define WIFI_CHANNEL               11
+#define TX_POWER_FIXED             72
+#define CSI_QUEUE_SIZE             30
+#define CONFIG_FORCE_GAIN          1    // ✅ LOCKED AGC ΓΙΑ ΣΤΑΘΕΡΟ ΡΑΝΤΑΡ
 
-/* ── Watchdog ───────────────────────────────────────────────────────────── */
-#define CONFIG_WDT_TIMEOUT_MS   10000
+#define WIFI_ENABLE                GPIO_NUM_3
+#define WIFI_ANT_CONFIG            GPIO_NUM_14
 
-/* ── Band / bandwidth ───────────────────────────────────────────────────── */
-#if CONFIG_IDF_TARGET_ESP32C5 || CONFIG_IDF_TARGET_ESP32C61 || \
-    (CONFIG_IDF_TARGET_ESP32C6 && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 4, 0))
-#define CONFIG_WIFI_BAND_MODE       WIFI_BAND_MODE_2G_ONLY
-#define CONFIG_WIFI_2G_BANDWIDTHS   WIFI_BW_HT40
-#define CONFIG_WIFI_5G_BANDWIDTHS   WIFI_BW_HT40
-#define CONFIG_WIFI_2G_PROTOCOL     WIFI_PROTOCOL_11N
-#define CONFIG_WIFI_5G_PROTOCOL     WIFI_PROTOCOL_11N
-#else
-#define CONFIG_WIFI_BANDWIDTH       WIFI_BW_HT40
-#endif
-
-#define CONFIG_ESP_NOW_PHYMODE      WIFI_PHY_MODE_HT40
-#define CONFIG_ESP_NOW_RATE         WIFI_PHY_RATE_MCS0_LGI
-#define CONFIG_FORCE_GAIN           0
-
-#if CONFIG_IDF_TARGET_ESP32C5 || CONFIG_IDF_TARGET_ESP32C61
-#define CSI_FORCE_LLTF              0
-#endif
-
-#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3 || \
-    CONFIG_IDF_TARGET_ESP32C5 || CONFIG_IDF_TARGET_ESP32C6 || \
-    CONFIG_IDF_TARGET_ESP32C61
-#define CONFIG_GAIN_CONTROL         1
-#endif
-
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
-#define ESP_IF_WIFI_STA ESP_MAC_WIFI_STA
-#endif
-
-/* ── XIAO ESP32-C6 antenna GPIOs ────────────────────────────────────────── */
-#define WIFI_ENABLE     GPIO_NUM_3
-#define WIFI_ANT_CONFIG GPIO_NUM_14
-
-static const uint8_t CONFIG_CSI_SEND_MAC[] = {0x1a, 0x00, 0x00, 0x00, 0x00, 0x00};
+static const uint8_t KNOWN_SENDER_MAC[] = {0x1a, 0x00, 0x00, 0x00, 0x00, 0x00};
 static const char *TAG = "csi_recv";
 
-/* ════════════════════════════════════════════════════════════════════════
-   1. ANTENNA INIT
-   ════════════════════════════════════════════════════════════════════════ */
-static void antenna_init()
-{
+/* ✅ MAGIC HEADER CHECK */
+#define RADAR_MAGIC_SIGNATURE 0xA1B2C3D4
+
+/* Queue Struct */
+#define CSI_BUF_MAX_LEN  256
+
+typedef struct {
+    uint32_t            rx_id;
+    uint8_t             mac[6];
+    wifi_pkt_rx_ctrl_t  rx_ctrl;
+    float               compensate_gain;
+    uint8_t             agc_gain;
+    int8_t              fft_gain;
+    int                 len;
+    bool                first_word_invalid;
+    int8_t              buf[CSI_BUF_MAX_LEN];
+} csi_queue_item_t;
+
+static QueueHandle_t s_csi_queue = NULL;
+static uint32_t s_drop_count = 0; // Μετρητής χαμένων πακέτων λόγω Queue
+
+/* ── Αρχικοποιήσεις ─────────────────────────────────────────────────────── */
+static void antenna_init(void) {
     gpio_set_direction(WIFI_ENABLE, GPIO_MODE_OUTPUT);
     gpio_set_level(WIFI_ENABLE, 0);
     vTaskDelay(pdMS_TO_TICKS(100));
-
     gpio_set_direction(WIFI_ANT_CONFIG, GPIO_MODE_OUTPUT);
     gpio_set_level(WIFI_ANT_CONFIG, 1);
-
-    ESP_LOGI(TAG, "External antenna enabled (GPIO3=LOW, GPIO14=HIGH)");
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   2. WIFI INIT
-   ════════════════════════════════════════════════════════════════════════ */
-static void wifi_init()
-{
+static void wifi_init(void) {
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(esp_netif_init());
-
+    
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-
-#if CONFIG_IDF_TARGET_ESP32C5
     ESP_ERROR_CHECK(esp_wifi_start());
-    esp_wifi_set_band_mode(CONFIG_WIFI_BAND_MODE);
+
+    /* ✅ FIX: Ενεργοποίηση πρωτοκόλλου 802.11n πριν ζητήσουμε το HT40 */
+    esp_wifi_set_band_mode(WIFI_BAND_MODE_2G_ONLY);
+    
     wifi_protocols_t protocols = {
-        .ghz_2g = CONFIG_WIFI_2G_PROTOCOL,
-        .ghz_5g = CONFIG_WIFI_5G_PROTOCOL
+        .ghz_2g = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N
     };
-    ESP_ERROR_CHECK(esp_wifi_set_protocols(ESP_IF_WIFI_STA, &protocols));
-    wifi_bandwidths_t bandwidth = {
-        .ghz_2g = CONFIG_WIFI_2G_BANDWIDTHS,
-        .ghz_5g = CONFIG_WIFI_5G_BANDWIDTHS
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_bandwidths(ESP_IF_WIFI_STA, &bandwidth));
+    ESP_ERROR_CHECK(esp_wifi_set_protocols(WIFI_IF_STA, &protocols));
 
-#elif (CONFIG_IDF_TARGET_ESP32C6 && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 4, 0)) || \
-       CONFIG_IDF_TARGET_ESP32C61
-    ESP_ERROR_CHECK(esp_wifi_start());
-    esp_wifi_set_band_mode(CONFIG_WIFI_BAND_MODE);
-    wifi_protocols_t protocols = {
-        .ghz_2g = CONFIG_WIFI_2G_PROTOCOL,
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_protocols(ESP_IF_WIFI_STA, &protocols));
-    wifi_bandwidths_t bandwidth = {
-        .ghz_2g = CONFIG_WIFI_2G_BANDWIDTHS,
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_bandwidths(ESP_IF_WIFI_STA, &bandwidth));
-
-#else
-    ESP_ERROR_CHECK(esp_wifi_set_bandwidth(ESP_IF_WIFI_STA, CONFIG_WIFI_BANDWIDTH));
-    ESP_ERROR_CHECK(esp_wifi_start());
-#endif
-
+    // Τώρα το HT40 γίνεται δεκτό χωρίς Error 0x102
+    wifi_bandwidths_t bandwidth = { .ghz_2g = WIFI_BW_HT40 };
+    ESP_ERROR_CHECK(esp_wifi_set_bandwidths(WIFI_IF_STA, &bandwidth));
+    
+    ESP_ERROR_CHECK(esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_BELOW));
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
-
-#if CONFIG_IDF_TARGET_ESP32C5
-    if ((CONFIG_WIFI_BAND_MODE == WIFI_BAND_MODE_2G_ONLY &&
-         CONFIG_WIFI_2G_BANDWIDTHS == WIFI_BW_HT20) ||
-        (CONFIG_WIFI_BAND_MODE == WIFI_BAND_MODE_5G_ONLY &&
-         CONFIG_WIFI_5G_BANDWIDTHS == WIFI_BW_HT20)) {
-        ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_LESS_INTERFERENCE_CHANNEL,
-                                             WIFI_SECOND_CHAN_NONE));
-    } else {
-        ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_LESS_INTERFERENCE_CHANNEL,
-                                             WIFI_SECOND_CHAN_BELOW));
-    }
-#elif (CONFIG_IDF_TARGET_ESP32C6 && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 4, 0)) || \
-       CONFIG_IDF_TARGET_ESP32C61
-    if (CONFIG_WIFI_BAND_MODE == WIFI_BAND_MODE_2G_ONLY &&
-        CONFIG_WIFI_2G_BANDWIDTHS == WIFI_BW_HT20) {
-        ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_LESS_INTERFERENCE_CHANNEL,
-                                             WIFI_SECOND_CHAN_NONE));
-    } else {
-        ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_LESS_INTERFERENCE_CHANNEL,
-                                             WIFI_SECOND_CHAN_BELOW));
-    }
-#else
-    if (CONFIG_WIFI_BANDWIDTH == WIFI_BW_HT20) {
-        ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_LESS_INTERFERENCE_CHANNEL,
-                                             WIFI_SECOND_CHAN_NONE));
-    } else {
-        ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_LESS_INTERFERENCE_CHANNEL,
-                                             WIFI_SECOND_CHAN_BELOW));
-    }
-#endif
-
-    ESP_ERROR_CHECK(esp_wifi_set_mac(WIFI_IF_STA, CONFIG_CSI_SEND_MAC));
+    ESP_ERROR_CHECK(esp_wifi_set_mac(WIFI_IF_STA, KNOWN_SENDER_MAC));
+    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(TX_POWER_FIXED));
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   3. ESP-NOW INIT
-   ════════════════════════════════════════════════════════════════════════ */
-static void wifi_esp_now_init(esp_now_peer_info_t peer)
-{
+static void wifi_esp_now_init(esp_now_peer_info_t peer) {
     ESP_ERROR_CHECK(esp_now_init());
     ESP_ERROR_CHECK(esp_now_set_pmk((uint8_t *)"pmk1234567890123"));
-
     esp_now_rate_config_t rate_config = {
-        .phymode = CONFIG_ESP_NOW_PHYMODE,
-        .rate    = CONFIG_ESP_NOW_RATE,
-        .ersu    = false,
-        .dcm     = false
+        .phymode = WIFI_PHY_MODE_HT40,
+        .rate    = WIFI_PHY_RATE_MCS0_LGI,
+        .ersu = false, .dcm = false
     };
     ESP_ERROR_CHECK(esp_now_add_peer(&peer));
     ESP_ERROR_CHECK(esp_now_set_peer_rate_config(peer.peer_addr, &rate_config));
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   4. CSI CALLBACK
-   ════════════════════════════════════════════════════════════════════════ */
-static void wifi_csi_rx_cb(void *ctx, wifi_csi_info_t *info)
-{
-    /* ── Null checks ── */
-    if (!info || !info->buf) {
-        ESP_LOGW(TAG, "CSI callback: invalid info or buf");
-        return;
+/* ── Callback Λήψης (PRODUCER) ──────────────────────────────────────────── */
+static void wifi_csi_rx_cb(void *ctx, wifi_csi_info_t *info) {
+    if (!info || !info->buf) return;
+
+    if (memcmp(info->mac, KNOWN_SENDER_MAC, 6) != 0) return;
+
+    /* ✅ DYNAMIC PAYLOAD PARSING & FRAME FILTERING */
+    uint32_t rx_id = 0;
+    bool is_radar_packet = false;
+
+    if (info->payload != NULL && info->payload_len >= 8) {
+        for (int i = 0; i <= info->payload_len - 8; i++) {
+            uint32_t check_magic;
+            memcpy(&check_magic, info->payload + i, sizeof(uint32_t));
+            
+            if (check_magic == RADAR_MAGIC_SIGNATURE) {
+                memcpy(&rx_id, info->payload + i + 4, sizeof(uint32_t));
+                is_radar_packet = true;
+                break;
+            }
+        }
     }
 
-    /* ── Φιλτράρισμα — μόνο από τον γνωστό sender ── */
-    if (memcmp(info->mac, CONFIG_CSI_SEND_MAC, 6)) {
-        return;
-    }
+    if (!is_radar_packet) return; // Drop Management/Noise frames silently
 
-    const wifi_pkt_rx_ctrl_t *rx_ctrl = &info->rx_ctrl;
-    static int s_count = 0;
+    /* ✅ AGC GAIN LOCK (FORCE GAIN) */
     float compensate_gain = 1.0f;
-    static uint8_t agc_gain = 0;
-    static int8_t  fft_gain = 0;
+    uint8_t agc_gain = 0;
+    int8_t fft_gain = 0;
+    static uint8_t s_agc_baseline = 0;
+    static int8_t  s_fft_baseline = 0;
+    static int s_gain_count = 0;
 
-#if CONFIG_GAIN_CONTROL
-    static uint8_t agc_gain_baseline = 0;
-    static int8_t  fft_gain_baseline = 0;
+    esp_csi_gain_ctrl_get_rx_gain(&info->rx_ctrl, &agc_gain, &fft_gain);
 
-    esp_csi_gain_ctrl_get_rx_gain(rx_ctrl, &agc_gain, &fft_gain);
-
-    if (s_count < 100) {
+    if (s_gain_count < 100) {
         esp_csi_gain_ctrl_record_rx_gain(agc_gain, fft_gain);
-    } else if (s_count == 100) {
-        esp_csi_gain_ctrl_get_rx_gain_baseline(&agc_gain_baseline, &fft_gain_baseline);
-#if CONFIG_FORCE_GAIN
-        esp_csi_gain_ctrl_set_rx_force_gain(agc_gain_baseline, fft_gain_baseline);
-        ESP_LOGD(TAG, "fft_force %d, agc_force %d", fft_gain_baseline, agc_gain_baseline);
-#endif
+        s_gain_count++;
+    } else if (s_gain_count == 100) {
+        esp_csi_gain_ctrl_get_rx_gain_baseline(&s_agc_baseline, &s_fft_baseline);
+        #if CONFIG_FORCE_GAIN
+        esp_csi_gain_ctrl_set_rx_force_gain(s_agc_baseline, s_fft_baseline);
+        #endif
+        s_gain_count++;
     }
-
     esp_csi_gain_ctrl_get_gain_compensation(&compensate_gain, agc_gain, fft_gain);
 
-    /* ⚠️ Ήταν ESP_LOGI — στα 100Hz γέμιζε το serial buffer
-       Άλλαξε σε ESP_LOGD: εμφανίζεται μόνο αν ενεργοποιήσεις
-       verbose logging με idf.py menuconfig               */
-    ESP_LOGD(TAG, "compensate_gain %.2f, agc_gain %d, fft_gain %d",
-             compensate_gain, agc_gain, fft_gain);
-#endif
+    /* Δημιουργία Queue Item */
+    csi_queue_item_t item = {
+        .rx_id = rx_id,
+        .rx_ctrl = info->rx_ctrl,
+        .compensate_gain = compensate_gain,
+        .agc_gain = agc_gain,
+        .fft_gain = fft_gain,
+        .first_word_invalid = info->first_word_invalid,
+    };
+    memcpy(item.mac, info->mac, 6);
+    item.len = (info->len <= CSI_BUF_MAX_LEN) ? info->len : CSI_BUF_MAX_LEN;
+    memcpy(item.buf, info->buf, item.len);
 
-    uint32_t rx_id = *(uint32_t *)(info->payload + 15);
-
-#if CONFIG_IDF_TARGET_ESP32C5 || CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32C61
-    if (!s_count) {
-        ESP_LOGI(TAG, "================ CSI RECV ================");
-        ets_printf("type,seq,mac,rssi,rate,noise_floor,fft_gain,agc_gain,"
-                   "channel,local_timestamp,sig_len,rx_state,len,first_word,data\n");
+    /* ✅ NON-BLOCKING QUEUE PUSH ME OVERFLOW TRACKING */
+    if (xQueueSend(s_csi_queue, &item, 0) != pdTRUE) {
+        s_drop_count++; 
     }
-
-    ets_printf("CSI_DATA,%d," MACSTR ",%d,%d,%d,%d,%d,%d,%d,%d,%d",
-               rx_id, MAC2STR(info->mac),
-               rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->noise_floor,
-               fft_gain, agc_gain, rx_ctrl->channel,
-               rx_ctrl->timestamp, rx_ctrl->sig_len, rx_ctrl->rx_state);
-#else
-    if (!s_count) {
-        ESP_LOGI(TAG, "================ CSI RECV ================");
-        ets_printf("type,id,mac,rssi,rate,sig_mode,mcs,bandwidth,smoothing,"
-                   "not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,"
-                   "ampdu_cnt,channel,secondary_channel,local_timestamp,ant,"
-                   "sig_len,rx_state,len,first_word,data\n");
-    }
-
-    ets_printf("CSI_DATA,%d," MACSTR ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
-               "%d,%d,%d,%d,%d,%d,%d,%d",
-               rx_id, MAC2STR(info->mac),
-               rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->sig_mode,
-               rx_ctrl->mcs, rx_ctrl->cwb, rx_ctrl->smoothing,
-               rx_ctrl->not_sounding, rx_ctrl->aggregation, rx_ctrl->stbc,
-               rx_ctrl->fec_coding, rx_ctrl->sgi, rx_ctrl->noise_floor,
-               rx_ctrl->ampdu_cnt, rx_ctrl->channel, rx_ctrl->secondary_channel,
-               rx_ctrl->timestamp, rx_ctrl->ant,
-               rx_ctrl->sig_len, rx_ctrl->rx_state);
-#endif
-
-#if (CONFIG_IDF_TARGET_ESP32C5 || CONFIG_IDF_TARGET_ESP32C61) && CSI_FORCE_LLTF
-    int16_t csi = ((int16_t)(((((uint16_t)info->buf[1]) << 8) |
-                    info->buf[0]) << 4) >> 4);
-    ets_printf(",%d,%d,\"[%d",
-               (info->len - 2) / 2,
-               info->first_word_invalid,
-               (int16_t)(compensate_gain * csi));
-    for (int i = 2; i < (info->len - 2); i += 2) {
-        csi = ((int16_t)(((((uint16_t)info->buf[i + 1]) << 8) |
-                info->buf[i]) << 4) >> 4);
-        ets_printf(",%d", (int16_t)(compensate_gain * csi));
-    }
-#else
-    ets_printf(",%d,%d,\"[%d",
-               info->len,
-               info->first_word_invalid,
-               (int16_t)(compensate_gain * info->buf[0]));
-    for (int i = 1; i < info->len; i++) {
-        ets_printf(",%d", (int16_t)(compensate_gain * info->buf[i]));
-    }
-#endif
-
-    ets_printf("]\"\n");
-    s_count++;
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   5. CSI INIT
-   ════════════════════════════════════════════════════════════════════════ */
-static void wifi_csi_init()
-{
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+/* ── Εκτύπωση Δεδομένων (CONSUMER TASK) ─────────────────────────────────── */
+static void csi_print_task(void *arg) {
+    static bool s_header_printed = false;
+    csi_queue_item_t item;
 
-#if CONFIG_IDF_TARGET_ESP32C5 || CONFIG_IDF_TARGET_ESP32C61
-    wifi_csi_config_t csi_config = {
-        .enable                   = true,
-        .acquire_csi_legacy       = false,
-        .acquire_csi_force_lltf   = CSI_FORCE_LLTF,
-        .acquire_csi_ht20         = true,
-        .acquire_csi_ht40         = true,
-        .acquire_csi_vht          = false,
-        .acquire_csi_su           = false,
-        .acquire_csi_mu           = false,
-        .acquire_csi_dcm          = false,
-        .acquire_csi_beamformed   = false,
-        .acquire_csi_he_stbc_mode = 2,
-        .val_scale_cfg            = 0,
-        .dump_ack_en              = false,
-        .reserved                 = false
-    };
-#elif CONFIG_IDF_TARGET_ESP32C6
+    while (true) {
+        if (xQueueReceive(s_csi_queue, &item, portMAX_DELAY) != pdTRUE) continue;
+
+        /* ✅ Queue Overflow Warning Logging */
+        if (s_drop_count > 0) {
+            ESP_LOGW(TAG, "WARNING: %lu CSI frames dropped! (UART Bottleneck)", (unsigned long)s_drop_count);
+            s_drop_count = 0;
+        }
+
+        if (!s_header_printed) {
+            ESP_LOGI(TAG, "================ CSI RECV ================");
+            ets_printf("type,seq,mac,rssi,rate,noise_floor,fft_gain,agc_gain,channel,local_timestamp,sig_len,rx_state,len,first_word,data\n");
+            s_header_printed = true;
+        }
+
+        ets_printf("CSI_DATA,%lu," MACSTR ",%d,%d,%d,%d,%d,%d,%lu,%lu,%d",
+                   (unsigned long)item.rx_id, MAC2STR(item.mac),
+                   item.rx_ctrl.rssi, item.rx_ctrl.rate, item.rx_ctrl.noise_floor,
+                   item.fft_gain, item.agc_gain, item.rx_ctrl.channel,
+                   item.rx_ctrl.timestamp, item.rx_ctrl.sig_len, item.rx_ctrl.rx_state);
+
+        ets_printf(",%d,%d,\"[%d", item.len, item.first_word_invalid,
+                   (int16_t)(item.compensate_gain * item.buf[0]));
+        for (int i = 1; i < item.len; i++) {
+            ets_printf(",%d", (int16_t)(item.compensate_gain * item.buf[i]));
+        }
+        ets_printf("]\"\n");
+    }
+}
+
+/* ── CSI Configuration ──────────────────────────────────────────────────── */
+static void wifi_csi_init(void) {
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
     wifi_csi_config_t csi_config = {
         .enable                 = true,
         .acquire_csi_legacy     = false,
@@ -333,80 +225,47 @@ static void wifi_csi_init()
         .dump_ack_en            = false,
         .reserved               = false
     };
-#else
-    wifi_csi_config_t csi_config = {
-        .lltf_en           = true,
-        .htltf_en          = true,
-        .stbc_htltf2_en    = true,
-        .ltf_merge_en      = true,
-        .channel_filter_en = true,
-        .manu_scale        = false,
-        .shift             = false,
-    };
-#endif
-
     ESP_ERROR_CHECK(esp_wifi_set_csi_config(&csi_config));
     ESP_ERROR_CHECK(esp_wifi_set_csi_rx_cb(wifi_csi_rx_cb, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_csi(true));
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   6. WATCHDOG INIT
-   ════════════════════════════════════════════════════════════════════════ */
-static void watchdog_init()
-{
-    // Αφού το ESP-IDF το έχει ήδη κάνει init, του λέμε απλά να παρακολουθεί το main_task μας
-    esp_err_t err = esp_task_wdt_add(NULL); 
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Watchdog successfully attached to main task");
-    } else {
-        ESP_LOGW(TAG, "Failed to attach Watchdog: %s", esp_err_to_name(err));
-    }
-}
-
-/* ════════════════════════════════════════════════════════════════════════
-   7. MAIN
-   ════════════════════════════════════════════════════════════════════════ */
-void app_main()
-{
-    /* NVS */
+/* ── Main ───────────────────────────────────────────────────────────────── */
+void app_main(void) {
+    /* ✅ NVS WEAR-OUT PROTECTION */
     esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
-        ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        esp_reset_reason_t reason = esp_reset_reason();
+        if (reason == ESP_RST_PANIC || reason == ESP_RST_WDT) {
+            ESP_LOGE(TAG, "Crash loop detected! Halting NVS erase to protect flash memory.");
+            while(1) { vTaskDelay(pdMS_TO_TICKS(1000)); }
+        }
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
 
-    /* Σειρά αρχικοποίησης */
-    antenna_init();       // 1. κεραία πρώτα
+    s_csi_queue = xQueueCreate(CSI_QUEUE_SIZE, sizeof(csi_queue_item_t));
+    xTaskCreate(csi_print_task, "csi_print", 4096, NULL, 5, NULL);
 
-    wifi_init();          // 2. WiFi stack
+    antenna_init();
+    wifi_init();
 
     esp_now_peer_info_t peer = {
-        .channel   = CONFIG_LESS_INTERFERENCE_CHANNEL,
+        .channel   = WIFI_CHANNEL,
         .ifidx     = WIFI_IF_STA,
         .encrypt   = false,
         .peer_addr = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
     };
-    wifi_esp_now_init(peer);  // 3. ESP-NOW
+    wifi_esp_now_init(peer);
+    wifi_csi_init();
 
-    wifi_csi_init();          // 4. CSI
+    esp_task_wdt_add(NULL);
 
-    watchdog_init();          // 5. watchdog τελευταίο
+    ESP_LOGI(TAG, "=========== CSI RECV READY ===========");
 
-    ESP_LOGI(TAG, "=========== CSI RECV ===========");
-    ESP_LOGI(TAG, "Channel: %d | Waiting for MAC: " MACSTR,
-             CONFIG_LESS_INTERFERENCE_CHANNEL,
-             MAC2STR(CONFIG_CSI_SEND_MAC));
-
-    /* ── Keep-alive loop ──────────────────────────────────────────────
-       Το recv δουλεύει με callbacks — χωρίς αυτό το loop το app_main
-       task τελειώνει και το watchdog κάνει trigger σε 10 δευτερόλεπτα.
-       Το vTaskDelay(1000ms) αφήνει το CPU ελεύθερο για τα callbacks.
-    ─────────────────────────────────────────────────────────────────── */
     while (true) {
-        esp_task_wdt_reset();           // "είμαι ζωντανός"
-        vTaskDelay(pdMS_TO_TICKS(1000)); // 1 δευτερόλεπτο sleep
+        esp_task_wdt_reset();
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
