@@ -65,6 +65,8 @@ static void antenna_init(void) {
     vTaskDelay(pdMS_TO_TICKS(100));
     gpio_set_direction(WIFI_ANT_CONFIG, GPIO_MODE_OUTPUT);
     gpio_set_level(WIFI_ANT_CONFIG, 1);
+    
+    ESP_LOGI(TAG, "External antenna enabled"); // <--- ΒΑΛΕ ΑΥΤΟ ΕΔΩ
 }
 
 static void wifi_init(void) {
