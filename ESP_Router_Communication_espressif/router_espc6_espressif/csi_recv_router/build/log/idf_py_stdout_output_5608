@@ -1,0 +1,161 @@
+Command: C:\Espressif\python_env\idf5.5_py3.11_env\Scripts\python.exe C:\Espressif\frameworks\esp-idf-v5.5.3\tools/idf_monitor.py -p COM5 -b 921600 --toolchain-prefix riscv32-esp-elf- --target esp32c6 --revision 0 --decode-panic backtrace C:\Diplomatiki_2026\WIFI CSI PROJECT\ESP_Router_Communication_espressif\router_espc6_espressif\csi_recv_router\build\csi_recv_router.elf C:\Diplomatiki_2026\WIFI CSI PROJECT\ESP_Router_Communication_espressif\router_espc6_espressif\csi_recv_router\build\bootloader\bootloader.elf --force-color -m 'C:\Espressif\python_env\idf5.5_py3.11_env\Scripts\python.exe' 'C:\Espressif\frameworks\esp-idf-v5.5.3\tools\idf.py' '-p' 'COM5'
+[0;32mI (172) esp_image: segment 3: paddr=000c7cdc vaddr=40803324 sizeESP-ROM:esp32c6-20220919[0m
+Build:Sep 19 2022
+rst:0x15 (USB_UART_HPSYS),boot:0x1e (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40804d0e
+SPIWP:0xee
+mode:DIO, clock div:2
+load:0x40875730,len:0x16f4
+load:0x4086b910,len:0xed4
+load:0x4086e610,len:0x319c
+entry 0x4086b91a
+[0;32mI (23) boot: ESP-IDF v5.5.3 2nd stage bootloader[0m
+[0;32mI (23) boot: compile time Mar 27 2026 15:59:23[0m
+[0;32mI (24) boot: chip revision: v0.2[0m
+[0;32mI (24) boot: efuse block revision: v0.3[0m
+[0;32mI (24) boot.esp32c6: SPI Speed      : 80MHz[0m
+[0;32mI (25) boot.esp32c6: SPI Mode       : DIO[0m
+[0;32mI (25) boot.esp32c6: SPI Flash Size : 2MB[0m
+[0;32mI (26) boot: Enabling RNG early entropy source...[0m
+[0;32mI (26) boot: Partition Table:[0m
+[0;32mI (26) boot: ## Label            Usage          Type ST Offset   Length[0m
+[0;32mI (27) boot:  0 nvs              WiFi data        01 02 00009000 00006000[0m
+[0;32mI (28) boot:  1 phy_init         RF data          01 01 0000f000 00001000[0m
+[0;32mI (28) boot:  2 factory          factory app      00 00 00010000 00100000[0m
+[0;32mI (29) boot: End of partition table[0m
+[0;32mI (30) esp_image: segment 0: paddr=00010020 vaddr=42098020 size=1cccch (117964) map[0m
+[0;32mI (52) esp_image: segment 1: paddr=0002ccf4 vaddr=40800000 size=03324h ( 13092) load[0m
+[0;32mI (56) esp_image: segment 2: paddr=00030020 vaddr=42000020 size=97cb4h (621748) map[0m
+[0;32mI (172) esp_image: segment 3: paddr=000c7cdc vaddr=40803324 size=17430h ( 95280) load[0m
+[0;32mI (193) esp_image: segment 4: paddr=000df114 vaddr=4081a760 size=03954h ( 14676) load[0m
+[0;32mI (203) boot: Loaded app from partition at offset 0x10000[0m
+[0;32mI (203) boot: Disabling RNG early entropy source...[0m
+[0;32mI (204) cpu_start: Unicore app[0m
+[0;32mI (213) cpu_start: GPIO 17 and 16 are used as console UART I/O pins[0m
+[0;32mI (213) cpu_start: Pro cpu start user code[0m
+[0;32mI (213) cpu_start: cpu freq: 160000000 Hz[0m
+[0;32mI (214) app_init: Application information:[0m
+[0;32mI (214) app_init: Project name:     csi_recv_router[0m
+[0;32mI (214) app_init: App version:      1078c41-dirty[0m
+[0;32mI (215) app_init: Compile time:     Mar 27 2026 15:59:07[0m
+[0;32mI (215) app_init: ELF file SHA256:  1803af64e...[0m
+[0;32mI (216) app_init: ESP-IDF:          v5.5.3[0m
+[0;32mI (216) efuse_init: Min chip rev:     v0.0[0m
+[0;32mI (217) efuse_init: Max chip rev:     v0.99 [0m
+[0;32mI (217) efuse_init: Chip rev:         v0.2[0m
+[0;32mI (218) heap_init: Initializing. RAM available for dynamic allocation:[0m
+[0;32mI (219) heap_init: At 40823600 len 00059010 (356 KiB): RAM[0m
+[0;32mI (219) heap_init: At 4087C610 len 00002F54 (11 KiB): RAM[0m
+[0;32mI (220) heap_init: At 50000000 len 00003FE8 (15 KiB): RTCRAM[0m
+[0;32mI (221) spi_flash: detected chip: generic[0m
+[0;32mI (221) spi_flash: flash io: dio[0m
+[0;33mW (222) spi_flash: Detected size(4096k) larger than the size in the binary image header(2048k). Using the size in the binary image header.[0m
+[0;32mI (223) sleep_gpio: Configure to isolate all GPIO pins in sleep state[0m
+[0;32mI (224) sleep_gpio: Enable automatic switching of GPIO sleep configuration[0m
+[0;32mI (226) main_task: Started on CPU0[0m
+[0;32mI (226) main_task: Calling app_main()[0m
+[0;32mI (335) csi_router_exp: External antenna enabled[0m
+[0;32mI (336) example_connect: Start example_connect.[0m
+[0;32mI (336) pp: pp rom version: 5b8dcfa[0m
+[0;32mI (336) net80211: net80211 rom version: 5b8dcfa[0m
+[0;32mI (338) wifi:wifi driver task: 40830440, prio:23, stack:6656, core=0[0m
+[0;32mI (344) wifi:wifi firmware version: 4df78f2[0m
+[0;32mI (344) wifi:wifi certification version: v7.0[0m
+[0;32mI (344) wifi:config NVS flash: enabled[0m
+[0;32mI (344) wifi:config nano formatting: disabled[0m
+[0;32mI (345) wifi:mac_version:HAL_MAC_ESP32AX_761,ut_version:N, band mode:0x1[0m
+[0;32mI (346) wifi:Init data frame dynamic rx buffer num: 128[0m
+[0;32mI (346) wifi:Init static rx mgmt buffer num: 5[0m
+[0;32mI (347) wifi:Init management short buffer num: 32[0m
+[0;32mI (347) wifi:Init dynamic tx buffer num: 32[0m
+[0;32mI (348) wifi:Init static tx FG buffer num: 2[0m
+[0;32mI (348) wifi:Init static rx buffer size: 2212 (rxctrl:92, csi:512)[0m
+[0;32mI (349) wifi:Init static rx buffer num: 10[0m
+[0;32mI (349) wifi:Init dynamic rx buffer num: 128[0m
+[0;32mI (350) wifi_init: accept mbox: 6[0m
+[0;32mI (351) wifi_init: tcpip mbox: 32[0m
+[0;32mI (351) wifi_init: udp mbox: 6[0m
+[0;32mI (351) wifi_init: tcp mbox: 6[0m
+[0;32mI (351) wifi_init: tcp tx win: 5760[0m
+[0;32mI (352) wifi_init: tcp rx win: 5760[0m
+[0;32mI (352) wifi_init: tcp mss: 1440[0m
+[0;32mI (352) wifi_init: WiFi IRAM OP enabled[0m
+[0;32mI (353) wifi_init: WiFi RX IRAM OP enabled[0m
+[0;32mI (353) wifi_init: WiFi SLP IRAM OP enabled[0m
+[0;32mI (355) phy_init: phy_version 343,b513b46,Nov 14 2025,16:34:12[0m
+[0;33mW (430) wifi:ACK_TAB0   :0x   90a0b, QAM16:0x9 (24Mbps), QPSK:0xa (12Mbps), BPSK:0xb (6Mbps)[0m
+[0;33mW (431) wifi:CTS_TAB0   :0x   90a0b, QAM16:0x9 (24Mbps), QPSK:0xa (12Mbps), BPSK:0xb (6Mbps)[0m
+[0;33mW (432) wifi:(agc)0x600a7128:0xd2199a80, min.avgNF:0xce->0xd2(dB), RCalCount:0x198, min.RRssi:0xa80(-88.00)[0m
+[0;32mI (433) wifi:11ax coex: WDEVAX_PTI0(0x55777555), WDEVAX_PTI1(0x00003377).[0m
+
+[0;32mI (434) wifi:mode : sta (b4:3a:45:8a:3e:20)[0m
+[0;32mI (434) wifi:enable tsf[0m
+[0;32mI (436) example_connect: Connecting to Huawei_3wVqNU...[0m
+[0;33mW (436) wifi:Password length matches WPA2 standards, authmode threshold changes from OPEN to WPA2[0m
+[0;32mI (438) example_connect: Waiting for IP(s)[0m
+[0;32mI (445) wifi:(he)max.RxAMPDULenExponentExtension:3, max.RxAMPDUpre-EOFpaddingBytes:8388607(0x7fffff)[0m
+[0;32mI (445) wifi:(mac)omc_ul_mu_data_disable_rx:1[0m
+[0;32mI (445) wifi:(phy)ppe_thresholds_present:0, nominal_packet_padding:2[0m
+[0;32mI (446) wifi:(phy)dcm tx(constellation:1, nss:0), dcm rx(constellation:1, nss:0)[0m
+[0;32mI (447) wifi:(phy)rx_mcs_map:0xfffa, tx_mcs_map:0xfffa, stbc_tx:1, bfmer(su:1, mu:1), ldpc:1, max_rate:172[0m
+[0;32mI (448) wifi:(opr)len:7, TWT Required:0, VHT Opr Info Present:0, 6GHz Opr Info Present:0, Co-Hosted BSS:0(max_indicator:0), Basic MCS and NSS:0xfffc[0m
+[0;32mI (450) wifi:(opr)len:7, Default PE Duration:4, TXOP RTS Threshold:1022(32704 us), ER-SU-Disable:0[0m
+[0;32mI (451) wifi:(opr)len:7, BSS Color:60, disabled:0, Partial BSS Color:0[0m
+[0;32mI (452) wifi:(spr)len:3, ctrl:0x5, PSR Disallowed:1, Non-SRG OBSS PD SR Disallowed:0[0m
+[0;32mI (452) wifi:(spr)len:3, ctrl:0x5, Non-SRG Offset Present:1, SRG Info Present:0[0m
+[0;32mI (453) wifi:(spr)Non-SRG OBSS PD Max Offset:0, PD:-82(dB)[0m
+[0;32mI (454) wifi:(uora)len:2, EOCWMin:2, EOCWMax:5[0m
+[0;32mI (2844) wifi:new:<8,0>, old:<1,0>, ap:<255,255>, sta:<8,0>, prof:1, snd_ch_cfg:0x0[0m
+[0;32mI (2845) wifi:(connect)dot11_authmode:0x3, pairwise_cipher:0x3, group_cipher:0x1[0m
+[0;32mI (2845) wifi:state: init -> auth (0xb0)[0m
+[0;32mI (2863) wifi:state: auth -> assoc (0x0)[0m
+[0;32mI (2878) wifi:(assoc)RESP, Extended Capabilities length:8, operating_mode_notification:0[0m
+[0;32mI (2878) wifi:(assoc)RESP, Extended Capabilities, MBSSID:0, TWT Responder:0, OBSS Narrow Bandwidth RU In OFDMA Tolerance:0[0m
+[0;32mI (2879) wifi:Extended Capabilities length:8, operating_mode_notification:1[0m
+[0;32mI (2880) wifi:(he)max.RxAMPDULenExponentExtension:3, max.RxAMPDUpre-EOFpaddingBytes:8388607(0x7fffff)[0m
+[0;32mI (2881) wifi:(mac)omc_ul_mu_data_disable_rx:1[0m
+[0;32mI (2881) wifi:(phy)ppe_thresholds_present:0, nominal_packet_padding:2[0m
+[0;32mI (2882) wifi:(phy)dcm tx(constellation:1, nss:0), dcm rx(constellation:1, nss:0)[0m
+[0;32mI (2883) wifi:(phy)rx_mcs_map:0xfffa, tx_mcs_map:0xfffa, stbc_tx:1, bfmer(su:1, mu:1), ldpc:1, max_rate:172[0m
+[0;32mI (2884) wifi:(opr)len:7, TWT Required:0, VHT Opr Info Present:0, 6GHz Opr Info Present:0, Co-Hosted BSS:0(max_indicator:0), Basic MCS and NSS:0xfffc[0m
+[0;32mI (2886) wifi:(opr)len:7, Default PE Duration:4, TXOP RTS Threshold:1022(32704 us), ER-SU-Disable:0[0m
+[0;32mI (2887) wifi:(opr)len:7, BSS Color:60, disabled:0, Partial BSS Color:0[0m
+[0;32mI (2888) wifi:state: assoc -> run (0x10)[0m
+[0;32mI (2888) wifi:(he)ppe_thresholds_present:0, nominal_packet_padding(rx:2, cfg:2)[0m
+[0;32mI (2889) wifi:(trc)phytype:CBW20-SGI, snr:34, maxRate:172, highestRateIdx:0[0m
+[0;33mW (2890) wifi:(trc)band:2G, phymode:3, highestRateIdx:0, lowestRateIdx:11, dataSchedTableSize:14[0m
+[0;32mI (2891) wifi:(trc)band:2G, rate(L-MCS7, rateIdx:1), ampdu(rate:L-MCS7, schedIdx(1, stop:8)), snr:34, ampduState:wait operational[0m
+[0;32mI (2893) wifi:ifidx:0, rssi:-61, nf:-95, phytype(0x3, CBW20-SGI), phymode(0x7, 11ax), max_rate:172, he:1, vht:0, ht:1[0m
+[0;32mI (2894) wifi:(ht)max.RxAMPDULenExponent:3(65535 bytes), MMSS:0(no restriction)[0m
+[0;32mI (2916) wifi:(extcap)mbssid:0, enhanced_mbssid_advertise:0, complete_nontxbssid_profiles:0, twt_responder: 0[0m
+[0;32mI (2916) wifi:connected with Huawei_3wVqNU, aid = 7, channel 8, BW20, bssid = 0a:02:05:50:08:88[0m
+[0;32mI (2917) wifi:security: WPA2-PSK, phy:ax, rssi:-61, cipher(pairwise:0x3, group:0x1), pmf:0, [0m
+[0;32mI (2918) wifi:pm start, type: 1, twt_start:0[0m
+
+[0;32mI (2919) wifi:pm start, type:1, aid:0x7, trans-BSSID:0a:02:05:50:08:88, BSSID[5]:0x88, mbssid(max-indicator:0, index:0), he:1[0m
+[0;32mI (2920) wifi:dp: 1, bi: 102400, li: 3, scale listen interval from 307200 us to 307200 us[0m
+[0;32mI (2921) wifi:set rx beacon pti, rx_bcn_pti: 10, bcn_timeout: 25000, mt_pti: 10, mt_time: 10000[0m
+[0;32mI (2977) wifi:AP's beacon interval = 102400 us, DTIM period = 1[0m
+[0;32mI (4335) example_connect: Got IPv6 event: Interface "example_netif_sta" address: fe80:0000:0000:0000:b63a:45ff:fe8a:3e20, type: ESP_IP6_ADDR_IS_LINK_LOCAL[0m
+[0;32mI (6060) esp_netif_handlers: example_netif_sta ip: 192.168.1.9, mask: 255.255.255.0, gw: 192.168.1.254[0m
+[0;32mI (6060) example_connect: Got IPv4 event: Interface "example_netif_sta" address: 192.168.1.9[0m
+[0;32mI (6061) example_common: Connected to example_netif_sta[0m
+[0;32mI (6061) example_common: - IPv4 address: 192.168.1.9,[0m
+[0;32mI (6062) example_common: - IPv6 address: fe80:0000:0000:0000:b63a:45ff:fe8a:3e20, type: ESP_IP6_ADDR_IS_LINK_LOCAL[0m
+[0;32mI (6066) csi_router_exp: got ip:192.168.1.9, gw: 192.168.1.254[0m
+[0;32mI (6152) csi_router_exp: ================ CSI RECV ROUTER ================[0m
+type,seq,mac,rssi,rate,noise_floor,fft_gain,agc_gain,channel,local_timestamp,sig_len,rx_state,len,first_word,data
+CSI_DATA,0,0a:02:05:50:08:88,-58,11,-95,-35,54,8,5800882,84,0,128,0,"[0,0,0,0,0,0,0,0,1,0,0,0,-13,24,-13,21,-10,18,-8,14,-3,11,2,7,7,6,13,5,19,6,24,6,28,7,31,9,33,10,34,12,33,13,32,13,29,12,26,10,22,7,18,4,15,-1,12,-6,8,-11,5,-18,3,-25,2,-30,0,0,3,-41,6,-45,7,-45,9,-46,10,-42,11,-40,11,-36,10,-31,9,-26,5,-19,1,-13,-5,-8,-11,-4,-18,0,-24,3,-30,4,-36,2,-38,0,-41,-3,-42,-7,-42,-11,-38,-15,-33,-17,-25,-16,-19,-16,-11,-13,0,0,0,0,0,0,0,0,0,0]"
+CSI_DATA,1,0a:02:05:50:08:88,-60,11,-96,-35,54,8,6005701,84,0,128,0,"[0,0,0,0,0,0,0,0,0,0,0,0,21,5,18,5,14,4,11,2,7,0,5,-4,3,-8,0,-12,-1,-15,-2,-19,-1,-22,-1,-25,-2,-26,-1,-27,0,-27,1,-25,0,-23,-1,-20,-2,-16,-3,-12,-5,-8,-8,-4,-11,0,-14,4,-18,8,-22,9,0,0,-29,13,-32,12,-33,12,-33,11,-31,9,-29,8,-26,6,-23,6,-19,4,-13,5,-8,6,-3,7,4,9,8,12,11,16,15,19,17,22,17,25,16,27,14,29,12,30,8,29,5,26,2,22,0,18,-1,13,0,1,0,0,0,0,0,0,0,0]"
+CSI_DATA,2,0a:02:05:50:08:88,-56,11,-96,-35,52,8,6620122,84,0,128,0,"[0,0,0,0,0,0,0,0,0,0,1,0,10,29,7,26,5,21,3,16,2,10,3,5,4,-2,6,-8,9,-15,11,-20,13,-24,16,-27,17,-29,18,-30,18,-30,18,-29,16,-27,14,-24,11,-21,9,-16,4,-13,-1,-9,-7,-4,-13,0,-19,5,-26,6,0,0,-36,10,-40,10,-42,11,-42,9,-41,7,-38,6,-35,5,-30,5,-25,4,-18,4,-10,4,-4,5,4,6,11,8,16,11,22,14,26,17,28,20,28,23,29,25,27,27,23,28,19,26,15,23,12,20,7,15,0,0,0,0,0,0,0,0,0,0]"
+CSI_DATA,3,0a:02:05:50:08:88,-61,11,-96,-35,58,8,6722523,142,0,128,0,"[0,0,0,0,0,0,0,0,0,0,0,0,-17,22,-18,18,-18,14,-15,10,-11,6,-6,2,1,0,7,-2,13,-2,18,-1,24,0,28,2,31,3,33,5,34,6,33,5,32,6,29,5,26,3,22,1,18,-1,13,-6,7,-11,4,-17,0,-22,-4,-29,0,0,-7,-39,-8,-42,-9,-46,-8,-46,-8,-47,-7,-44,-7,-42,-6,-36,-8,-30,-9,-25,-11,-19,-14,-13,-17,-7,-19,4,-24,7,-29,12,-32,15,-39,15,-39,18,-40,17,-40,16,-39,16,-36,13,-33,12,-28,11,-22,11,0,1,0,0,0,0,0,0,0,0]"
+CSI_DATA,4,0a:02:05:50:08:88,-62,11,-96,-35,58,8,6722821,162,0,128,0,"[0,0,0,0,0,0,0,0,0,0,0,0,15,24,11,23,7,21,3,17,1,13,1,7,1,0,1,-6,4,-13,6,-17,10,-22,12,-25,14,-27,17,-28,18,-29,18,-28,17,-27,16,-25,14,-22,10,-19,5,-16,0,-13,-7,-12,-13,-9,-20,-9,-27,-9,0,0,-39,-10,-42,-11,-45,-12,-45,-13,-44,-13,-43,-13,-40,-12,-35,-10,-31,-6,-27,-2,-23,2,-16,6,-12,12,-11,22,-6,26,-3,31,-2,36,-5,41,-3,43,-4,43,-5,43,-5,41,-6,38,-6,34,-4,29,0,25,0,0,0,0,0,0,0,0,0,0]"
+CSI_DATA,5,0a:02:05:50:08:88,-61,11,-96,-35,57,8,7030043,84,0,128,0,"[0,0,0,0,0,0,0,0,0,0,0,0,-5,25,-5,22,-3,17,-2,13,1,9,5,4,10,-1,13,-4,19,-7,22,-8,27,-10,30,-11,31,-11,32,-10,32,-10,30,-9,26,-8,22,-7,17,-7,10,-6,4,-6,-5,-7,-12,-8,-19,-10,-27,-13,-33,-18,0,0,-40,-23,-40,-26,-40,-29,-35,-29,-32,-28,-28,-25,-22,-20,-16,-14,-12,-7,-8,0,-5,8,-2,15,0,22,1,30,0,37,-1,42,-2,43,-5,47,-6,46,-8,43,-10,38,-10,32,-8,26,-6,20,-2,13,4,7,0,1,1,-1,0,0,0,0,0,0]"
+CSI_DATA,6,0a:02:05:50:08:88,-61,11,-96,-35,57,8,7644154,84,0,128,0,"[0,0,0,0,0,0,0,0,1,0,-1,0,11,-20,8,-17,7,-13,3,-9,-1,-6,-5,-2,-10,1,-15,1,-19,3,-24,2,-27,3,-30,3,-31,3,-32,1,-30,2,-28,2,-24,2,-20,2,-16,3,-10,4,-3,7,3,9,10,14,16,18,21,22,25,28,0,0,30,33,29,37,27,37,25,38,21,35,18,30,14,25,12,17,10,9,9,1,9,-7,10,-14,11,-22,12,-27,14,-34,16,-37,20,-39,21,-39,22,-36,22,-35,21,-30,18,-24,16,-20,11,-15,4,-10,-3,-7,1,1,-1,0,0,0,0,0,0,0]"
+CSI_DATA,7,0a:02:05:50:08:88,-61,11,-96,-35,57,8,7746528,142,0,128,0,"[0,0,0,0,0,0,0,0,0,0,0,0,-8,-21,-7,-18,-5,-13,-6,-9,-5,-3,-6,2,-8,7,-10,12,-12,15,-14,19,-17,22,-19,25,-20,25,-20,25,-21,24,-19,22,-17,19,-13,16,-9,13,-4,10,2,7,9,4,16,3,24,2,31,1,38,4,0,0,46,7,47,9,47,12,43,13,39,13,33,12,27,9,21,6,14,1,8,-4,4,-11,-2,-16,-5,-24,-8,-31,-7,-36,-9,-40,-8,-42,-5,-45,-3,-43,-1,-42,1,-37,2,-33,2,-25,1,-18,-3,-12,-8,-6,0,0,0,0,0,0,0,0,0,0]"
+CSI_DATA,8,0a:02:05:50:08:88,-62,11,-96,-35,58,8,8053729,84,0,128,0,"[0,0,0,0,0,0,0,0,0,0,1,0,-19,-14,-17,-13,-13,-10,-9,-5,-7,-1,-5,5,-3,11,-3,16,-4,21,-4,26,-6,30,-8,32,-8,34,-10,33,-10,32,-10,29,-9,25,-6,21,-5,16,0,11,5,6,11,0,17,-3,25,-7,33,-9,40,-9,0,0,50,-6,52,-3,52,0,48,3,43,5,37,5,31,5,23,2,15,-1,8,-6,1,-13,-6,-18,-10,-25,-13,-32,-13,-37,-13,-42,-13,-44,-9,-47,-6,-46,-4,-43,0,-40,1,-33,1,-26,-1,-19,-4,-13,-9,-6,0,0,0,0,0,0,0,0,0,0]"
+CSI_DATA,9,0a:02:05:50:08:88,-62,11,-96,-35,58,8,8668115,84,0,128,0,"[0,0,0,0,0,0,0,0,0,0,0,0,6,-24,6,-22,5,-13,3,-10,1,-5,-4,-1,-9,5,-13,8,-18,11,-22,14,-25,17,-29,15,-30,16,-31,14,-30,14,-28,11,-26,10,-19,8,-14,7,-9,5,1,4,8,4,15,4,24,6,32,10,38,14,0,0,47,20,45,24,43,25,39,26,33,25,30,22,25,19,17,11,11,6,7,-2,2,-12,-1,-18,-3,-26,-4,-34,-4,-40,-4,-45,-1,-45,3,-47,5,-46,6,-43,8,-37,7,-30,5,-25,2,-16,-2,-10,-7,-5,1,0,-1,-1,0,0,0,0,0,0]"
+CSI_DATA,10,0a:02:05:50:08:88,-61,11,-97,-35,58,8,9077771,84,0,128,0,"[0,0,0,0,0,0,0,0,0,0,0,1,-16,-19,-12,-16,-10,-12,-6,-8,-5,-1,-4,3,-3,10,-3,16,-4,21,-5,27,-7,29,-9,33,-10,33,-11,33,-12,32,-11,29,-10,26,-8,21,-5,15,-1,10,4,4,10,-2,17,-6,24,-11,32,-14,38,-14,0,0,49,-13,51,-12,50,-9,50,-6,44,-3,38,-1,30,-2,23,-2,14,-3,5,-7,-3,-11,-11,-15,-17,-20,-23,-26,-25,-31,-27,-35,-28,-39,-25,-41,-22,-42,-19,-40,-15,-37,-13,-33,-9,-26,-8,-16,-7,-10,-9,-2,0,1,0,0,0,0,0,0,0,0]"
+CSI_DATA,11,0a:02:05:50:08:88,-61,11,-97,-35,58,8,9180117,230,0,128,0,"[0,0,0,0,0,0,0,0,0,-1,0,-1,-9,23,-9,20,-6,15,-5,11,2,6,6,2,10,-3,15,-7,22,-9,26,-10,28,-12,32,-13,32,-14,32,-12,31,-11,31,-11,27,-10,21,-7,16,-7,8,-5,0,-6,-7,-5,-17,-6,-24,-9,-32,-10,-37,-14,0,0,-46,-18,-45,-22,-47,-23,-42,-25,-38,-23,-34,-21,-26,-17,-20,-11,-13,-4,-8,3,-3,12,3,18,5,27,7,34,7,39,9,44,8,46,5,48,3,47,1,45,-1,40,0,37,-2,27,1,19,4,10,8,4,2,0,0,1,0,0,0,0,0,0]"
+CSI_DATA,12,0a:02:05:50:08:88,-61,11,-97,-35,58,8,10717796,142,0,128,0,"[0,0,0,0,0,0,0,0,-2,1,0,0,-1,-25,-1,-22,0,-17,1,-13,-3,-7,-6,-1,-9,5,-14,9,-19,12,-22,15,-27,15,-30,17,-32,17,-32,16,-32,14,-32,12,-27,11,-23,9,-16,7,-10,6,-2,6,6,8,14,9,22,12,30,16,36,21,0,0,42,30,40,33,38,36,35,36,30,35,25,32,20,27,15,19,12,12,9,2,8,-7,8,-15,9,-24,11,-31,14,-37,17,-41,20,-43,24,-43,26,-42,26,-38,27,-33,25,-28,21,-22,15,-16,7,-11,0,-9,0,0,1,0,0,0,0,0,0,0]"
+CSI_DATA,13,0a:02:05:50:08:88,-61,11,-97,-35,57,8,10718085,162,0,128,0,"[0,0,0,0,0,0,0,0,0,0,0,-1,-4,23,-4,20,-3,15,-2,11,1,6,5,2,9,-2,14,-5,19,-6,22,-8,27,-8,30,-8,31,-7,32,-6,31,-5,29,-4,26,-3,21,-3,17,-3,10,-3,4,-5,-2,-7,-10,-11,-15,-16,-21,-21,-24,-27,0,0,-28,-36,-25,-39,-23,-41,-19,-40,-16,-38,-13,-33,-10,-28,-8,-21,-7,-13,-7,-4,-8,4,-11,10,-14,17,-18,23,-22,27,-26,30,-29,30,-33,30,-33,28,-33,24,-32,20,-28,16,-23,11,-18,9,-10,7,-3,7,0,0,0,0,0,0,0,0,0,0]"

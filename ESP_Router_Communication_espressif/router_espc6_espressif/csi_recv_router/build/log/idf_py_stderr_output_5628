@@ -1,0 +1,3 @@
+Command: ninja flash
+EXTRA_COMPONENT_DIRS: C:\Espressif\frameworks\esp-idf-v5.5.3/examples/common_components/protocol_examples_common
+Project commit: v5.5.3

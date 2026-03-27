@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "csi_recv_router",
-    "project_version":    "1",
+    "project_version":    "1078c41-dirty",
     "project_path":       "C:/Diplomatiki_2026/WIFI CSI PROJECT/ESP_Router_Communication_espressif/router_espc6_espressif/csi_recv_router",
     "idf_path":           "C:/Espressif/frameworks/esp-idf-v5.5.3",
     "build_dir":          "C:/Diplomatiki_2026/WIFI CSI PROJECT/ESP_Router_Communication_espressif/router_espc6_espressif/csi_recv_router/build",
