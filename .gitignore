@@ -13,6 +13,7 @@ ESP_Communication_espressif/csi_send/build/
 *.ninja_log
 *.ninja_deps
 *.ninja_command
+**/sdkconfig.old
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
