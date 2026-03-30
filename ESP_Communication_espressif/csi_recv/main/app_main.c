@@ -107,7 +107,6 @@ static void wifi_init(void)
 
     ESP_ERROR_CHECK(esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_BELOW));
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
-    ESP_ERROR_CHECK(esp_wifi_set_mac(WIFI_IF_STA, KNOWN_SENDER_MAC));
 
     /* ✅ TX Power lock + verification */
     ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(TX_POWER_FIXED));
@@ -151,7 +150,7 @@ static void wifi_csi_rx_cb(void *ctx, wifi_csi_info_t *info)
 
     if (info->payload != NULL && info->payload_len >= 8)
     {
-        for (int i = 0; i <= info->payload_len - 8; i++)
+        for (int i = 0; i <= (int)info->payload_len - 8; i++)
         {
             uint32_t check_magic;
             memcpy(&check_magic, info->payload + i, sizeof(uint32_t));
@@ -283,7 +282,7 @@ static void csi_print_task(void *arg)
         }
 
         /* Κλείσιμο και εκτύπωση */
-        if (pos + 3 < size)
+        if (pos + 4 < size)
         {
             snprintf(print_buffer + pos, size - pos, "]\"\n");
             ets_printf("%s", print_buffer);
