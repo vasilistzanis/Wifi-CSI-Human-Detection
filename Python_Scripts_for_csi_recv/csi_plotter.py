@@ -1,177 +1,263 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-ESP32-C6 CSI Plotter (Thesis Grade) — Final (3 Windows Version)
-Features:
-- Auto-detect latest dataset
-- Correct I/Q order for ESP32-C6
-- Amplitude Heatmap (separate window)
-- Mean Amplitude per Subcarrier (separate window)
-- Phase Heatmap (separate window)
-- Null subcarrier masking
-"""
+import argparse
+from dataclasses import dataclass
+from pathlib import Path
 
-import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib
-import os
-import glob
 
-# 🔧 (Optional) Force separate GUI windows
-matplotlib.use('TkAgg')  # ή 'Qt5Agg'
+try:
+    matplotlib.use("TkAgg")
+except Exception:
+    pass
 
-# ==============================================================================
-# ΕΝΤΟΠΙΣΜΟΣ ΑΡΧΕΙΟΥ
-# ==============================================================================
+import matplotlib.pyplot as plt
+import numpy as np
 
-def get_latest_dataset():
-    """Βρίσκει αυτόματα το πιο πρόσφατο αρχείο .txt στον φάκελο datasets."""
-    list_of_files = glob.glob('datasets/*.txt')
-    if not list_of_files:
+BASE_DIR = Path(__file__).resolve().parent
+
+
+@dataclass
+class SeqStats:
+    first_seq: int | None = None
+    last_seq: int | None = None
+    received_count: int = 0
+    missing_count: int = 0
+    gap_events: int = 0
+    non_monotonic_count: int = 0
+
+    def update(self, seq: int) -> None:
+        if self.first_seq is None:
+            self.first_seq = seq
+        elif self.last_seq is not None:
+            if seq > self.last_seq + 1:
+                self.missing_count += seq - self.last_seq - 1
+                self.gap_events += 1
+            elif seq <= self.last_seq:
+                self.non_monotonic_count += 1
+
+        self.last_seq = seq
+        self.received_count += 1
+
+    @property
+    def expected_count(self) -> int:
+        return self.received_count + self.missing_count
+
+    @property
+    def loss_percent(self) -> float:
+        if self.expected_count == 0:
+            return 0.0
+        return (self.missing_count / self.expected_count) * 100.0
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Plot CSI amplitude and phase from a dataset")
+    parser.add_argument(
+        "dataset",
+        nargs="?",
+        help="Dataset file to open. If omitted, the newest file in datasets/ is used.",
+    )
+    parser.add_argument(
+        "-d",
+        "--datasets-dir",
+        default="datasets",
+        help="Dataset directory used when no file is provided.",
+    )
+    parser.add_argument(
+        "--unwrap-phase",
+        action="store_true",
+        help="Apply numpy.unwrap() along the time axis.",
+    )
+    return parser.parse_args()
+
+
+def resolve_path(path_arg: str) -> Path:
+    path = Path(path_arg)
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    return path
+
+
+def get_latest_dataset(datasets_dir: Path):
+    files = list(datasets_dir.glob("*.txt"))
+    if not files:
         return None
-    return max(list_of_files, key=os.path.getctime)
+    return max(files, key=lambda path: path.stat().st_mtime)
 
-# ==============================================================================
-# PARSING
-# ==============================================================================
 
-def parse_csi_data(filepath):
-    """
-    Διαβάζει το αρχείο γραμμή-γραμμή και εξάγει:
-    - amp_matrix  : (frames × subcarriers)
-    - phase_matrix: (frames × subcarriers)
-    """
-    print(f"📂 Διαβάζω: {filepath}")
-    
-    amp_list   = []
-    phase_list = []
+def extract_payload(line: str):
+    start_idx = line.find("[")
+    end_idx = line.find("]")
+    if start_idx == -1 or end_idx == -1 or end_idx <= start_idx + 1:
+        return None
+    return line[start_idx + 1:end_idx].strip()
 
-    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-        for line in f:
+
+def extract_seq(line: str):
+    parts = line.split(",", 3)
+    if len(parts) < 2:
+        return None
+
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None
+
+
+def parse_csi_line(line: str):
+    if not line.startswith("CSI_DATA"):
+        return None
+
+    payload = extract_payload(line)
+    if not payload:
+        return None
+
+    token_count = payload.count(",") + 1
+    values = np.fromstring(payload, sep=",", dtype=np.float32)
+
+    if values.size != token_count or values.size < 2 or values.size % 2 != 0:
+        return None
+
+    imag = values[0::2]
+    real = values[1::2]
+    return (real + 1j * imag).astype(np.complex64)
+
+
+def load_csi_matrix(dataset_path: Path):
+    frames = []
+    dropped_frames = 0
+    expected_subcarriers = None
+    seq_stats = SeqStats()
+
+    with open(dataset_path, "r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
             if not line.startswith("CSI_DATA"):
                 continue
 
-            try:
-                start_idx = line.find('[')
-                end_idx   = line.find(']')
+            seq = extract_seq(line)
+            if seq is not None:
+                seq_stats.update(seq)
 
-                if start_idx == -1 or end_idx == -1:
-                    continue
-
-                raw_str  = line[start_idx + 1 : end_idx]
-                num_list = [int(x) for x in raw_str.split(',')]
-
-                frame_amp   = []
-                frame_phase = []
-
-                for i in range(0, len(num_list), 2):
-                    # ✅ ESP32-C6: [Imaginary, Real]
-                    imag = num_list[i]
-                    real = num_list[i + 1]
-
-                    amp   = np.sqrt(real**2 + imag**2)
-                    phase = np.arctan2(imag, real)
-
-                    frame_amp.append(amp)
-                    frame_phase.append(phase)
-
-                amp_list.append(frame_amp)
-                phase_list.append(frame_phase)
-
-            except Exception:
+            frame = parse_csi_line(line)
+            if frame is None:
+                dropped_frames += 1
                 continue
 
-    return np.array(amp_list), np.array(phase_list)
+            if expected_subcarriers is None:
+                expected_subcarriers = frame.shape[0]
 
-# ==============================================================================
-# PLOTTING (3 WINDOWS)
-# ==============================================================================
+            if frame.shape[0] != expected_subcarriers:
+                dropped_frames += 1
+                continue
 
-def plot_all(amp_matrix, phase_matrix, filename):
-    """Δημιουργεί 3 ξεχωριστά παράθυρα plots."""
+            frames.append(frame)
 
-    if amp_matrix.size == 0:
-        print("Δεν βρέθηκαν δεδομένα!")
+    if not frames:
+        return np.empty((0, 0), dtype=np.complex64), dropped_frames, seq_stats
+
+    return np.vstack(frames), dropped_frames, seq_stats
+
+
+def plot_all(complex_matrix: np.ndarray, dataset_path: Path, unwrap_phase: bool = False):
+    if complex_matrix.size == 0:
+        print("No valid CSI frames were found.")
         return
 
-    print(f"Frames × Subcarriers: {amp_matrix.shape}")
+    amplitude = np.abs(complex_matrix)
+    phase = np.angle(complex_matrix)
+    if unwrap_phase:
+        phase = np.unwrap(phase, axis=0)
 
-    # Mask null subcarriers
-    non_null_mask = np.any(amp_matrix > 0, axis=0)
-    amp_clean     = amp_matrix[:, non_null_mask]
-    phase_clean   = phase_matrix[:, non_null_mask]
+    active_mask = np.any(amplitude > 0, axis=0)
+    if not np.any(active_mask):
+        print("All subcarriers are zero.")
+        return
+
+    active_indices = np.flatnonzero(active_mask)
+    amplitude_active = amplitude[:, active_mask]
+    phase_active = phase[:, active_mask]
+    mean_amplitude = amplitude_active.mean(axis=0)
 
     title = (
-        f"CSI Analysis — {os.path.basename(filename)}\n"
-        f"{amp_matrix.shape[0]} frames @ 100Hz"
+        f"{dataset_path.name}\n"
+        f"{complex_matrix.shape[0]} frames x {complex_matrix.shape[1]} subcarriers"
     )
 
-    # ─────────────────────────────────────────
-    # 1. Amplitude Heatmap
-    # ─────────────────────────────────────────
-    plt.figure(figsize=(12, 6))
-    plt.title("Amplitude Heatmap\n" + title)
-
-    im1 = plt.imshow(
-        amp_clean.T,
-        aspect='auto',
-        cmap='jet',
-        interpolation='nearest',
-        origin='lower'
+    fig1, ax1 = plt.subplots(figsize=(12, 6))
+    ax1.set_title("Amplitude Heatmap\n" + title)
+    im1 = ax1.imshow(
+        amplitude_active.T,
+        aspect="auto",
+        cmap="jet",
+        interpolation="nearest",
+        origin="lower",
     )
-    plt.xlabel("Time (Frames)")
-    plt.ylabel("Subcarrier Index")
-    plt.colorbar(im1, label='Amplitude')
+    ax1.set_xlabel("Frame Index")
+    ax1.set_ylabel("Active Subcarrier")
+    fig1.colorbar(im1, ax=ax1, label="Amplitude")
+    fig1.tight_layout()
 
-    # ─────────────────────────────────────────
-    # 2. Mean Amplitude
-    # ─────────────────────────────────────────
-    plt.figure(figsize=(12, 6))
-    mean_amp = np.mean(amp_clean, axis=0)
+    fig2, ax2 = plt.subplots(figsize=(12, 6))
+    ax2.set_title("Mean Amplitude per Active Subcarrier\n" + title)
+    ax2.plot(active_indices, mean_amplitude, color="#f7b731", linewidth=1.5)
+    ax2.fill_between(active_indices, mean_amplitude, alpha=0.25, color="#f7b731")
+    ax2.set_xlabel("Subcarrier Index")
+    ax2.set_ylabel("Amplitude")
+    ax2.grid(True, alpha=0.3)
+    fig2.tight_layout()
 
-    plt.title("Mean Amplitude Spectrum\n" + title)
-    plt.plot(mean_amp, color='#f7b731', linewidth=1.5)
-    plt.fill_between(range(len(mean_amp)), mean_amp, alpha=0.3, color='#f7b731')
-    plt.xlabel("Subcarrier Index")
-    plt.ylabel("Amplitude")
-    plt.grid(True, alpha=0.3)
-
-    # ─────────────────────────────────────────
-    # 3. Phase Heatmap
-    # ─────────────────────────────────────────
-    plt.figure(figsize=(12, 6))
-    plt.title("Phase Heatmap\n" + title)
-
-    im3 = plt.imshow(
-        phase_clean.T,
-        aspect='auto',
-        cmap='hsv',
-        interpolation='nearest',
-        origin='lower',
-        vmin=-np.pi,
-        vmax=np.pi
+    fig3, ax3 = plt.subplots(figsize=(12, 6))
+    phase_title = "Phase Heatmap"
+    if unwrap_phase:
+        phase_title += " (Unwrapped)"
+    ax3.set_title(phase_title + "\n" + title)
+    im3 = ax3.imshow(
+        phase_active.T,
+        aspect="auto",
+        cmap="hsv",
+        interpolation="nearest",
+        origin="lower",
+        vmin=None if unwrap_phase else -np.pi,
+        vmax=None if unwrap_phase else np.pi,
     )
-    plt.xlabel("Time (Frames)")
-    plt.ylabel("Subcarrier Index")
-    plt.colorbar(im3, label='Phase (rad)')
+    ax3.set_xlabel("Frame Index")
+    ax3.set_ylabel("Active Subcarrier")
+    fig3.colorbar(im3, ax=ax3, label="Phase (rad)")
+    fig3.tight_layout()
 
-    print("Άνοιγμα 3 παραθύρων...")
     plt.show()
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
 
 def main():
-    latest_file = get_latest_dataset()
+    args = parse_args()
 
-    if not latest_file:
-        print("❌ Δεν βρέθηκαν αρχεία στον φάκελο 'datasets'.")
+    if args.dataset:
+        dataset_path = resolve_path(args.dataset)
+    else:
+        datasets_dir = resolve_path(args.datasets_dir)
+        dataset_path = get_latest_dataset(datasets_dir)
+
+    if dataset_path is None:
+        print("No dataset file was found.")
         return
 
-    amp_matrix, phase_matrix = parse_csi_data(latest_file)
-    plot_all(amp_matrix, phase_matrix, latest_file)
+    if not dataset_path.exists():
+        print(f"Dataset not found: {dataset_path}")
+        return
+
+    print(f"Reading: {dataset_path}")
+    complex_matrix, dropped_frames, seq_stats = load_csi_matrix(dataset_path)
+    print(f"Valid frames  : {complex_matrix.shape[0]}")
+    print(f"Dropped frames: {dropped_frames}")
+    print(f"Seq start/end : {seq_stats.first_seq} -> {seq_stats.last_seq}")
+    print(f"Missing seq   : {seq_stats.missing_count} in {seq_stats.gap_events} gap(s)")
+    print(f"Loss rate     : {seq_stats.loss_percent:.2f}%")
+    if seq_stats.non_monotonic_count:
+        print(f"Seq resets    : {seq_stats.non_monotonic_count}")
+
+    plot_all(complex_matrix, dataset_path, unwrap_phase=args.unwrap_phase)
+
 
 if __name__ == "__main__":
     main()
