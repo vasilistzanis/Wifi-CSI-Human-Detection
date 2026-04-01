@@ -9,8 +9,10 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdatomic.h>
 
 #include "esp_system.h"
+#include "esp_idf_version.h"
 #include "nvs_flash.h"
 #include "esp_mac.h"
 #include "esp_log.h"
@@ -30,9 +32,10 @@
 #define TX_POWER_FIXED 72 // 18dBm — 0.25dBm units
 #define WIFI_ENABLE GPIO_NUM_3
 #define WIFI_ANT_CONFIG GPIO_NUM_14
+#define TX_STATS_PERIOD_US 5000000LL
 
 static const uint8_t SENDER_MAC[] = {0x1a, 0x00, 0x00, 0x00, 0x00, 0x00};
-static const uint8_t TARGET_RECEIVER_MAC[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+static const uint8_t TARGET_RECEIVER_MAC[] = {0xe4, 0xb3, 0x23, 0xb4, 0x57, 0x7c};
 static const char *TAG = "csi_send";
 
 #define RADAR_MAGIC_SIGNATURE 0xA1B2C3D4
@@ -42,6 +45,11 @@ typedef struct __attribute__((packed))
     uint32_t magic;
     uint32_t sequence_id;
 } radar_payload_t;
+
+static atomic_uint s_tx_attempt_count = 0;
+static atomic_uint s_tx_api_fail_count = 0;
+static atomic_uint s_tx_cb_success_count = 0;
+static atomic_uint s_tx_cb_fail_count = 0;
 
 /* ════════════════════════════════════════════════════════════════════════
    1. ANTENNA INIT
@@ -69,6 +77,7 @@ static void wifi_init(void)
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    ESP_ERROR_CHECK(esp_wifi_set_mac(WIFI_IF_STA, SENDER_MAC));
     ESP_ERROR_CHECK(esp_wifi_start());
 
     /* ✅ FIX: 802.11n πριν HT40 — αποτρέπει Error 0x102 */
@@ -83,23 +92,25 @@ static void wifi_init(void)
 
     ESP_ERROR_CHECK(esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_BELOW));
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
-    ESP_ERROR_CHECK(esp_wifi_set_mac(WIFI_IF_STA, SENDER_MAC));
 
     /* ✅ TX Power lock + verification */
     ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(TX_POWER_FIXED));
     int8_t actual_power = 0;
-    esp_wifi_get_max_tx_power(&actual_power);
+    uint8_t current_mac[6] = {0};
+    ESP_ERROR_CHECK(esp_wifi_get_max_tx_power(&actual_power));
+    ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, current_mac));
     ESP_LOGI(TAG, "TX power locked at %.2f dBm", actual_power / 4.0f);
+    ESP_LOGI(TAG, "Sender STA MAC: " MACSTR, MAC2STR(current_mac));
 }
 
 /* ════════════════════════════════════════════════════════════════════════
    3. ESP-NOW SEND CALLBACK — Silent (100Hz, UART bottleneck prevention)
    ════════════════════════════════════════════════════════════════════════ */
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-static void esp_now_send_cb(const esp_now_send_info_t *send_info,
+static void __attribute__((unused)) esp_now_send_cb(const esp_now_send_info_t *send_info,
                             esp_now_send_status_t status)
 #else
-static void esp_now_send_cb(const uint8_t *mac, esp_now_send_status_t status)
+static void __attribute__((unused)) esp_now_send_cb(const uint8_t *mac, esp_now_send_status_t status)
 #endif
 {
     /* Σκόπιμα κενό — έλεγχος γίνεται μέσω fail_count στο loop */
@@ -108,10 +119,30 @@ static void esp_now_send_cb(const uint8_t *mac, esp_now_send_status_t status)
 /* ════════════════════════════════════════════════════════════════════════
    4. ESP-NOW INIT
    ════════════════════════════════════════════════════════════════════════ */
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+static void esp_now_send_stats_cb(const esp_now_send_info_t *send_info,
+                                  esp_now_send_status_t status)
+{
+    (void)send_info;
+#else
+static void esp_now_send_stats_cb(const uint8_t *mac, esp_now_send_status_t status)
+{
+    (void)mac;
+#endif
+    if (status == ESP_NOW_SEND_SUCCESS)
+    {
+        atomic_fetch_add(&s_tx_cb_success_count, 1);
+    }
+    else
+    {
+        atomic_fetch_add(&s_tx_cb_fail_count, 1);
+    }
+}
+
 static void wifi_esp_now_init(esp_now_peer_info_t peer)
 {
     ESP_ERROR_CHECK(esp_now_init());
-    ESP_ERROR_CHECK(esp_now_register_send_cb(esp_now_send_cb));
+    ESP_ERROR_CHECK(esp_now_register_send_cb(esp_now_send_stats_cb));
     ESP_ERROR_CHECK(esp_now_set_pmk((uint8_t *)"pmk1234567890123"));
     ESP_ERROR_CHECK(esp_now_add_peer(&peer));
 
@@ -126,6 +157,31 @@ static void wifi_esp_now_init(esp_now_peer_info_t peer)
 /* ════════════════════════════════════════════════════════════════════════
    5. MAIN
    ════════════════════════════════════════════════════════════════════════ */
+static void log_tx_stats(void)
+{
+    unsigned long attempts = (unsigned long)atomic_load(&s_tx_attempt_count);
+    unsigned long api_fails = (unsigned long)atomic_load(&s_tx_api_fail_count);
+    unsigned long cb_success = (unsigned long)atomic_load(&s_tx_cb_success_count);
+    unsigned long cb_fail = (unsigned long)atomic_load(&s_tx_cb_fail_count);
+    unsigned long cb_total = cb_success + cb_fail;
+
+    double api_fail_pct = (attempts > 0)
+                              ? (100.0 * (double)api_fails / (double)attempts)
+                              : 0.0;
+    double cb_fail_pct = (cb_total > 0)
+                             ? (100.0 * (double)cb_fail / (double)cb_total)
+                             : 0.0;
+
+    ESP_LOGI(TAG,
+             "TX stats | attempts=%lu api_fail=%lu (%.2f%%) cb_ok=%lu cb_fail=%lu (%.2f%%)",
+             attempts,
+             api_fails,
+             api_fail_pct,
+             cb_success,
+             cb_fail,
+             cb_fail_pct);
+}
+
 void app_main(void)
 {
     /* ✅ NVS WEAR-OUT PROTECTION */
@@ -169,12 +225,13 @@ void app_main(void)
     }
 
     ESP_LOGI(TAG, "=========== CSI SEND ===========");
-    ESP_LOGI(TAG, "Channel: %d | Freq: %d Hz | MAC: " MACSTR,
-             WIFI_CHANNEL, CONFIG_SEND_FREQUENCY, MAC2STR(SENDER_MAC));
+    ESP_LOGI(TAG, "Channel: %d | Freq: %d Hz | Sender MAC: " MACSTR " | Target Receiver: " MACSTR,
+             WIFI_CHANNEL, CONFIG_SEND_FREQUENCY, MAC2STR(SENDER_MAC), MAC2STR(TARGET_RECEIVER_MAC));
 
-    uint32_t fail_count = 0;
-    uint32_t count = 0;
+    uint32_t api_fail_streak = 0;
+    uint32_t sequence_id = 0;
     int64_t next_send_us = esp_timer_get_time();
+    int64_t next_stats_us = next_send_us + TX_STATS_PERIOD_US;
 
     radar_payload_t payload = {
         .magic = RADAR_MAGIC_SIGNATURE,
@@ -185,37 +242,45 @@ void app_main(void)
     {
         esp_task_wdt_reset();
 
-        payload.sequence_id = count;
+        payload.sequence_id = sequence_id++;
+        atomic_fetch_add(&s_tx_attempt_count, 1);
         ret = esp_now_send(peer.peer_addr,
                            (const uint8_t *)&payload,
                            sizeof(payload));
 
         if (ret != ESP_OK)
         {
-            fail_count++;
-            if (fail_count > 20)
+            atomic_fetch_add(&s_tx_api_fail_count, 1);
+            api_fail_streak++;
+            if (api_fail_streak >= 20)
             {
                 ESP_LOGE(TAG, "Too many errors [%lu] — reinit ESP-NOW: %s",
-                         (unsigned long)fail_count, esp_err_to_name(ret));
-                esp_now_deinit();
+                         (unsigned long)api_fail_streak, esp_err_to_name(ret));
+                ESP_ERROR_CHECK(esp_now_deinit());
                 vTaskDelay(pdMS_TO_TICKS(500));
                 wifi_esp_now_init(peer);
-                fail_count = 0;
+                api_fail_streak = 0;
                 /* ✅ FIX: Reset timing μετά από reinit
                    Χωρίς αυτό, το loop θα προσπαθούσε να στείλει
                    ~50 frames αμέσως για να "αναπληρώσει" το χαμένο χρόνο */
                 next_send_us = esp_timer_get_time();
+                next_stats_us = next_send_us + TX_STATS_PERIOD_US;
             }
         }
         else
         {
-            fail_count = 0;
-            count++;
+            api_fail_streak = 0;
         }
 
         /* Deterministic timing — αφαιρεί τον χρόνο εκτέλεσης */
         next_send_us += SEND_PERIOD_US;
         int64_t now = esp_timer_get_time();
+        if (now >= next_stats_us)
+        {
+            log_tx_stats();
+            next_stats_us = now + TX_STATS_PERIOD_US;
+        }
+
         int64_t sleep_us = next_send_us - now;
 
         if (sleep_us > 0)

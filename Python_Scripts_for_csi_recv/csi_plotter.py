@@ -25,7 +25,8 @@ class SeqStats:
     received_count: int = 0
     missing_count: int = 0
     gap_events: int = 0
-    non_monotonic_count: int = 0
+    duplicate_count: int = 0
+    reset_count: int = 0
 
     def update(self, seq: int) -> None:
         if self.first_seq is None:
@@ -34,15 +35,21 @@ class SeqStats:
             if seq > self.last_seq + 1:
                 self.missing_count += seq - self.last_seq - 1
                 self.gap_events += 1
-            elif seq <= self.last_seq:
-                self.non_monotonic_count += 1
+            elif seq == self.last_seq:
+                self.duplicate_count += 1
+            elif seq < self.last_seq:
+                self.reset_count += 1
 
         self.last_seq = seq
         self.received_count += 1
 
     @property
+    def unique_count(self) -> int:
+        return self.received_count - self.duplicate_count
+
+    @property
     def expected_count(self) -> int:
-        return self.received_count + self.missing_count
+        return self.unique_count + self.missing_count
 
     @property
     def loss_percent(self) -> float:
@@ -249,12 +256,13 @@ def main():
     print(f"Reading: {dataset_path}")
     complex_matrix, dropped_frames, seq_stats = load_csi_matrix(dataset_path)
     print(f"Valid frames  : {complex_matrix.shape[0]}")
+    print(f"Unique frames : {seq_stats.unique_count}")
     print(f"Dropped frames: {dropped_frames}")
     print(f"Seq start/end : {seq_stats.first_seq} -> {seq_stats.last_seq}")
     print(f"Missing seq   : {seq_stats.missing_count} in {seq_stats.gap_events} gap(s)")
     print(f"Loss rate     : {seq_stats.loss_percent:.2f}%")
-    if seq_stats.non_monotonic_count:
-        print(f"Seq resets    : {seq_stats.non_monotonic_count}")
+    print(f"Duplicate seq : {seq_stats.duplicate_count}")
+    print(f"True resets   : {seq_stats.reset_count}")
 
     plot_all(complex_matrix, dataset_path, unwrap_phase=args.unwrap_phase)
 

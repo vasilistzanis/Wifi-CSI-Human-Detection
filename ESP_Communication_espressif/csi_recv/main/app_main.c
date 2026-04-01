@@ -111,8 +111,11 @@ static void wifi_init(void)
     /* ✅ TX Power lock + verification */
     ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(TX_POWER_FIXED));
     int8_t actual_power = 0;
-    esp_wifi_get_max_tx_power(&actual_power);
+    uint8_t current_mac[6] = {0};
+    ESP_ERROR_CHECK(esp_wifi_get_max_tx_power(&actual_power));
+    ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, current_mac));
     ESP_LOGI(TAG, "TX power locked at %.2f dBm", actual_power / 4.0f);
+    ESP_LOGI(TAG, "Receiver STA MAC: " MACSTR, MAC2STR(current_mac));
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -370,7 +373,7 @@ void app_main(void)
         .channel = WIFI_CHANNEL,
         .ifidx = WIFI_IF_STA,
         .encrypt = false,
-        .peer_addr = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+        .peer_addr = {0x1a, 0x00, 0x00, 0x00, 0x00, 0x00},
     };
     wifi_esp_now_init(peer);
     wifi_csi_init();
