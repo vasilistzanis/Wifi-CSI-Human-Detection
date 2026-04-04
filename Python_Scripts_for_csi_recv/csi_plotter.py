@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+CSI Amplitude & Phase Plotter (Thesis Grade)
+Reads raw serial dump (.txt) or CSV (.csv) from the ESP32-C6 recv.
+
+Usage:
+  python csi_plotter.py                          # latest file in datasets/
+  python csi_plotter.py path/to/file.txt
+  python csi_plotter.py path/to/file.csv --unwrap-phase
+  python csi_plotter.py path/to/file.txt --save  # saves PNG alongside file
+"""
+
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import matplotlib
-
 try:
     matplotlib.use("TkAgg")
 except Exception:
@@ -17,6 +27,10 @@ import numpy as np
 
 BASE_DIR = Path(__file__).resolve().parent
 
+
+# ════════════════════════════════════════════════════════════════════════
+# SEQUENCE STATS
+# ════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class SeqStats:
@@ -32,13 +46,16 @@ class SeqStats:
         if self.first_seq is None:
             self.first_seq = seq
         elif self.last_seq is not None:
-            if seq > self.last_seq + 1:
-                self.missing_count += seq - self.last_seq - 1
+            diff = seq - self.last_seq
+            if diff > 1:
+                self.missing_count += diff - 1
                 self.gap_events += 1
-            elif seq == self.last_seq:
+            elif diff == 0:
                 self.duplicate_count += 1
-            elif seq < self.last_seq:
-                self.reset_count += 1
+                self.received_count += 1
+                return                  # do NOT update last_seq for duplicate
+            elif diff < 0:
+                self.reset_count += 1  # sequence counter reset or reorder
 
         self.last_seq = seq
         self.received_count += 1
@@ -58,65 +75,54 @@ class SeqStats:
         return (self.missing_count / self.expected_count) * 100.0
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Plot CSI amplitude and phase from a dataset")
-    parser.add_argument(
-        "dataset",
-        nargs="?",
-        help="Dataset file to open. If omitted, the newest file in datasets/ is used.",
-    )
-    parser.add_argument(
-        "-d",
-        "--datasets-dir",
-        default="datasets",
-        help="Dataset directory used when no file is provided.",
-    )
-    parser.add_argument(
-        "--unwrap-phase",
-        action="store_true",
-        help="Apply numpy.unwrap() along the time axis.",
-    )
-    return parser.parse_args()
-
+# ════════════════════════════════════════════════════════════════════════
+# PATH HELPERS
+# ════════════════════════════════════════════════════════════════════════
 
 def resolve_path(path_arg: str) -> Path:
     path = Path(path_arg)
-    if not path.is_absolute():
-        path = BASE_DIR / path
-    return path
+    return path if path.is_absolute() else BASE_DIR / path
 
 
-def get_latest_dataset(datasets_dir: Path):
-    files = list(datasets_dir.glob("*.txt"))
-    if not files:
-        return None
-    return max(files, key=lambda path: path.stat().st_mtime)
+def get_latest_dataset(datasets_dir: Path) -> Path | None:
+    """Return newest .txt or .csv file in datasets_dir."""
+    files = list(datasets_dir.glob("*.txt")) + list(datasets_dir.glob("*.csv"))
+    return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
 
-def extract_payload(line: str):
-    start_idx = line.find("[")
-    end_idx = line.find("]")
-    if start_idx == -1 or end_idx == -1 or end_idx <= start_idx + 1:
-        return None
-    return line[start_idx + 1:end_idx].strip()
+# ════════════════════════════════════════════════════════════════════════
+# PARSING
+# ════════════════════════════════════════════════════════════════════════
 
-
-def extract_seq(line: str):
+def extract_seq(line: str) -> int | None:
+    """Extract sequence number from CSI_DATA line (field index 1)."""
     parts = line.split(",", 3)
     if len(parts) < 2:
         return None
-
     try:
         return int(parts[1])
     except ValueError:
         return None
 
 
-def parse_csi_line(line: str):
+def parse_csi_line(line: str) -> np.ndarray | None:
+    """
+    Parse one CSI_DATA text line into a complex64 array.
+
+    ESP32 CSI buf layout: [imag0, real0, imag1, real1, ...]
+    So values[0::2] = imaginary, values[1::2] = real.
+    complex(i) = real[i] + j*imag[i]
+    """
     if not line.startswith("CSI_DATA"):
         return None
 
-    payload = extract_payload(line)
+    # Extract the payload between [ and ]
+    start = line.find("[")
+    end = line.rfind("]")          # rfind to avoid issues with nested brackets
+    if start == -1 or end == -1 or end <= start + 1:
+        return None
+
+    payload = line[start + 1:end].strip()
     if not payload:
         return None
 
@@ -131,14 +137,23 @@ def parse_csi_line(line: str):
     return (real + 1j * imag).astype(np.complex64)
 
 
-def load_csi_matrix(dataset_path: Path):
-    frames = []
+def load_csi_matrix(dataset_path: Path) -> tuple[np.ndarray, int, SeqStats]:
+    """
+    Load CSI data from a .txt or .csv file.
+
+    Returns:
+      complex_matrix  : (N_frames, N_subcarriers) complex64
+      dropped_frames  : count of unparseable lines
+      seq_stats       : SeqStats object with gap/loss metrics
+    """
+    frames: list[np.ndarray] = []
     dropped_frames = 0
-    expected_subcarriers = None
+    expected_subcarriers: int | None = None
     seq_stats = SeqStats()
 
-    with open(dataset_path, "r", encoding="utf-8", errors="ignore") as handle:
-        for line in handle:
+    with open(dataset_path, "r", encoding="utf-8", errors="ignore") as fh:
+        for line in fh:
+            line = line.strip()
             if not line.startswith("CSI_DATA"):
                 continue
 
@@ -166,9 +181,18 @@ def load_csi_matrix(dataset_path: Path):
     return np.vstack(frames), dropped_frames, seq_stats
 
 
-def plot_all(complex_matrix: np.ndarray, dataset_path: Path, unwrap_phase: bool = False):
+# ════════════════════════════════════════════════════════════════════════
+# PLOTTING
+# ════════════════════════════════════════════════════════════════════════
+
+def plot_all(complex_matrix: np.ndarray, dataset_path: Path,
+             unwrap_phase: bool = False, save: bool = False) -> None:
+    """
+    Plot amplitude heatmap, mean amplitude, and phase heatmap.
+    Optionally save as PNG next to the dataset file.
+    """
     if complex_matrix.size == 0:
-        print("No valid CSI frames were found.")
+        print("No valid CSI frames to plot.")
         return
 
     amplitude = np.abs(complex_matrix)
@@ -178,62 +202,91 @@ def plot_all(complex_matrix: np.ndarray, dataset_path: Path, unwrap_phase: bool 
 
     active_mask = np.any(amplitude > 0, axis=0)
     if not np.any(active_mask):
-        print("All subcarriers are zero.")
+        print("All subcarriers are zero — nothing to plot.")
         return
 
     active_indices = np.flatnonzero(active_mask)
-    amplitude_active = amplitude[:, active_mask]
+    amp_active   = amplitude[:, active_mask]
     phase_active = phase[:, active_mask]
-    mean_amplitude = amplitude_active.mean(axis=0)
+    mean_amp     = amp_active.mean(axis=0)
 
-    title = (
-        f"{dataset_path.name}\n"
-        f"{complex_matrix.shape[0]} frames x {complex_matrix.shape[1]} subcarriers"
-    )
+    title = (f"{dataset_path.name}  —  "
+             f"{complex_matrix.shape[0]} frames × "
+             f"{int(active_mask.sum())} active subcarriers")
 
+    # ── Amplitude Heatmap ─────────────────────────────────────────────────
     fig1, ax1 = plt.subplots(figsize=(12, 6))
     ax1.set_title("Amplitude Heatmap\n" + title)
-    im1 = ax1.imshow(
-        amplitude_active.T,
-        aspect="auto",
-        cmap="jet",
-        interpolation="nearest",
-        origin="lower",
-    )
+    vmin = np.percentile(amp_active, 2)
+    vmax = np.percentile(amp_active, 98)
+    im1 = ax1.imshow(amp_active.T, aspect="auto", cmap="viridis",
+                     interpolation="nearest", origin="lower", vmin=vmin, vmax=vmax)
     ax1.set_xlabel("Frame Index")
     ax1.set_ylabel("Active Subcarrier")
     fig1.colorbar(im1, ax=ax1, label="Amplitude")
     fig1.tight_layout()
 
+    # ── Mean Amplitude per Subcarrier ─────────────────────────────────────
     fig2, ax2 = plt.subplots(figsize=(12, 6))
     ax2.set_title("Mean Amplitude per Active Subcarrier\n" + title)
-    ax2.plot(active_indices, mean_amplitude, color="#f7b731", linewidth=1.5)
-    ax2.fill_between(active_indices, mean_amplitude, alpha=0.25, color="#f7b731")
+    ax2.plot(active_indices, mean_amp, color="#f7b731", linewidth=1.5)
+    ax2.fill_between(active_indices, mean_amp, alpha=0.25, color="#f7b731")
     ax2.set_xlabel("Subcarrier Index")
     ax2.set_ylabel("Amplitude")
     ax2.grid(True, alpha=0.3)
     fig2.tight_layout()
 
+    # ── Phase Heatmap ─────────────────────────────────────────────────────
+    phase_title = "Phase Heatmap" + (" (Unwrapped)" if unwrap_phase else "")
     fig3, ax3 = plt.subplots(figsize=(12, 6))
-    phase_title = "Phase Heatmap"
-    if unwrap_phase:
-        phase_title += " (Unwrapped)"
     ax3.set_title(phase_title + "\n" + title)
     im3 = ax3.imshow(
-        phase_active.T,
-        aspect="auto",
-        cmap="hsv",
-        interpolation="nearest",
-        origin="lower",
+        phase_active.T, aspect="auto", cmap="hsv",
+        interpolation="nearest", origin="lower",
         vmin=None if unwrap_phase else -np.pi,
-        vmax=None if unwrap_phase else np.pi,
+        vmax=None if unwrap_phase else  np.pi,
     )
     ax3.set_xlabel("Frame Index")
     ax3.set_ylabel("Active Subcarrier")
     fig3.colorbar(im3, ax=ax3, label="Phase (rad)")
     fig3.tight_layout()
 
+    if save:
+        stem = dataset_path.stem
+        parent = dataset_path.parent
+        for fig, suffix in [(fig1, "_amp_heatmap"), (fig2, "_mean_amp"), (fig3, "_phase")]:
+            out = parent / f"{stem}{suffix}.png"
+            fig.savefig(out, dpi=150, bbox_inches="tight")
+            print(f"💾 Saved: {out}")
+
     plt.show()
+
+
+# ════════════════════════════════════════════════════════════════════════
+# MAIN
+# ════════════════════════════════════════════════════════════════════════
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Plot CSI amplitude and phase from a dataset file"
+    )
+    parser.add_argument(
+        "dataset", nargs="?",
+        help="Dataset file (.txt or .csv). Omit to use newest file in datasets/."
+    )
+    parser.add_argument(
+        "-d", "--datasets-dir", default="datasets",
+        help="Dataset directory (default: datasets/)"
+    )
+    parser.add_argument(
+        "--unwrap-phase", action="store_true",
+        help="Apply numpy.unwrap() along the time axis for phase plot"
+    )
+    parser.add_argument(
+        "--save", action="store_true",
+        help="Save plots as PNG files next to the dataset"
+    )
+    return parser.parse_args()
 
 
 def main():
@@ -246,25 +299,28 @@ def main():
         dataset_path = get_latest_dataset(datasets_dir)
 
     if dataset_path is None:
-        print("No dataset file was found.")
+        print("No dataset file found.")
         return
 
     if not dataset_path.exists():
         print(f"Dataset not found: {dataset_path}")
         return
 
-    print(f"Reading: {dataset_path}")
+    print(f"📂 Reading: {dataset_path}")
     complex_matrix, dropped_frames, seq_stats = load_csi_matrix(dataset_path)
+
     print(f"Valid frames  : {complex_matrix.shape[0]}")
     print(f"Unique frames : {seq_stats.unique_count}")
     print(f"Dropped frames: {dropped_frames}")
-    print(f"Seq start/end : {seq_stats.first_seq} -> {seq_stats.last_seq}")
-    print(f"Missing seq   : {seq_stats.missing_count} in {seq_stats.gap_events} gap(s)")
+    print(f"Seq range     : {seq_stats.first_seq} → {seq_stats.last_seq}")
+    print(f"Missing seq   : {seq_stats.missing_count} "
+          f"in {seq_stats.gap_events} gap(s)")
     print(f"Loss rate     : {seq_stats.loss_percent:.2f}%")
-    print(f"Duplicate seq : {seq_stats.duplicate_count}")
+    print(f"Duplicates    : {seq_stats.duplicate_count}")
     print(f"True resets   : {seq_stats.reset_count}")
 
-    plot_all(complex_matrix, dataset_path, unwrap_phase=args.unwrap_phase)
+    plot_all(complex_matrix, dataset_path,
+             unwrap_phase=args.unwrap_phase, save=args.save)
 
 
 if __name__ == "__main__":
