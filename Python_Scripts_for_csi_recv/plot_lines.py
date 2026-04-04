@@ -29,7 +29,7 @@ import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 from sklearn.decomposition import PCA
 
-from csi_plotter import load_csi_matrix, resolve_path, get_latest_dataset
+from csi_plotter_heatmap import load_csi_matrix, resolve_path, get_latest_dataset
 from data_preprocessing import CSIPipeline
 
 
