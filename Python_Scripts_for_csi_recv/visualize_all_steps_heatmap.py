@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
-from csi_plotter import load_csi_matrix, resolve_path, get_latest_dataset
+from csi_plotter_heatmap import load_csi_matrix, resolve_path, get_latest_dataset
 from data_preprocessing import CSIPipeline
 
 
