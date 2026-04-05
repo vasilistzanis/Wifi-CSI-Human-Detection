@@ -73,6 +73,12 @@ def parse_args():
         default=MAX_FILE_SIZE_MB,
         help="Maximum file size in MB (safety limit).",
     )
+    parser.add_argument(
+        "-w", "--wait",
+        type=int,
+        default=5,
+        help="Countdown in seconds before recording starts. Set to 0 to disable. (default: 5)",
+    )
     return parser.parse_args()
 
 
@@ -177,6 +183,25 @@ def main() -> int:
         print(f"Output : {output_path}")
         print(f"Max    : {args.max_size_mb} MB")
         print("Press Ctrl+C to stop.\n")
+
+        # ── Countdown Timer ───────────────────────────────────────────────
+        if args.wait > 0:
+            print(f"⏳ Έναρξη σε {args.wait} δευτερόλεπτα! (Πάρε θέση...)")
+            for i in range(args.wait, 0, -1):
+                print(f"   {i}...")
+                time.sleep(1)
+            print("▶️  ΠΑΜΕ! (Η καταγραφή ξεκίνησε)\n")
+        
+        # Clear buffer immediately before the file opens so we don't log the movement of pressing enter
+        try:
+            ser.reset_input_buffer()
+        except Exception:
+            pass
+
+        # Also reset tracking timers so they don't count the wait time
+        start_time = time.monotonic()
+        last_flush = start_time
+        last_status = start_time
 
         with open(output_path, "wb") as handle:
             capture_started = True
