@@ -2,11 +2,16 @@
 # -*- coding: utf-8 -*-
 
 """
-CSI Line Plotter — Thesis / Paper Grade
+CSI Line Plotter — Thesis / Paper Grade (Improved)
 Visualizes the full signal processing pipeline as 2D line plots.
-
-Shows 5 stages side-by-side so the reader can see exactly what each
+Shows 5 stages in SEPARATE WINDOWS so the reader can see exactly what each
 processing step does to the CSI signal. Designed for thesis figures.
+
+Improvements:
+  - Better color array handling for large numbers of subcarriers
+  - Better error handling for imports and file loading
+  - Validation of intermediate results
+  - More informative error messages
 
 Usage:
   python plot_lines.py                          # latest file in datasets/
@@ -23,14 +28,35 @@ from pathlib import Path
 import numpy as np
 
 import matplotlib
-matplotlib.use("TkAgg")
+try:
+    matplotlib.use("Qt5Agg")
+except Exception:
+    print("⚠️  Qt5Agg backend not available, falling back to TkAgg")
+    try:
+        matplotlib.use("TkAgg")
+    except Exception:
+        print("⚠️  TkAgg backend not available, using default")
+        pass
+
 import matplotlib.pyplot as plt
+plt.ioff()  # Disable interactive mode for faster background rendering
 import matplotlib.patches as mpatches
-from matplotlib.lines import Line2D
 from sklearn.decomposition import PCA
 
-from csi_plotter_heatmap import load_csi_matrix, resolve_path, get_latest_dataset
-from data_preprocessing import CSIPipeline
+# ✅ IMPROVED: Better import error handling
+try:
+    from csi_plotter_heatmap import load_csi_matrix, resolve_path, get_latest_dataset
+except ImportError as e:
+    print(f"❌ Missing dependency: {e}")
+    print("   Make sure csi_plotter_heatmap.py is in the same directory")
+    sys.exit(1)
+
+try:
+    from data_preprocessing import CSIPipeline
+except ImportError as e:
+    print(f"❌ Missing dependency: {e}")
+    print("   Make sure data_preprocessing.py is in the same directory")
+    sys.exit(1)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -39,7 +65,7 @@ from data_preprocessing import CSIPipeline
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="CSI Line Plotter — Thesis / Paper Grade"
+        description="CSI Line Plotter — Thesis / Paper Grade (Separate Windows)"
     )
     p.add_argument(
         "file", nargs="?", default=None,
@@ -47,7 +73,7 @@ def parse_args():
     )
     p.add_argument(
         "--save", action="store_true",
-        help="Save figure as PNG next to the dataset file"
+        help="Save figure as PNG next to the dataset file (creates 5 files)"
     )
     p.add_argument(
         "--n-subcarriers", type=int, default=5,
@@ -98,6 +124,7 @@ def select_subcarriers(n_active: int, n_wanted: int) -> list[int]:
 
 
 def make_time_axis(n_frames: int, fs: float) -> np.ndarray:
+    """Create time axis in seconds."""
     return np.arange(n_frames) / fs
 
 
@@ -109,17 +136,34 @@ def annotate_bg_region(ax, bg_frames: int, fs: float, alpha: float = 0.12):
                linestyle="--", alpha=0.7, zorder=1)
 
 
-def style_ax(ax, title: str, ylabel: str, show_xlabel: bool = False,
+def style_ax(ax, title: str, ylabel: str, show_xlabel: bool = True,
              fs: float = 100.0):
     """Apply consistent styling to a single axis."""
-    ax.set_title(title, fontsize=10, fontweight='bold', pad=6,
+    ax.set_title(title, fontsize=11, fontweight='bold', pad=8,
                  color="#222222")
-    ax.set_ylabel(ylabel, fontsize=9, color="#333333")
+    ax.set_ylabel(ylabel, fontsize=10, color="#333333")
     if show_xlabel:
-        ax.set_xlabel("Time (s)", fontsize=9, color="#333333")
-    ax.tick_params(labelsize=8)
+        ax.set_xlabel("Time (s)", fontsize=10, color="#333333")
+    ax.tick_params(labelsize=9)
     ax.grid(True, linewidth=0.4, alpha=0.5, linestyle='-')
     ax.spines[['top', 'right']].set_visible(False)
+
+
+def get_color_palette(n_colors: int):
+    """
+    Get appropriate color palette for n_colors.
+    
+    Returns:
+      numpy array of RGB colors, shape (n_colors, 3 or 4)
+    """
+    # ✅ IMPROVED: Better color handling for large n
+    if n_colors <= 10:
+        return plt.cm.tab10(np.linspace(0, 0.9, n_colors))
+    elif n_colors <= 20:
+        return plt.cm.tab20(np.linspace(0, 0.95, n_colors))
+    else:
+        # Use continuous colormap for very large numbers
+        return plt.cm.viridis(np.linspace(0, 0.95, n_colors))
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -139,14 +183,25 @@ def main():
         default_dir = resolve_path("datasets")
         if not default_dir.exists():
             print(f"❌ datasets/ directory not found — pass a file explicitly")
+            print("   Use: python plot_lines.py <file.txt>")
             sys.exit(1)
         file_path = get_latest_dataset(default_dir)
         if file_path is None:
             print(f"❌ No TXT/CSV files found in {default_dir}")
+            print("   Run csi_logger.py first to capture data")
             sys.exit(1)
 
     print(f"\n📂 Loading: {file_path.name}")
-    complex_matrix, dropped, seq_stats = load_csi_matrix(file_path)
+    
+    # ✅ IMPROVED: Better error handling
+    try:
+        complex_matrix, dropped, seq_stats = load_csi_matrix(file_path)
+    except (FileNotFoundError, PermissionError, ValueError) as e:
+        print(f"❌ Error loading file: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        sys.exit(1)
 
     if complex_matrix.size == 0:
         print("❌ No valid frames — exiting")
@@ -165,27 +220,50 @@ def main():
         use_diff=not args.no_diff,
     )
 
-    # Stage 0: Raw amplitude (alle subcarriers including nulls)
-    amp_raw = np.abs(complex_matrix)                               # (N, n_sub)
+    # ✅ IMPROVED: Validate each step
+    try:
+        # Stage 0: Raw amplitude (all subcarriers including nulls)
+        amp_raw = np.abs(complex_matrix)
 
-    # Stage 1: Null removal + Hampel + Butterworth
-    amp_null = pipeline.remove_null_subcarriers(complex_matrix, fit=True)
-    amp_hamp = pipeline.apply_hampel_filter(amp_null)
-    amp_filt = pipeline.apply_lowpass_filter(amp_hamp, cutoff=args.cutoff)
+        # Stage 1: Null removal + Hampel + Butterworth
+        amp_null = pipeline.remove_null_subcarriers(complex_matrix, fit=True)
+        
+        # ✅ NEW: Validate active subcarriers
+        if amp_null.shape[1] == 0:
+            print("❌ No active subcarriers after null removal!")
+            sys.exit(1)
+        
+        amp_hamp = pipeline.apply_hampel_filter(amp_null)
+        amp_filt = pipeline.apply_lowpass_filter(amp_hamp, cutoff=args.cutoff)
 
-    # Stage 2: Background subtraction
-    amp_bg   = pipeline.apply_background_subtraction(amp_filt, fit=True)
-    bg_enabled = bg_frames > 0 and pipeline.background_mean is not None
+        # Stage 2: Background subtraction
+        amp_bg   = pipeline.apply_background_subtraction(amp_filt, fit=True)
+        bg_enabled = bg_frames > 0 and pipeline.background_mean is not None
 
-    # Stage 3: Temporal diff
-    amp_diff = pipeline.apply_temporal_diff(amp_bg)
-    diff_enabled = not args.no_diff and amp_diff.shape[0] < amp_bg.shape[0]
+        # Stage 3: Temporal diff
+        amp_diff = pipeline.apply_temporal_diff(amp_bg)
+        diff_enabled = not args.no_diff and amp_diff.shape[0] < amp_bg.shape[0]
 
-    # Stage 4: PCA
-    n_pca = min(args.pca_components, amp_diff.shape[0] - 1, amp_diff.shape[1])
-    pca = PCA(n_components=n_pca)
-    pca_data = pca.fit_transform(amp_diff)
-    explained = pca.explained_variance_ratio_ * 100
+        # ✅ NEW: Validate PCA inputs
+        if amp_diff.shape[0] < 2:
+            print(f"❌ Too few frames ({amp_diff.shape[0]}) for PCA")
+            sys.exit(1)
+
+        # Stage 4: PCA
+        n_pca = min(args.pca_components, amp_diff.shape[0] - 1, amp_diff.shape[1])
+        if n_pca < 1:
+            print(f"❌ Cannot perform PCA: shape {amp_diff.shape} too small")
+            sys.exit(1)
+
+        pca = PCA(n_components=n_pca)
+        pca_data = pca.fit_transform(amp_diff)
+        explained = pca.explained_variance_ratio_ * 100
+
+    except Exception as e:
+        print(f"❌ Error during preprocessing: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
     n_active = amp_filt.shape[1]
     sc_indices = select_subcarriers(n_active, args.n_subcarriers)
@@ -223,145 +301,170 @@ def main():
         "grid.linewidth":   0.4,
     })
 
-    # 5 rows: Raw | Filtered | Background-sub | Temporal diff | PCA
-    fig, axes = plt.subplots(5, 1, figsize=(16, 14),
-                             gridspec_kw={'hspace': 0.55})
-
-    # ── Title ─────────────────────────────────────────────────────────────
-    rssi_info = f"RSSI: — dBm"  # will be overwritten if metadata available
-    fig.suptitle(
+    # ── Global Title & Color Helpers ──────────────────────────────────────
+    global_suptitle = (
         f"CSI Signal Processing Pipeline  ·  {file_path.name}\n"
         f"{n_frames} frames  ·  {n_active} active subcarriers  ·  "
         f"duration ≈{duration:.1f} s  ·  "
-        f"packet loss {seq_stats.loss_percent:.2f}%  ·  "
-        f"seq {seq_stats.first_seq}→{seq_stats.last_seq}",
-        fontsize=12, fontweight='bold', y=0.98, color="#111111"
+        f"packet loss {seq_stats.loss_percent:.2f}%"
     )
 
-    # Color palette — distinct colors for subcarriers / PCA components
-    SC_COLORS  = plt.cm.tab10(np.linspace(0, 0.9, max(len(sc_indices), n_pca)))
+    # ✅ IMPROVED: Better color palette selection
+    SC_COLORS  = get_color_palette(max(len(sc_indices), n_pca))
     PCA_COLORS = ['#e63946', '#2a9d8f', '#e9c46a', '#457b9d', '#f4a261']
 
-    # ════════════════════════════════════════════════════════════════════
-    # PANEL 0 — Raw Amplitude (all active subcarriers, no filtering)
-    # ════════════════════════════════════════════════════════════════════
-    ax = axes[0]
-    for i, sc in enumerate(sc_indices):
-        ax.plot(t_full, amp_null[:, sc],
-                color=SC_COLORS[i], linewidth=0.9, alpha=0.85,
-                label=f"SC {sc}")
-    if bg_enabled:
-        annotate_bg_region(ax, bg_frames, args.fs)
-    style_ax(ax,
-             "① Raw Amplitude  (null bands removed, no temporal filtering)",
-             "Amplitude (a.u.)")
-    ax.legend(loc="upper right", fontsize=8, ncol=min(len(sc_indices), 5),
-              framealpha=0.7)
+    def create_window(title_suffix):
+        fig, ax = plt.subplots(figsize=(12, 6))
+        fig.suptitle(global_suptitle, fontsize=12, fontweight='bold', 
+                    y=0.96, color="#111111")
+        return fig, ax
+
+    def add_shared_legend(fig):
+        if bg_enabled:
+            bg_patch = mpatches.Patch(
+                facecolor="#ffcc00", alpha=0.4,
+                label=f"Background calibration period (first {bg_frames} frames = "
+                      f"{bg_frames / args.fs:.1f} s  ·  empty room)"
+            )
+            fig.legend(handles=[bg_patch], loc="lower center",
+                       fontsize=9, framealpha=0.9,
+                       bbox_to_anchor=(0.5, 0.01))
 
     # ════════════════════════════════════════════════════════════════════
-    # PANEL 1 — Filtered Amplitude (Hampel + Butterworth)
+    # CREATE PLOTS WITH ERROR HANDLING
     # ════════════════════════════════════════════════════════════════════
-    ax = axes[1]
-    for i, sc in enumerate(sc_indices):
-        ax.plot(t_full, amp_filt[:, sc],
-                color=SC_COLORS[i], linewidth=1.2, alpha=0.9,
-                label=f"SC {sc}")
-    if bg_enabled:
-        annotate_bg_region(ax, bg_frames, args.fs)
-    style_ax(ax,
-             f"② Hampel + Butterworth Low-Pass ({args.cutoff} Hz)  —  noise removed",
-             "Amplitude (a.u.)")
-    ax.legend(loc="upper right", fontsize=8, ncol=min(len(sc_indices), 5),
-              framealpha=0.7)
-
-    # ════════════════════════════════════════════════════════════════════
-    # PANEL 2 — After Background Subtraction
-    # Static room → ≈ 0 everywhere. Motion → visible deviations.
-    # ════════════════════════════════════════════════════════════════════
-    ax = axes[2]
-    if bg_enabled:
+    
+    try:
+        # ── PANEL 0 — Raw Amplitude (Window 1) ────────────────────────────
+        fig0, ax0 = create_window("Raw")
         for i, sc in enumerate(sc_indices):
-            ax.plot(t_full, amp_bg[:, sc],
-                    color=SC_COLORS[i], linewidth=1.2, alpha=0.9,
+            ax0.plot(t_full, amp_null[:, sc],
+                    color=SC_COLORS[i], linewidth=1.2, alpha=0.85,
                     label=f"SC {sc}")
-        annotate_bg_region(ax, bg_frames, args.fs)
-        ax.axhline(0, color="#999999", linewidth=0.8, linestyle="--")
-        style_ax(ax,
-                 f"③ Background Subtraction  (first {bg_frames} frames = static room removed)",
-                 "Δ Amplitude")
-        ax.legend(loc="upper right", fontsize=8, ncol=min(len(sc_indices), 5),
-                  framealpha=0.7)
-    else:
-        ax.text(0.5, 0.5, "Background subtraction DISABLED (--no-bg)",
-                ha='center', va='center', transform=ax.transAxes,
-                fontsize=11, color="#888888", style='italic')
-        style_ax(ax, "③ Background Subtraction  [DISABLED]", "Δ Amplitude")
+        if bg_enabled:
+            annotate_bg_region(ax0, bg_frames, args.fs)
+        style_ax(ax0,
+                 "① Raw Amplitude  (null bands removed, no temporal filtering)",
+                 "Amplitude (a.u.)")
+        ax0.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5), framealpha=0.7)
+        add_shared_legend(fig0)
+        fig0.tight_layout(rect=[0, 0.05, 1, 0.92])
+        
+        if args.save:
+            out_path = file_path.parent / f"{file_path.stem}_line_0.png"
+            fig0.savefig(out_path, dpi=200, bbox_inches="tight")
+            print(f"💾 Saved: {out_path}")
 
-    # ════════════════════════════════════════════════════════════════════
-    # PANEL 3 — Temporal Difference
-    # Static room → ≈ 0. Motion event → sharp peaks.
-    # Note: N-1 frames due to diff.
-    # ════════════════════════════════════════════════════════════════════
-    ax = axes[3]
-    if diff_enabled:
+        # ── PANEL 1 — Filtered Amplitude (Window 2) ───────────────────────
+        fig1, ax1 = create_window("Filtered")
         for i, sc in enumerate(sc_indices):
-            ax.plot(t_diff, amp_diff[:, sc],
-                    color=SC_COLORS[i], linewidth=1.0, alpha=0.85,
+            ax1.plot(t_full, amp_filt[:, sc],
+                    color=SC_COLORS[i], linewidth=1.5, alpha=0.9,
                     label=f"SC {sc}")
-        ax.axhline(0, color="#999999", linewidth=0.8, linestyle="--")
-        style_ax(ax,
-                 f"④ Temporal Difference  [frame(t+1) − frame(t)]  →  "
-                 f"motion events visible  ({amp_diff.shape[0]} frames)",
-                 "Δ Amplitude / frame")
-        ax.legend(loc="upper right", fontsize=8, ncol=min(len(sc_indices), 5),
-                  framealpha=0.7)
-    else:
-        ax.text(0.5, 0.5, "Temporal difference DISABLED (--no-diff)",
-                ha='center', va='center', transform=ax.transAxes,
-                fontsize=11, color="#888888", style='italic')
-        style_ax(ax, "④ Temporal Difference  [DISABLED]", "Δ Amplitude / frame")
+        if bg_enabled:
+            annotate_bg_region(ax1, bg_frames, args.fs)
+        style_ax(ax1,
+                 f"② Hampel + Butterworth Low-Pass ({args.cutoff} Hz)  —  noise removed",
+                 "Amplitude (a.u.)")
+        ax1.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5), framealpha=0.7)
+        add_shared_legend(fig1)
+        fig1.tight_layout(rect=[0, 0.05, 1, 0.92])
 
-    # ════════════════════════════════════════════════════════════════════
-    # PANEL 4 — PCA Components
-    # Dimensionality: N_active_subcarriers → n_pca
-    # This is what the AI model receives.
-    # ════════════════════════════════════════════════════════════════════
-    ax = axes[4]
-    for i in range(n_pca):
-        color = PCA_COLORS[i % len(PCA_COLORS)]
-        label = (f"PC{i+1}  ({explained[i]:.1f}% var)")
-        ax.plot(t_pca, pca_data[:, i],
-                color=color, linewidth=1.3, alpha=0.9, label=label)
-    ax.axhline(0, color="#999999", linewidth=0.8, linestyle="--")
-    style_ax(ax,
-             f"⑤ PCA  ({n_pca} components · {explained.sum():.1f}% variance explained)  "
-             f"—  Final AI Input",
-             "Component Value",
-             show_xlabel=True)
-    ax.legend(loc="upper right", fontsize=8, ncol=min(n_pca, 5),
-              framealpha=0.8)
+        if args.save:
+            out_path = file_path.parent / f"{file_path.stem}_line_1.png"
+            fig1.savefig(out_path, dpi=200, bbox_inches="tight")
+            print(f"💾 Saved: {out_path}")
 
-    # ════════════════════════════════════════════════════════════════════
-    # SHARED LEGEND — background calibration annotation
-    # ════════════════════════════════════════════════════════════════════
-    if bg_enabled:
-        bg_patch = mpatches.Patch(
-            facecolor="#ffcc00", alpha=0.4,
-            label=f"Background calibration period (first {bg_frames} frames = "
-                  f"{bg_frames / args.fs:.1f} s  ·  empty room)"
-        )
-        fig.legend(handles=[bg_patch], loc="lower center",
-                   fontsize=9, framealpha=0.9,
-                   bbox_to_anchor=(0.5, 0.005))
+        # ── PANEL 2 — After Background Subtraction (Window 3) ─────────────
+        fig2, ax2 = create_window("Background Sub")
+        if bg_enabled:
+            for i, sc in enumerate(sc_indices):
+                ax2.plot(t_full, amp_bg[:, sc],
+                        color=SC_COLORS[i], linewidth=1.5, alpha=0.9,
+                        label=f"SC {sc}")
+            annotate_bg_region(ax2, bg_frames, args.fs)
+            ax2.axhline(0, color="#999999", linewidth=1.0, linestyle="--")
+            style_ax(ax2,
+                     f"③ Background Subtraction  (first {bg_frames} frames = static room removed)",
+                     "Δ Amplitude")
+            ax2.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5), framealpha=0.7)
+            add_shared_legend(fig2)
+        else:
+            ax2.text(0.5, 0.5, "Background subtraction DISABLED (--no-bg)",
+                    ha='center', va='center', transform=ax2.transAxes,
+                    fontsize=13, color="#888888", style='italic')
+            style_ax(ax2, "③ Background Subtraction  [DISABLED]", "Δ Amplitude")
+        
+        fig2.tight_layout(rect=[0, 0.05, 1, 0.92])
 
-    # ── Save / Show ───────────────────────────────────────────────────────
-    if args.save:
-        out_path = file_path.parent / (file_path.stem + "_lines.png")
-        fig.savefig(out_path, dpi=200, bbox_inches="tight",
-                    facecolor="#ffffff")
-        print(f"\n💾 Saved: {out_path}")
+        if args.save:
+            out_path = file_path.parent / f"{file_path.stem}_line_2.png"
+            fig2.savefig(out_path, dpi=200, bbox_inches="tight")
+            print(f"💾 Saved: {out_path}")
 
-    plt.show()
+        # ── PANEL 3 — Temporal Difference (Window 4) ──────────────────────
+        fig3, ax3 = create_window("Temporal Diff")
+        if diff_enabled:
+            for i, sc in enumerate(sc_indices):
+                ax3.plot(t_diff, amp_diff[:, sc],
+                        color=SC_COLORS[i], linewidth=1.2, alpha=0.85,
+                        label=f"SC {sc}")
+            ax3.axhline(0, color="#999999", linewidth=1.0, linestyle="--")
+            style_ax(ax3,
+                     f"④ Temporal Difference  [frame(t+1) − frame(t)]  →  "
+                     f"motion events visible  ({amp_diff.shape[0]} frames)",
+                     "Δ Amplitude / frame")
+            ax3.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5), framealpha=0.7)
+        else:
+            ax3.text(0.5, 0.5, "Temporal difference DISABLED (--no-diff)",
+                    ha='center', va='center', transform=ax3.transAxes,
+                    fontsize=13, color="#888888", style='italic')
+            style_ax(ax3, "④ Temporal Difference  [DISABLED]", "Δ Amplitude / frame")
+        
+        fig3.tight_layout(rect=[0, 0.05, 1, 0.92])
+
+        if args.save:
+            out_path = file_path.parent / f"{file_path.stem}_line_3.png"
+            fig3.savefig(out_path, dpi=200, bbox_inches="tight")
+            print(f"💾 Saved: {out_path}")
+
+        # ── PANEL 4 — PCA Components (Window 5) ───────────────────────────
+        fig4, ax4 = create_window("PCA")
+        for i in range(n_pca):
+            color = PCA_COLORS[i % len(PCA_COLORS)]
+            label = (f"PC{i+1}  ({explained[i]:.1f}% var)")
+            ax4.plot(t_pca, pca_data[:, i],
+                    color=color, linewidth=1.5, alpha=0.9, label=label)
+        ax4.axhline(0, color="#999999", linewidth=1.0, linestyle="--")
+        style_ax(ax4,
+                 f"⑤ PCA  ({n_pca} components · {explained.sum():.1f}% variance explained)  "
+                 f"—  Final AI Input",
+                 "Component Value")
+        ax4.legend(loc="upper right", fontsize=9, ncol=min(n_pca, 5), framealpha=0.8)
+        
+        fig4.tight_layout(rect=[0, 0.05, 1, 0.92])
+
+        if args.save:
+            out_path = file_path.parent / f"{file_path.stem}_line_4.png"
+            fig4.savefig(out_path, dpi=200, bbox_inches="tight")
+            print(f"💾 Saved: {out_path}")
+
+    except Exception as e:
+        print(f"❌ Error during plotting: {e}")
+        print("   Try installing: pip install matplotlib python-tk")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+    print("\n✅ Created 5 separate windows! (Close them all to end the script)")
+    
+    # ── Show All Windows ──────────────────────────────────────────────────
+    try:
+        plt.show()
+    except Exception as e:
+        print(f"⚠️  Error displaying plots: {e}")
+        print("   Plots were created but may not display properly.")
+    
     plt.rcParams.update(plt.rcParamsDefault)
 
 
