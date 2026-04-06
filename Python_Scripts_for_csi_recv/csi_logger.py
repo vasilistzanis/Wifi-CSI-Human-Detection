@@ -13,6 +13,7 @@ Improvements:
 import argparse
 import os
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -292,6 +293,14 @@ def main() -> int:
         # Verify file was written
         if output_path.exists() and output_path.stat().st_size > 0:
             print(f"File size       : {output_path.stat().st_size / 1024:.1f} KB")
+            
+            # Create a CSV copy for convenience
+            csv_path = output_path.with_suffix(".csv")
+            try:
+                shutil.copy2(output_path, csv_path)
+                print(f"CSV Copy        : {csv_path.name} (Successfully created)")
+            except Exception as e:
+                print(f"CSV Copy        : Failed to create copy ({e})")
         else:
             print("⚠️  Warning: Output file is empty or missing!")
 
