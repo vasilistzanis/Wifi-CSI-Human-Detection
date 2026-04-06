@@ -22,6 +22,9 @@ from serial.tools import list_ports
 
 # Cross-platform defaults
 DEFAULT_PORT = "COM6" if os.name == "nt" else "/dev/ttyUSB0"
+
+# ✅ Must match ESP-IDF monitor baud rate (default: 2 Mbps).
+# Mismatch causes garbled output and zero valid frames.
 DEFAULT_BAUD = 2_000_000
 DEFAULT_IDLE_SLEEP = 0.001
 DEFAULT_FLUSH_INTERVAL = 0.5
@@ -207,10 +210,11 @@ def main() -> int:
             capture_started = True
 
             while True:
-                # ── File Size Check ───────────────────────────────────────
+                # Safety net: catches any edge case where bytes_written
+                # already equals max_bytes at loop entry
                 if bytes_written >= max_bytes:
                     print(f"\n⚠️  Reached maximum file size ({args.max_size_mb} MB)")
-                    print("   Stopping capture to prevent disk overflow.")
+                    print("   Stopping capture.")
                     break
 
                 waiting = ser.in_waiting
@@ -221,6 +225,13 @@ def main() -> int:
                 chunk = ser.read(waiting)
                 if not chunk:
                     continue
+
+                # Prevent disk overflow by checking size BEFORE writing the chunk
+
+                if bytes_written + len(chunk) > max_bytes:
+                    print(f"\n⚠️  Reached maximum file size ({args.max_size_mb} MB)")
+                    print("   Stopping capture to prevent disk overflow.")
+                    break
 
                 handle.write(chunk)
                 bytes_written += len(chunk)

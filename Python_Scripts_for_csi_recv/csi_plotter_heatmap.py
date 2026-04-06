@@ -137,16 +137,14 @@ def parse_csi_line(line: str) -> np.ndarray | None:
     if not payload:
         return None
 
-    # ✅ IMPROVED: Use np.fromstring with proper handling (still supported)
-    # Note: np.fromstring is deprecated but still works. For future-proofing,
-    # we could use: values = np.array([float(x) for x in payload.split(',')], dtype=np.float32)
-    # But np.fromstring is faster and still widely used in legacy code.
+    # Fast CSV parsing (np.fromstring with sep is NOT deprecated).
+    # Fallback to list comprehension for future-proofing.
     try:
         values = np.fromstring(payload, sep=",", dtype=np.float32)
     except Exception:
-        # Fallback for future numpy versions
         try:
-            values = np.array([float(x) for x in payload.split(',')], dtype=np.float32)
+            values = np.array([float(x) for x in payload.split(',')],
+                              dtype=np.float32)
         except (ValueError, AttributeError):
             return None
 
