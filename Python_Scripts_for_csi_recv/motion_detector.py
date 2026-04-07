@@ -57,6 +57,8 @@ def parse_args():
     )
     p.add_argument("file", nargs="?", default=None,
                    help="TXT or CSV file (default: latest in datasets/)")
+    p.add_argument("--process-all", action="store_true",
+                   help="Process ALL .txt files in the datasets/ folder automatically")
     p.add_argument("--save", action="store_true",
                    help="Save PNG and motion CSV next to dataset file")
     p.add_argument("--export-ml", action="store_true",
@@ -225,6 +227,33 @@ def detect_motion_events(energy_smooth: np.ndarray,
 
 def main():
     args = parse_args()
+
+    # ── Process All Files ─────────────────────────────────────────────────
+    if args.process_all:
+        import subprocess
+        import sys
+        default_dir = resolve_path("datasets")
+        all_files = list(default_dir.glob("*.txt"))
+        if not all_files:
+            print(f"❌ No .txt files found in {default_dir}")
+            sys.exit(1)
+        
+        # Build the exact command to run for each file
+        base_cmd = [sys.executable, __file__]
+        if args.export_ml:
+            base_cmd.append("--export-ml")
+            base_cmd.extend(["--window-frames", str(args.window_frames)])
+        if args.save:
+            base_cmd.append("--save")
+        
+        print(f"🚀 Batch Processing {len(all_files)} files...")
+        for i, f in enumerate(all_files):
+            print(f"\n[{i+1}/{len(all_files)}] Processing {f.name}...")
+            cmd = base_cmd + [str(f)]
+            subprocess.run(cmd)
+            
+        print("\n✅ Batch processing completely finished!")
+        return
 
     # ── File resolution ───────────────────────────────────────────────────
     if args.file:
