@@ -59,6 +59,10 @@ def parse_args():
                    help="TXT or CSV file (default: latest in datasets/)")
     p.add_argument("--save", action="store_true",
                    help="Save PNG and motion CSV next to dataset file")
+    p.add_argument("--export-ml", action="store_true",
+                   help="Export fixed-size numpy array (.npy) for ML")
+    p.add_argument("--window-frames", type=int, default=300,
+                   help="Fixed window size in frames for ML (default: 300 = 3 secs)")
     p.add_argument("--fs", type=float, default=100.0,
                    help="Sampling frequency Hz (default: 100)")
     p.add_argument("--background-frames", type=int, default=100,
@@ -531,7 +535,40 @@ def main():
                     ])
             print(f"💾 Motion CSV saved: {out_csv}")
 
-    plt.show()
+    # ── Export for Machine Learning (Windowing) ───────────────────────────
+    if args.export_ml and events:
+        # Using amp_filt as the clean 'processed' data
+        processed = amp_filt
+        num_features = processed.shape[1]
+        
+        for i, ev in enumerate(events):
+            # 1. Start from the center of motion
+            center = (ev.start_frame + ev.end_frame) // 2
+            half_win = args.window_frames // 2
+            
+            w_start = center - half_win
+            w_end = center + (args.window_frames - half_win)
+            
+            # 2. Setup zero-padded window for consistent sizing
+            window = np.zeros((args.window_frames, num_features), dtype=np.float32)
+            
+            # 3. Calculate bounded indices
+            src_start = max(0, w_start)
+            src_end = min(processed.shape[0], w_end)
+            
+            dst_start = src_start - w_start
+            dst_end = dst_start + (src_end - src_start)
+            
+            # 4. Copy the data into the padded window
+            window[dst_start:dst_end, :] = processed[src_start:src_end, :]
+            
+            # 5. Save as NPY
+            out_npy = file_path.parent / f"{file_path.stem}_ml_ev{i+1}.npy"
+            np.save(out_npy, window)
+            print(f"📦 ML Window saved: {out_npy} (Shape: {window.shape})")
+
+    if not args.export_ml:
+        plt.show()
     plt.rcParams.update(plt.rcParamsDefault)
 
 
