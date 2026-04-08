@@ -114,10 +114,6 @@ def main():
         print(f"❌ Unexpected error loading file: {e}")
         sys.exit(1)
 
-    if complex_matrix.size == 0:
-        print("❌ No valid frames found in the file.")
-        sys.exit(1)
-
     n_frames, n_sub = complex_matrix.shape
     print(f"   Frames: {n_frames} | Subcarriers: {n_sub} | "
           f"Dropped: {dropped_frames} | Loss: {seq_stats.loss_percent:.2f}%")
