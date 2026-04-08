@@ -20,10 +20,26 @@ Usage:
 
 from __future__ import annotations
 import argparse
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib
+
+
+def configure_console_output() -> None:
+    """Avoid UnicodeEncodeError on legacy Windows console encodings."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
+configure_console_output()
+
+
 try:
     matplotlib.use("Qt5Agg")
 except Exception:

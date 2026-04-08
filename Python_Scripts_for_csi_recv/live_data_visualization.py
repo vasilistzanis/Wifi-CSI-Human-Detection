@@ -16,6 +16,19 @@ from PyQt5.QtCore import QThread
 from PyQt5.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 from pyqtgraph import PlotWidget, ScatterPlotItem
 
+
+def configure_console_output() -> None:
+    """Avoid UnicodeEncodeError on legacy Windows console encodings."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
+configure_console_output()
+
 DEFAULT_BAUD = 2_000_000
 DEFAULT_BUFFER_SIZE = 200
 DEFAULT_SUBCARRIERS = 128

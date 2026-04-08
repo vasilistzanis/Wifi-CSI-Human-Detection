@@ -23,6 +23,7 @@ IQ convention (ESP32 CSI buf layout):
 """
 
 import json
+import sys
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -35,6 +36,19 @@ DATA_COLUMNS = [
     'fft_gain', 'agc_gain', 'channel', 'local_timestamp',
     'sig_len', 'rx_state', 'len', 'first_word', 'data'
 ]
+
+
+def configure_console_output() -> None:
+    """Avoid UnicodeEncodeError on legacy Windows console encodings."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
+configure_console_output()
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -352,6 +366,11 @@ class CSIPipeline:
             return data
 
         sos = butter(4, cutoff / nyquist, btype='low', output='sos')
+        padlen = 3 * (2 * sos.shape[0] + 1)
+        if data.shape[0] <= padlen:
+            print(f"β οΈ  Lowpass skipped: only {data.shape[0]} frames available "
+                  f"(need > {padlen})")
+            return data
         # sosfiltfilt with axis=0 filters ALL subcarriers in one vectorized call
         return sosfiltfilt(sos, data, axis=0).astype(data.dtype)
 
@@ -481,6 +500,11 @@ class CSIPipeline:
 
         # [6] PCA
         if use_pca:
+            if data.shape[0] < 2:
+                raise ValueError(
+                    "PCA requires at least 2 frames after preprocessing. "
+                    "Capture more data or disable PCA."
+                )
             actual_n = min(n_components, data.shape[0] - 1, data.shape[1])
             
             # ✅ IMPROVED: Warn if components were reduced

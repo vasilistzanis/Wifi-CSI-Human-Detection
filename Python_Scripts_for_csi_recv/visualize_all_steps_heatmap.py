@@ -18,6 +18,21 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib
+
+
+def configure_console_output() -> None:
+    """Avoid UnicodeEncodeError on legacy Windows console encodings."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
+configure_console_output()
+
+
 try:
     matplotlib.use("Qt5Agg")
 except Exception:

@@ -39,7 +39,28 @@ from dataclasses import dataclass
 
 import numpy as np
 import matplotlib
-matplotlib.use("TkAgg")
+
+
+def configure_console_output() -> None:
+    """Avoid UnicodeEncodeError on legacy Windows console encodings."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
+configure_console_output()
+
+
+try:
+    matplotlib.use("Qt5Agg")
+except Exception:
+    try:
+        matplotlib.use("TkAgg")
+    except Exception:
+        pass
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
@@ -320,6 +341,10 @@ def main():
     amp_filt  = pipeline.apply_lowpass_filter(amp, cutoff=args.cutoff)
     amp_bg    = pipeline.apply_background_subtraction(amp_filt, fit=True)
     amp_diff  = pipeline.apply_temporal_diff(amp_bg)   # shape: (N-1, N_active)
+
+    if amp_diff.shape[0] < 2:
+        print("β Need at least 2 frames after preprocessing for motion detection.")
+        sys.exit(1)
 
     n_active  = amp_filt.shape[1]
 

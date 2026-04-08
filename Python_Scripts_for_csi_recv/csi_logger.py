@@ -21,6 +21,20 @@ from pathlib import Path
 import serial
 from serial.tools import list_ports
 
+
+def configure_console_output() -> None:
+    """Avoid UnicodeEncodeError on legacy Windows console encodings."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
+configure_console_output()
+
+
 # Cross-platform defaults
 DEFAULT_PORT = "COM6" if os.name == "nt" else "/dev/ttyUSB0"
 
