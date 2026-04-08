@@ -105,10 +105,6 @@ class MotionEvent:
     def duration_s(self) -> float:
         return (self.end_frame - self.start_frame) / self.fs
 
-    @property
-    def peak_frame(self) -> int:
-        return (self.start_frame + self.end_frame) // 2
-
 
 def compute_frame_energy(diff_data: np.ndarray) -> np.ndarray:
     """
@@ -233,25 +229,45 @@ def main():
         import subprocess
         import sys
         default_dir = resolve_path("datasets")
-        all_files = list(default_dir.glob("*.txt"))
+        all_files = sorted(default_dir.glob("*.txt"))
         if not all_files:
             print(f"❌ No .txt files found in {default_dir}")
             sys.exit(1)
-        
-        # Build the exact command to run for each file
-        base_cmd = [sys.executable, __file__]
+
+        # Forward the same detector settings to every child run so batch mode
+        # produces the same results as processing files one by one.
+        shared_args = [
+            "--fs", str(args.fs),
+            "--background-frames", str(args.background_frames),
+            "--cutoff", str(args.cutoff),
+            "--threshold-k", str(args.threshold_k),
+            "--smooth-ms", str(args.smooth_ms),
+            "--min-duration-ms", str(args.min_duration_ms),
+            "--merge-gap-ms", str(args.merge_gap_ms),
+        ]
         if args.export_ml:
-            base_cmd.append("--export-ml")
-            base_cmd.extend(["--window-frames", str(args.window_frames)])
+            shared_args.append("--export-ml")
+            shared_args.extend(["--window-frames", str(args.window_frames)])
         if args.save:
-            base_cmd.append("--save")
-        
+            shared_args.append("--save")
+
         print(f"🚀 Batch Processing {len(all_files)} files...")
-        for i, f in enumerate(all_files):
-            print(f"\n[{i+1}/{len(all_files)}] Processing {f.name}...")
-            cmd = base_cmd + [str(f)]
-            subprocess.run(cmd)
-            
+        failures: list[tuple[str, int]] = []
+
+        for i, f in enumerate(all_files, start=1):
+            print(f"\n[{i}/{len(all_files)}] Processing {f.name}...")
+            cmd = [sys.executable, __file__, *shared_args, str(f)]
+            result = subprocess.run(cmd)
+            if result.returncode != 0:
+                failures.append((f.name, result.returncode))
+                print(f"   ❌ Failed with exit code {result.returncode}")
+
+        if failures:
+            print("\n❌ Batch processing finished with failures:")
+            for name, code in failures:
+                print(f"   {name}: exit code {code}")
+            sys.exit(1)
+
         print("\n✅ Batch processing completely finished!")
         return
 
@@ -276,7 +292,7 @@ def main():
     # load_csi_matrix raises ValueError if no valid frames found.
     # Wrap it so we get a clean error message instead of a traceback.
     try:
-        complex_matrix, dropped, seq_stats = load_csi_matrix(file_path)
+        complex_matrix, _, seq_stats = load_csi_matrix(file_path)
     except (FileNotFoundError, PermissionError) as e:
         print(f"❌ Cannot open file: {e}")
         sys.exit(1)
@@ -287,7 +303,7 @@ def main():
         print(f"❌ Unexpected error loading file: {e}")
         sys.exit(1)
 
-    n_frames, n_sub = complex_matrix.shape
+    n_frames = complex_matrix.shape[0]
     duration_s = n_frames / args.fs
     print(f"   {n_frames} frames  |  {duration_s:.1f} s  |  "
           f"loss={seq_stats.loss_percent:.2f}%")
@@ -386,7 +402,7 @@ def main():
         f"duration {duration_s:.1f} s  ·  "
         f"{len(events)} event(s)  ·  "
         f"threshold k={args.threshold_k}",
-        fontsize=12, fontweight='bold', y=0.99, color="#111111"
+        fontsize=12, fontweight='bold', y=0.985, color="#111111"
     )
 
     # ── Helper: shade motion events on any axis ───────────────────────────
@@ -536,7 +552,9 @@ def main():
                ncol=2, fontsize=9, framealpha=0.9,
                bbox_to_anchor=(0.5, 0.005))
 
-    plt.tight_layout(rect=[0, 0.04, 1, 0.97])
+    # tight_layout warns when a figure-level legend is present, so reserve
+    # the margins explicitly instead of relying on automatic layout.
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.86, bottom=0.08, hspace=0.55)
 
     # ── Save ──────────────────────────────────────────────────────────────
     if args.save:

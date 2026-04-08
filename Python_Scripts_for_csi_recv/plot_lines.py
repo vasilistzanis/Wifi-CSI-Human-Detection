@@ -136,8 +136,7 @@ def annotate_bg_region(ax, bg_frames: int, fs: float, alpha: float = 0.12):
                linestyle="--", alpha=0.7, zorder=1)
 
 
-def style_ax(ax, title: str, ylabel: str, show_xlabel: bool = True,
-             fs: float = 100.0):
+def style_ax(ax, title: str, ylabel: str, show_xlabel: bool = True):
     """Apply consistent styling to a single axis."""
     ax.set_title(title, fontsize=11, fontweight='bold', pad=8,
                  color="#222222")
@@ -195,18 +194,13 @@ def main():
     
     # ✅ IMPROVED: Better error handling
     try:
-        complex_matrix, dropped, seq_stats = load_csi_matrix(file_path)
+        complex_matrix, _, seq_stats = load_csi_matrix(file_path)
     except (FileNotFoundError, PermissionError, ValueError) as e:
         print(f"❌ Error loading file: {e}")
         sys.exit(1)
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
         sys.exit(1)
-
-    if complex_matrix.size == 0:
-        print("❌ No valid frames — exiting")
-        sys.exit(1)
-
     n_frames, n_sub = complex_matrix.shape
     print(f"   {n_frames} frames × {n_sub} subcarriers | "
           f"loss={seq_stats.loss_percent:.2f}% | "
@@ -223,8 +217,6 @@ def main():
     # ✅ IMPROVED: Validate each step
     try:
         # Stage 0: Raw amplitude (all subcarriers including nulls)
-        amp_raw = np.abs(complex_matrix)
-
         # Stage 1: Null removal + Hampel + Butterworth
         amp_null = pipeline.remove_null_subcarriers(complex_matrix, fit=True)
         
@@ -313,7 +305,7 @@ def main():
     SC_COLORS  = get_color_palette(max(len(sc_indices), n_pca))
     PCA_COLORS = ['#e63946', '#2a9d8f', '#e9c46a', '#457b9d', '#f4a261']
 
-    def create_window(title_suffix):
+    def create_window():
         fig, ax = plt.subplots(figsize=(12, 6))
         fig.suptitle(global_suptitle, fontsize=12, fontweight='bold', 
                     y=0.96, color="#111111")
@@ -336,7 +328,7 @@ def main():
     
     try:
         # ── PANEL 0 — Raw Amplitude (Window 1) ────────────────────────────
-        fig0, ax0 = create_window("Raw")
+        fig0, ax0 = create_window()
         for i, sc in enumerate(sc_indices):
             ax0.plot(t_full, amp_null[:, sc],
                     color=SC_COLORS[i], linewidth=1.2, alpha=0.85,
@@ -356,7 +348,7 @@ def main():
             print(f"💾 Saved: {out_path}")
 
         # ── PANEL 1 — Filtered Amplitude (Window 2) ───────────────────────
-        fig1, ax1 = create_window("Filtered")
+        fig1, ax1 = create_window()
         for i, sc in enumerate(sc_indices):
             ax1.plot(t_full, amp_filt[:, sc],
                     color=SC_COLORS[i], linewidth=1.5, alpha=0.9,
@@ -376,7 +368,7 @@ def main():
             print(f"💾 Saved: {out_path}")
 
         # ── PANEL 2 — After Background Subtraction (Window 3) ─────────────
-        fig2, ax2 = create_window("Background Sub")
+        fig2, ax2 = create_window()
         if bg_enabled:
             for i, sc in enumerate(sc_indices):
                 ax2.plot(t_full, amp_bg[:, sc],
@@ -403,7 +395,7 @@ def main():
             print(f"💾 Saved: {out_path}")
 
         # ── PANEL 3 — Temporal Difference (Window 4) ──────────────────────
-        fig3, ax3 = create_window("Temporal Diff")
+        fig3, ax3 = create_window()
         if diff_enabled:
             for i, sc in enumerate(sc_indices):
                 ax3.plot(t_diff, amp_diff[:, sc],
@@ -429,7 +421,7 @@ def main():
             print(f"💾 Saved: {out_path}")
 
         # ── PANEL 4 — PCA Components (Window 5) ───────────────────────────
-        fig4, ax4 = create_window("PCA")
+        fig4, ax4 = create_window()
         for i in range(n_pca):
             color = PCA_COLORS[i % len(PCA_COLORS)]
             label = (f"PC{i+1}  ({explained[i]:.1f}% var)")

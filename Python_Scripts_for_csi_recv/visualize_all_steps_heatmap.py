@@ -170,8 +170,6 @@ def main():
     null_count     = n_sub - active_count
     bg_enabled     = args.background_frames > 0
     diff_enabled   = not args.no_diff
-    diff_info      = f"N→{amp_step5.shape[0]} frames" if diff_enabled else "disabled"
-
     print(f"\n📊 Pipeline stats:")
     print(f"   [0] Raw:            {amp_step0.shape}")
     print(f"   [1] Null removed:   {amp_step1.shape} ({null_count} nulls)")
@@ -234,7 +232,7 @@ def main():
     # Δημιουργούμε ένα ξεχωριστό παράθυρο (figure) για κάθε γράφημα
     # ✅ IMPROVED: Better error handling for plotting
     try:
-        for idx, (data, title, cmap) in enumerate(plots_config):
+        for data, title, cmap in plots_config:
             fig, ax = plt.subplots(figsize=(10, 6))
             fig.patch.set_facecolor(STYLE_BG)
             ax.set_facecolor(STYLE_PANEL)

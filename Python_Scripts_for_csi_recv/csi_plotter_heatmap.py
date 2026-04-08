@@ -37,6 +37,7 @@ plt.ioff()  # Disable interactive mode for faster background rendering
 import numpy as np
 
 BASE_DIR = Path(__file__).resolve().parent
+RECV_FIELD_COUNT = 15
 
 # ════════════════════════════════════════════════════════════════════════
 # SEQUENCE STATS
@@ -101,19 +102,32 @@ def get_latest_dataset(datasets_dir: Path) -> Path | None:
     return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
 
+def split_recv_fields(line: str) -> list[str] | None:
+    """Split one recv/logger line and reject malformed concatenated records."""
+    if not line.startswith("CSI_DATA"):
+        return None
+
+    parts = [part.strip() for part in line.strip().split(",", RECV_FIELD_COUNT - 1)]
+    if len(parts) != RECV_FIELD_COUNT:
+        return None
+
+    for idx in (1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
+        try:
+            int(parts[idx])
+        except ValueError:
+            return None
+
+    return parts
+
+
 # ════════════════════════════════════════════════════════════════════════
 # PARSING
 # ════════════════════════════════════════════════════════════════════════
 
 def extract_seq(line: str) -> int | None:
     """Extract sequence number from CSI_DATA line (field index 1)."""
-    parts = line.split(",", 3)
-    if len(parts) < 2:
-        return None
-    try:
-        return int(parts[1])
-    except ValueError:
-        return None
+    parts = split_recv_fields(line)
+    return int(parts[1]) if parts is not None else None
 
 
 def parse_csi_line(line: str) -> np.ndarray | None:
@@ -124,16 +138,15 @@ def parse_csi_line(line: str) -> np.ndarray | None:
     So values[0::2] = imaginary, values[1::2] = real.
     complex(i) = real[i] + j*imag[i]
     """
-    if not line.startswith("CSI_DATA"):
+    parts = split_recv_fields(line)
+    if parts is None:
         return None
 
-    # Extract the payload between [ and ]
-    start = line.find("[")
-    end = line.rfind("]")          # rfind to avoid issues with nested brackets
-    if start == -1 or end == -1 or end <= start + 1:
+    payload = parts[14].strip().strip('"')
+    if not payload.startswith("[") or not payload.endswith("]"):
         return None
 
-    payload = line[start + 1:end].strip()
+    payload = payload[1:-1].strip()
     if not payload:
         return None
 

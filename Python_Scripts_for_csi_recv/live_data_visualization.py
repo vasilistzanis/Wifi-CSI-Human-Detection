@@ -6,7 +6,7 @@ import os
 import sys
 import threading
 from dataclasses import dataclass, field
-from pathlib import Path
+
 
 import numpy as np
 import pyqtgraph as pg
@@ -22,7 +22,25 @@ DEFAULT_SUBCARRIERS = 128
 DEFAULT_REFRESH_MS = 50
 DEFAULT_SERIAL_TIMEOUT = 0.25
 DEFAULT_SERIAL_BUFFER_SIZE = 2_000_000
+RECV_FIELD_COUNT = 15
 
+
+
+def split_recv_fields(line: str):
+    if not line.startswith("CSI_DATA"):
+        return None
+
+    parts = [part.strip() for part in line.strip().split(",", RECV_FIELD_COUNT - 1)]
+    if len(parts) != RECV_FIELD_COUNT:
+        return None
+
+    for idx in (1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
+        try:
+            int(parts[idx])
+        except ValueError:
+            return None
+
+    return parts
 
 
 def parse_args():
@@ -73,28 +91,22 @@ def safe_set_buffer_size(ser: serial.Serial, rx_size: int) -> None:
 
 
 def extract_payload(line: str):
-    start_idx = line.find("[")
-    end_idx = line.find("]")
-    if start_idx == -1 or end_idx == -1 or end_idx <= start_idx + 1:
+    parts = split_recv_fields(line)
+    if parts is None:
         return None
-    return line[start_idx + 1:end_idx].strip()
+
+    payload = parts[14].strip().strip('"')
+    if not payload.startswith("[") or not payload.endswith("]"):
+        return None
+    return payload[1:-1].strip()
 
 
 def extract_seq(line: str):
-    parts = line.split(",", 3)
-    if len(parts) < 2:
-        return None
-
-    try:
-        return int(parts[1])
-    except ValueError:
-        return None
+    parts = split_recv_fields(line)
+    return int(parts[1]) if parts is not None else None
 
 
 def parse_csi_frame(line: str, subcarriers: int):
-    if not line.startswith("CSI_DATA"):
-        return None
-
     payload = extract_payload(line)
     if not payload:
         return None

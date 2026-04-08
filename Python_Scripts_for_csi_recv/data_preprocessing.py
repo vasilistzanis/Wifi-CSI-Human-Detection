@@ -74,6 +74,28 @@ def _build_complex_frame(raw: list, first_word_invalid: bool):
     return (real + 1j * imag).astype(np.complex64)
 
 
+def _parse_recv_row(line: str) -> dict[str, str] | None:
+    """
+    Parse one CSI recv/logger line into the expected metadata columns.
+
+    The CSI payload contains many commas, so we split only the first
+    14 separators and keep the full payload as the final field.
+    """
+    line = line.strip()
+    if not line or line.startswith("type,"):
+        return None
+    if not line.startswith("CSI_DATA"):
+        return None
+
+    parts = line.split(",", len(DATA_COLUMNS) - 1)
+    if len(parts) != len(DATA_COLUMNS):
+        return None
+
+    row = dict(zip(DATA_COLUMNS, (part.strip() for part in parts)))
+    row["data"] = row["data"].strip().strip('"')
+    return row
+
+
 # ════════════════════════════════════════════════════════════════════════
 # LOADERS
 # ════════════════════════════════════════════════════════════════════════
@@ -91,14 +113,14 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
         raise FileNotFoundError(f"File not found: {filepath}")
 
     # Load — names=DATA_COLUMNS + default header=0 skips the logger header row
-    try:
-        df = pd.read_csv(filepath, names=DATA_COLUMNS,
-                         on_bad_lines='skip', dtype=str)
-    except TypeError:
-        df = pd.read_csv(filepath, names=DATA_COLUMNS,
-                         error_bad_lines=False, dtype=str)
+    rows = []
+    with filepath.open("r", encoding="utf-8", errors="ignore") as fh:
+        for line in fh:
+            row = _parse_recv_row(line)
+            if row is not None:
+                rows.append(row)
 
-    df = df[df['type'] == 'CSI_DATA'].copy().reset_index(drop=True)
+    df = pd.DataFrame(rows, columns=DATA_COLUMNS)
 
     if df.empty:
         print("⚠️  No CSI_DATA rows found.")
@@ -179,12 +201,6 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
 
     return complex_matrix, metadata_df
 
-
-def get_latest_csv(folder: str | Path) -> Path | None:
-    """Return the most recently modified CSV or TXT file in folder."""
-    folder = Path(folder)
-    files = list(folder.glob("*.csv")) + list(folder.glob("*.txt"))
-    return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
 
 # ════════════════════════════════════════════════════════════════════════
