@@ -50,6 +50,12 @@ static atomic_uint s_tx_attempt_count = 0;
 static atomic_uint s_tx_api_fail_count = 0;
 static atomic_uint s_tx_cb_success_count = 0;
 static atomic_uint s_tx_cb_fail_count = 0;
+static atomic_uint s_tx_cb_fail_streak = 0;
+static atomic_uint s_tx_session_attempt_count = 0;
+static atomic_uint s_tx_session_api_fail_count = 0;
+static atomic_uint s_tx_session_cb_success_count = 0;
+static atomic_uint s_tx_session_cb_fail_count = 0;
+static atomic_uint s_tx_session_active = 0;
 
 /* ════════════════════════════════════════════════════════════════════════
    1. ANTENNA INIT
@@ -131,11 +137,25 @@ static void esp_now_send_stats_cb(const uint8_t *mac, esp_now_send_status_t stat
 #endif
     if (status == ESP_NOW_SEND_SUCCESS)
     {
+        if (atomic_exchange(&s_tx_session_active, 1) == 0)
+        {
+            atomic_store(&s_tx_session_attempt_count, 1);
+            atomic_store(&s_tx_session_api_fail_count, 0);
+            atomic_store(&s_tx_session_cb_success_count, 0);
+            atomic_store(&s_tx_session_cb_fail_count, 0);
+        }
         atomic_fetch_add(&s_tx_cb_success_count, 1);
+        atomic_fetch_add(&s_tx_session_cb_success_count, 1);
+        atomic_store(&s_tx_cb_fail_streak, 0);
     }
     else
     {
         atomic_fetch_add(&s_tx_cb_fail_count, 1);
+        atomic_fetch_add(&s_tx_cb_fail_streak, 1);
+        if (atomic_load(&s_tx_session_active) != 0)
+        {
+            atomic_fetch_add(&s_tx_session_cb_fail_count, 1);
+        }
     }
 }
 
@@ -164,6 +184,12 @@ static void log_tx_stats(void)
     unsigned long cb_success = (unsigned long)atomic_load(&s_tx_cb_success_count);
     unsigned long cb_fail = (unsigned long)atomic_load(&s_tx_cb_fail_count);
     unsigned long cb_total = cb_success + cb_fail;
+    unsigned long session_attempts = (unsigned long)atomic_load(&s_tx_session_attempt_count);
+    unsigned long session_api_fails = (unsigned long)atomic_load(&s_tx_session_api_fail_count);
+    unsigned long session_cb_success = (unsigned long)atomic_load(&s_tx_session_cb_success_count);
+    unsigned long session_cb_fail = (unsigned long)atomic_load(&s_tx_session_cb_fail_count);
+    unsigned long session_cb_total = session_cb_success + session_cb_fail;
+    bool session_active = atomic_load(&s_tx_session_active) != 0;
 
     double api_fail_pct = (attempts > 0)
                               ? (100.0 * (double)api_fails / (double)attempts)
@@ -171,15 +197,30 @@ static void log_tx_stats(void)
     double cb_fail_pct = (cb_total > 0)
                              ? (100.0 * (double)cb_fail / (double)cb_total)
                              : 0.0;
+    double session_api_fail_pct = (session_attempts > 0)
+                                      ? (100.0 * (double)session_api_fails / (double)session_attempts)
+                                      : 0.0;
+    double session_cb_fail_pct = (session_cb_total > 0)
+                                     ? (100.0 * (double)session_cb_fail / (double)session_cb_total)
+                                     : 0.0;
 
     ESP_LOGI(TAG,
-             "TX stats | attempts=%lu api_fail=%lu (%.2f%%) cb_ok=%lu cb_fail=%lu (%.2f%%)",
+             "TX total   | attempts=%lu api_fail=%lu (%.2f%%) cb_ok=%lu cb_fail=%lu (%.2f%%)",
              attempts,
              api_fails,
              api_fail_pct,
              cb_success,
              cb_fail,
              cb_fail_pct);
+    ESP_LOGI(TAG,
+             "TX session | attempts=%lu api_fail=%lu (%.2f%%) cb_ok=%lu cb_fail=%lu (%.2f%%)%s",
+             session_attempts,
+             session_api_fails,
+             session_api_fail_pct,
+             session_cb_success,
+             session_cb_fail,
+             session_cb_fail_pct,
+             session_active ? "" : " [waiting for first successful link-up]");
 }
 
 void app_main(void)
@@ -244,6 +285,10 @@ void app_main(void)
 
         payload.sequence_id = sequence_id++;
         atomic_fetch_add(&s_tx_attempt_count, 1);
+        if (atomic_load(&s_tx_session_active) != 0)
+        {
+            atomic_fetch_add(&s_tx_session_attempt_count, 1);
+        }
         ret = esp_now_send(peer.peer_addr,
                            (const uint8_t *)&payload,
                            sizeof(payload));
@@ -251,25 +296,45 @@ void app_main(void)
         if (ret != ESP_OK)
         {
             atomic_fetch_add(&s_tx_api_fail_count, 1);
-            api_fail_streak++;
-            if (api_fail_streak >= 20)
+            if (atomic_load(&s_tx_session_active) != 0)
             {
-                ESP_LOGE(TAG, "Too many errors [%lu] — reinit ESP-NOW: %s",
-                         (unsigned long)api_fail_streak, esp_err_to_name(ret));
-                ESP_ERROR_CHECK(esp_now_deinit());
-                vTaskDelay(pdMS_TO_TICKS(500));
-                wifi_esp_now_init(peer);
-                api_fail_streak = 0;
-                /* ✅ FIX: Reset timing μετά από reinit
-                   Χωρίς αυτό, το loop θα προσπαθούσε να στείλει
-                   ~50 frames αμέσως για να "αναπληρώσει" το χαμένο χρόνο */
-                next_send_us = esp_timer_get_time();
-                next_stats_us = next_send_us + TX_STATS_PERIOD_US;
+                atomic_fetch_add(&s_tx_session_api_fail_count, 1);
             }
+            api_fail_streak++;
         }
         else
         {
             api_fail_streak = 0;
+        }
+
+        unsigned int cb_fail_streak = atomic_load(&s_tx_cb_fail_streak);
+        if (api_fail_streak >= 20 || cb_fail_streak >= 20)
+        {
+            if (api_fail_streak >= 20)
+            {
+                ESP_LOGE(TAG, "Too many errors [%lu] — reinit ESP-NOW: %s",
+                         (unsigned long)api_fail_streak, esp_err_to_name(ret));
+            }
+            else
+            {
+                ESP_LOGE(TAG, "Too many callback send failures [%lu] - reinit ESP-NOW",
+                         (unsigned long)cb_fail_streak);
+            }
+            ESP_ERROR_CHECK(esp_now_deinit());
+            vTaskDelay(pdMS_TO_TICKS(500));
+            wifi_esp_now_init(peer);
+            api_fail_streak = 0;
+            atomic_store(&s_tx_cb_fail_streak, 0);
+            atomic_store(&s_tx_session_active, 0);
+            atomic_store(&s_tx_session_attempt_count, 0);
+            atomic_store(&s_tx_session_api_fail_count, 0);
+            atomic_store(&s_tx_session_cb_success_count, 0);
+            atomic_store(&s_tx_session_cb_fail_count, 0);
+            /* ✅ FIX: Reset timing μετά από reinit
+               Χωρίς αυτό, το loop θα προσπαθούσε να στείλει
+               ~50 frames αμέσως για να "αναπληρώσει" το χαμένο χρόνο */
+            next_send_us = esp_timer_get_time();
+            next_stats_us = next_send_us + TX_STATS_PERIOD_US;
         }
 
         /* Deterministic timing — αφαιρεί τον χρόνο εκτέλεσης */

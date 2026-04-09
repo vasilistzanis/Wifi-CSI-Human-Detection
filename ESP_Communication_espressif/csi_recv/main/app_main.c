@@ -249,6 +249,7 @@ static void csi_print_task(void *arg)
 
         /* ✅ Όλα σε ένα buffer — ένα μόνο ets_printf call */
         int size = PRINT_BUF_SIZE;
+        bool truncated = false;
         int pos = snprintf(print_buffer, size,
                            "CSI_DATA,%lu," MACSTR ",%d,%d,%d,%d,%d,%d,%lu,%lu,%d,%d,%d,\"[",
                            (unsigned long)item.rx_id,
@@ -265,6 +266,12 @@ static void csi_print_task(void *arg)
                            (int)item.len,
                            (int)item.first_word_invalid);
 
+        if (pos < 0 || pos >= size)
+        {
+            atomic_fetch_add(&s_drop_count, 1);
+            continue;
+        }
+
         /* Subcarriers */
         for (int i = 0; i < item.len; i++)
         {
@@ -280,14 +287,20 @@ static void csi_print_task(void *arg)
             {
                 /* ✅ FIX: Buffer overflow — atomic count αντί για silent drop */
                 atomic_fetch_add(&s_drop_count, 1);
+                truncated = true;
                 break;
             }
         }
 
         /* Κλείσιμο και εκτύπωση */
-        if (pos + 4 < size)
+        if (truncated)
         {
-            snprintf(print_buffer + pos, size - pos, "]\"\n");
+            continue;
+        }
+
+        int closing = snprintf(print_buffer + pos, size - pos, "]\"\n");
+        if (closing > 0 && pos + closing < size)
+        {
             ets_printf("%s", print_buffer);
         }
         else
