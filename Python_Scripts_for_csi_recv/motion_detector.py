@@ -3,7 +3,7 @@
 
 """
 CSI Motion Detector & Visualizer — Thesis Grade
-================================================
+
 Automatically detects WHEN motion occurs in a CSI recording using
 energy-based thresholding on the temporal difference signal.
 
@@ -40,7 +40,6 @@ from dataclasses import dataclass
 import numpy as np
 import matplotlib
 
-
 def configure_console_output() -> None:
     """Avoid UnicodeEncodeError on legacy Windows console encodings."""
     for stream in (sys.stdout, sys.stderr):
@@ -50,9 +49,7 @@ def configure_console_output() -> None:
             except Exception:
                 pass
 
-
 configure_console_output()
-
 
 try:
     matplotlib.use("Qt5Agg")
@@ -61,12 +58,14 @@ except Exception:
         matplotlib.use("TkAgg")
     except Exception:
         pass
+
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
+from sklearn.preprocessing import StandardScaler
+
 from csi_plotter_heatmap import load_csi_matrix, resolve_path, get_latest_dataset
 from data_preprocessing import CSIPipeline
-
 
 # ════════════════════════════════════════════════════════════════════════
 # ARGS
@@ -102,7 +101,6 @@ def parse_args():
     p.add_argument("--merge-gap-ms", type=float, default=300.0,
                    help="Merge events closer than this gap in ms (default: 300 ms)")
     return p.parse_args()
-
 
 # ════════════════════════════════════════════════════════════════════════
 # MOTION DETECTION LOGIC
@@ -151,8 +149,8 @@ def smooth_energy(energy: np.ndarray, window_frames: int) -> np.ndarray:
 
 
 def compute_adaptive_threshold(energy: np.ndarray,
-                                bg_frames: int,
-                                k: float) -> tuple[float, float, float]:
+                               bg_frames: int,
+                               k: float) -> tuple[float, float, float]:
     """
     Estimate threshold from the background (calibration) period.
 
@@ -189,10 +187,10 @@ def compute_adaptive_threshold(energy: np.ndarray,
 
 
 def detect_motion_events(energy_smooth: np.ndarray,
-                          threshold: float,
-                          fs: float,
-                          min_duration_ms: float,
-                          merge_gap_ms: float) -> list[MotionEvent]:
+                         threshold: float,
+                         fs: float,
+                         min_duration_ms: float,
+                         merge_gap_ms: float) -> list[MotionEvent]:
     """
     Convert the thresholded binary signal into a list of MotionEvent objects.
 
@@ -343,7 +341,7 @@ def main():
     amp_diff  = pipeline.apply_temporal_diff(amp_bg)   # shape: (N-1, N_active)
 
     if amp_diff.shape[0] < 2:
-        print("β Need at least 2 frames after preprocessing for motion detection.")
+        print("❌ Need at least 2 frames after preprocessing for motion detection.")
         sys.exit(1)
 
     n_active  = amp_filt.shape[1]
@@ -609,40 +607,65 @@ def main():
 
     # ── Export for Machine Learning (Windowing) ───────────────────────────
     if args.export_ml and events:
-        # Using amp_filt as the clean 'processed' data
-        processed = amp_filt
+        # ✅ FIX: Use amp_diff (background subtracted + temporal diff) with
+        # StandardScaler normalization instead of raw amp_filt.
+        #
+        # Previous code used amp_filt (only Butterworth filtered) which:
+        #   - Had no background subtraction → static room baseline still present
+        #   - Had no temporal differencing  → absolute amplitude, not rate-of-change
+        #   - Had no normalization          → values not ML-friendly
+        #
+        # amp_diff already has:
+        #   ✅ Null subcarrier removal
+        #   ✅ Hampel outlier filter
+        #   ✅ Butterworth low-pass filter
+        #   ✅ Background subtraction (static room removed)
+        #   ✅ Temporal differencing (environment-independent)
+        #
+        # StandardScaler adds:
+        #   ✅ Z-score normalization → mean=0, std=1 per subcarrier
+        #   ✅ Consistent scale for LSTM training regardless of environment
+        #
+        # Shape: (N-1, 114) → same as before, compatible with train_lstm.py defaults.
+        scaler = StandardScaler()
+        processed = scaler.fit_transform(amp_diff)
+
         num_features = processed.shape[1]
-        
+
+        print(f"\n📦 Exporting ML windows  "
+              f"(processed shape: {processed.shape}, "
+              f"features: {num_features}, "
+              f"window: {args.window_frames} frames)")
+
         for i, ev in enumerate(events):
             # 1. Start from the center of motion
             center = (ev.start_frame + ev.end_frame) // 2
             half_win = args.window_frames // 2
-            
+
             w_start = center - half_win
             w_end = center + (args.window_frames - half_win)
-            
+
             # 2. Setup zero-padded window for consistent sizing
             window = np.zeros((args.window_frames, num_features), dtype=np.float32)
-            
+
             # 3. Calculate bounded indices
             src_start = max(0, w_start)
             src_end = min(processed.shape[0], w_end)
-            
+
             dst_start = src_start - w_start
             dst_end = dst_start + (src_end - src_start)
-            
+
             # 4. Copy the data into the padded window
             window[dst_start:dst_end, :] = processed[src_start:src_end, :]
-            
+
             # 5. Save as NPY
             out_npy = file_path.parent / f"{file_path.stem}_ml_ev{i+1}.npy"
             np.save(out_npy, window)
-            print(f"📦 ML Window saved: {out_npy} (Shape: {window.shape})")
+            print(f"   💾 {out_npy.name}  shape={window.shape}")
 
     if not args.export_ml:
         plt.show()
     plt.rcParams.update(plt.rcParamsDefault)
-
 
 if __name__ == "__main__":
     main()
