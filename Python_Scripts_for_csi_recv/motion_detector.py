@@ -78,7 +78,7 @@ def parse_args():
     p.add_argument("file", nargs="?", default=None,
                    help="TXT or CSV file (default: latest in datasets/)")
     p.add_argument("--process-all", action="store_true",
-                   help="Process ALL .txt files in the datasets/ folder automatically")
+                   help="Process ALL .txt and .csv files in the datasets/ folder automatically")
     p.add_argument("--save", action="store_true",
                    help="Save PNG and motion CSV next to dataset file")
     p.add_argument("--export-ml", action="store_true",
@@ -252,7 +252,7 @@ def main():
             list(default_dir.glob("*.txt")) + list(default_dir.glob("*.csv"))
         )
         if not all_files:
-            print(f"❌ No .txt files found in {default_dir}")
+            print(f"❌ No .txt or .csv files found in {default_dir}")
             sys.exit(1)
 
         # Forward the same detector settings to every child run so batch mode
@@ -344,6 +344,17 @@ def main():
 
     if amp_diff.shape[0] < 2:
         print("❌ Need at least 2 frames after preprocessing for motion detection.")
+        sys.exit(1)
+
+    # NaN/Inf check: a corrupted recording or very short background period can
+    # cause Butterworth or background subtraction to produce NaN/Inf.
+    # If energy = NaN → threshold = NaN → detect_motion_events returns
+    # wrong results silently (either all frames or no frames flagged as motion).
+    if not np.all(np.isfinite(amp_diff)):
+        n_bad = int(np.sum(~np.isfinite(amp_diff)))
+        print(f"❌ amp_diff contains {n_bad} NaN/Inf values after preprocessing.")
+        print("   Possible causes: recording too short for Butterworth filter, "
+              "or all-zero subcarriers after null removal.")
         sys.exit(1)
 
     n_active  = amp_filt.shape[1]
