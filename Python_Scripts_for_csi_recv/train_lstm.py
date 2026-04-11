@@ -138,6 +138,16 @@ def load_data(dataset_dir: str, classes: list[str],
             skipped_shape += 1
             continue
 
+        # NaN/Inf check: motion_detector zero-pads short windows, which is fine.
+        # But corrupted exports or preprocessing errors can produce NaN/Inf.
+        # These would cause the LSTM to produce nan loss silently from epoch 1.
+        if np.any(~np.isfinite(data)):
+            n_bad = int(np.sum(~np.isfinite(data)))
+            print(f"   ⚠️  Skipped {name}: contains {n_bad} NaN/Inf values "
+                  f"(corrupted export or preprocessing error)")
+            skipped_shape += 1
+            continue
+
         X.append(data.astype(np.float32))
         y.append(label_idx)
 
@@ -357,8 +367,7 @@ def main():
         print(f"❌ Too few samples ({len(X)}) for stratified splits with "
               f"{n_classes} classes. Need at least {min_samples} samples.")
         sys.exit(1)
-    #
-    # DATA LEAKAGE RULE: augmentation must NEVER touch validation or test data.
+    # ── Three-way split: MUST happen BEFORE augmentation ─────────────────
     # If augment() runs before the val split, shuffled clones of train samples
     # can end up in validation → the model "cheats" by recognizing near-copies
     # of training samples, inflating val_accuracy artificially.
@@ -439,7 +448,8 @@ def main():
     # ── Train ─────────────────────────────────────────────────────────────
     print(f"\n🚀 Training  (max {args.epochs} epochs, "
           f"batch={args.batch_size}, "
-          f"val_split={args.val_split})...")
+          f"val_fraction={val_ratio:.1%} of train data "
+          f"[≈{args.val_split:.0%} of total])...")
 
     history = model.fit(
         X_train, y_train_cat,

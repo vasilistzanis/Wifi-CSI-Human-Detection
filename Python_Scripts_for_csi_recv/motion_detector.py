@@ -248,7 +248,9 @@ def main():
         import subprocess
         import sys
         default_dir = resolve_path("datasets")
-        all_files = sorted(default_dir.glob("*.txt"))
+        all_files = sorted(
+            list(default_dir.glob("*.txt")) + list(default_dir.glob("*.csv"))
+        )
         if not all_files:
             print(f"❌ No .txt files found in {default_dir}")
             sys.exit(1)
