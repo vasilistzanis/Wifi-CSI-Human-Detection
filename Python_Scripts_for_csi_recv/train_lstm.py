@@ -37,9 +37,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import (
-    confusion_matrix, classification_report, ConfusionMatrixDisplay
-)
+from sklearn.metrics import confusion_matrix, classification_report
 from sklearn.utils.class_weight import compute_class_weight
 
 import tensorflow as tf
@@ -48,7 +46,7 @@ from tensorflow.keras.layers import (
     Bidirectional, LSTM, Dense, Dropout, BatchNormalization, Input
 )
 from tensorflow.keras.callbacks import (
-    EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
+    EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 )
 from tensorflow.keras.utils import to_categorical
 
@@ -172,11 +170,13 @@ def load_data(dataset_dir: str, classes: list[str],
 
 def augment(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
-    Simple augmentation for time-series CSI:
-      1. Gaussian noise injection       (σ = 2% of signal std)
+    Augmentation for time-series CSI — triples the dataset:
+      Original + Gaussian noise + time-shift = 3× samples.
+
+      1. Gaussian noise injection  (σ = 2% of signal std)
       2. Time jitter (random ±5% shift with wrap-around)
 
-    Doubles the dataset. Applied only to training data.
+    Applied ONLY to training data, never to validation or test.
     """
     rng = np.random.default_rng(SEED)
     noise_std = X.std() * 0.02
@@ -262,17 +262,17 @@ def plot_history(history, output_dir: str) -> None:
     axes[0].set_title("Accuracy")
     axes[0].set_xlabel("Epoch")
     axes[0].set_ylabel("Accuracy")
-    axes[0].legend()
     axes[0].grid(True, alpha=0.4)
 
-    # Mark best validation accuracy
+    # Mark best validation accuracy — added BEFORE legend() so it appears in it
     best_epoch = int(np.argmax(history.history["val_accuracy"])) + 1
     best_val   = max(history.history["val_accuracy"])
     axes[0].axvline(best_epoch, color="#f4a261", linestyle=":", linewidth=1.5,
-                    label=f"Best epoch ({best_epoch})")
+                    label=f"Best epoch {best_epoch} ({best_val:.3f})")
     axes[0].annotate(f"{best_val:.3f}", xy=(best_epoch, best_val),
                      xytext=(5, -15), textcoords="offset points",
                      fontsize=9, color="#f4a261")
+    axes[0].legend()   # after axvline → best epoch appears in legend
 
     # Loss
     axes[1].plot(epochs, history.history["loss"],
@@ -295,8 +295,11 @@ def plot_history(history, output_dir: str) -> None:
 def plot_confusion_matrix(y_true, y_pred, classes: list[str],
                           output_dir: str) -> None:
     """Plot both raw counts and normalized confusion matrix side by side."""
-    cm       = confusion_matrix(y_true, y_pred)
-    cm_norm  = cm.astype(float) / cm.sum(axis=1, keepdims=True)
+    cm      = confusion_matrix(y_true, y_pred)
+    # nan_to_num: if a class has 0 test samples, division → NaN → blank heatmap cell
+    cm_norm = np.nan_to_num(
+        cm.astype(float) / cm.sum(axis=1, keepdims=True)
+    )
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     fig.suptitle("Confusion Matrix", fontsize=13, fontweight="bold")
@@ -344,19 +347,38 @@ def main():
         print(f"   After augmentation: {len(X_train)} training samples")
 
     # ── Class weights (handles imbalanced datasets) ───────────────────────
-    # If fall has 30 samples and idle has 120, fall gets weight ×4
+    # If fall has 30 samples and idle has 120, fall gets weight ×4.
+    # CRITICAL: use np.unique(y_train) as keys, NOT enumerate index.
+    # If a class is absent from y_train, enumerate gives wrong key assignments
+    # (e.g. class label 2 gets key 1) → Keras trains with silently wrong weights.
+    unique_classes   = np.unique(y_train)
     class_weights_arr = compute_class_weight(
-        "balanced", classes=np.unique(y_train), y=y_train
+        "balanced", classes=unique_classes, y=y_train
     )
-    class_weight_dict = {i: float(w) for i, w in enumerate(class_weights_arr)}
+    class_weight_dict = {int(c): float(w)
+                         for c, w in zip(unique_classes, class_weights_arr)}
     print(f"\n   Class weights: "
           f"{', '.join(f'{args.classes[i]}={w:.2f}' for i, w in class_weight_dict.items())}")
 
-    # ── One-hot encode labels ─────────────────────────────────────────────
+    # ── Validation split from training data (stratified) ─────────────────
+    # CRITICAL: validation_split in model.fit() takes the LAST N% of training
+    # data WITHOUT shuffling. Since files are loaded alphabetically
+    # (idle_001...walk_003...), the last fraction is always the same class.
+    # Fix: split explicitly with stratify=y_train BEFORE fit().
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train, y_train,
+        test_size=args.val_split,
+        random_state=SEED,
+        stratify=y_train
+    )
+    y_val_cat = to_categorical(y_val, num_classes=n_classes)
+
+    # ── One-hot encode all labels ─────────────────────────────────────────
     y_train_cat = to_categorical(y_train, num_classes=n_classes)
+    y_val_cat   = to_categorical(y_val,   num_classes=n_classes)
     y_test_cat  = to_categorical(y_test,  num_classes=n_classes)
 
-    # ── Build model ───────────────────────────────────────────────────────
+    print(f"   Train: {len(X_train)}  Val: {len(X_val)}  Test: {len(X_test)}")
     print("\n🔧 Building Bidirectional LSTM model...")
     model = build_model(args.frames, args.subcarriers, n_classes)
     model.summary()
@@ -392,7 +414,7 @@ def main():
         X_train, y_train_cat,
         epochs=args.epochs,
         batch_size=args.batch_size,
-        validation_split=args.val_split,
+        validation_data=(X_val, y_val_cat),   # explicit stratified val set
         class_weight=class_weight_dict,
         callbacks=callbacks,
         verbose=1,
@@ -409,8 +431,10 @@ def main():
 
     # Per-class metrics (precision, recall, F1)
     print("\n📋 Per-class metrics:")
+    # labels=range(n_classes) prevents ValueError if some class absent from y_test
     print(classification_report(
         y_test, y_pred_classes,
+        labels=list(range(n_classes)),
         target_names=args.classes,
         digits=3
     ))
