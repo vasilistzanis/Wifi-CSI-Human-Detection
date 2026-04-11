@@ -335,23 +335,62 @@ def main():
     X, y = load_data(args.dataset, args.classes, args.frames, args.subcarriers)
     n_classes = len(args.classes)
 
-    # ── Train / test split ────────────────────────────────────────────────
-    # stratify=y ensures each class is proportionally represented
-    X_train, X_test, y_train, y_test = train_test_split(
+    # ── Input validation ──────────────────────────────────────────────────
+    # Validate split fractions before any splitting happens
+    if args.test_split <= 0 or args.test_split >= 1:
+        print(f"❌ --test-split must be between 0 and 1, got {args.test_split}")
+        sys.exit(1)
+
+    val_ratio = args.val_split / (1.0 - args.test_split)
+    if val_ratio <= 0 or val_ratio >= 1:
+        print(f"❌ --val-split={args.val_split} combined with "
+              f"--test-split={args.test_split} gives val_ratio={val_ratio:.3f}. "
+              f"Ensure val_split + test_split < 1.0")
+        sys.exit(1)
+
+    # stratified split requires ≥ 2 samples per class in every split.
+    # Minimum: n_classes × (1/min_fraction) samples total.
+    min_per_class = 2
+    min_fraction  = min(args.test_split, val_ratio, 1 - args.test_split - args.val_split)
+    min_samples   = int(np.ceil(n_classes * min_per_class / min_fraction))
+    if len(X) < min_samples:
+        print(f"❌ Too few samples ({len(X)}) for stratified splits with "
+              f"{n_classes} classes. Need at least {min_samples} samples.")
+        sys.exit(1)
+    #
+    # DATA LEAKAGE RULE: augmentation must NEVER touch validation or test data.
+    # If augment() runs before the val split, shuffled clones of train samples
+    # can end up in validation → the model "cheats" by recognizing near-copies
+    # of training samples, inflating val_accuracy artificially.
+    #
+    # Correct order:
+    #   1. Split off test set  (held out forever)
+    #   2. Split off val set   (from remaining clean data, stratified)
+    #   3. Augment ONLY X_train
+
+    # Step 1: hold out test set
+    X_temp, X_test, y_temp, y_test = train_test_split(
         X, y, test_size=args.test_split, random_state=SEED, stratify=y
     )
 
-    # ── Augmentation (training data only, NEVER test data) ───────────────
+    # Step 2: split val from remaining — val_ratio already computed above
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_temp, y_temp,
+        test_size=val_ratio,
+        random_state=SEED,
+        stratify=y_temp
+    )
+
+    # Step 3: augment ONLY the training set — val and test stay clean
     if not args.no_augment:
         X_train, y_train = augment(X_train, y_train)
         print(f"   After augmentation: {len(X_train)} training samples")
 
     # ── Class weights (handles imbalanced datasets) ───────────────────────
-    # If fall has 30 samples and idle has 120, fall gets weight ×4.
     # CRITICAL: use np.unique(y_train) as keys, NOT enumerate index.
     # If a class is absent from y_train, enumerate gives wrong key assignments
     # (e.g. class label 2 gets key 1) → Keras trains with silently wrong weights.
-    unique_classes   = np.unique(y_train)
+    unique_classes    = np.unique(y_train)
     class_weights_arr = compute_class_weight(
         "balanced", classes=unique_classes, y=y_train
     )
@@ -359,19 +398,6 @@ def main():
                          for c, w in zip(unique_classes, class_weights_arr)}
     print(f"\n   Class weights: "
           f"{', '.join(f'{args.classes[i]}={w:.2f}' for i, w in class_weight_dict.items())}")
-
-    # ── Validation split from training data (stratified) ─────────────────
-    # CRITICAL: validation_split in model.fit() takes the LAST N% of training
-    # data WITHOUT shuffling. Since files are loaded alphabetically
-    # (idle_001...walk_003...), the last fraction is always the same class.
-    # Fix: split explicitly with stratify=y_train BEFORE fit().
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_train, y_train,
-        test_size=args.val_split,
-        random_state=SEED,
-        stratify=y_train
-    )
-    y_val_cat = to_categorical(y_val, num_classes=n_classes)
 
     # ── One-hot encode all labels ─────────────────────────────────────────
     y_train_cat = to_categorical(y_train, num_classes=n_classes)
@@ -387,18 +413,23 @@ def main():
     model_path = os.path.join(args.output_dir, "best_model.keras")
 
     callbacks = [
-        # Stop training if val_loss doesn't improve for 10 epochs
+        # Stop if val_accuracy doesn't improve for 10 epochs.
+        # restore_best_weights=True restores the epoch with best val_accuracy,
+        # consistent with what ModelCheckpoint also saves.
+        # NOTE: both must monitor the SAME metric to avoid inconsistency —
+        # EarlyStopping on val_loss + ModelCheckpoint on val_accuracy would
+        # restore different epoch weights than what was saved as "best".
         EarlyStopping(
-            monitor="val_loss", patience=10, restore_best_weights=True,
-            verbose=1
+            monitor="val_accuracy", patience=10, restore_best_weights=True,
+            mode="max", verbose=1
         ),
-        # Save the best model (by val_accuracy) during training
+        # Save the best model by val_accuracy (same metric as EarlyStopping)
         ModelCheckpoint(
             model_path, monitor="val_accuracy",
-            save_best_only=True, verbose=1
+            save_best_only=True, mode="max", verbose=1
         ),
-        # Reduce LR by 0.5 if val_loss plateaus for 5 epochs
-        # Helps escape local minima without manual tuning
+        # Reduce LR by 0.5 if val_loss plateaus for 5 epochs.
+        # val_loss is appropriate here (more sensitive to small changes than accuracy)
         ReduceLROnPlateau(
             monitor="val_loss", factor=0.5, patience=5,
             min_lr=1e-6, verbose=1
