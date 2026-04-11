@@ -25,6 +25,7 @@ Usage:
 import os
 import sys
 import glob
+import json
 import argparse
 import random
 
@@ -246,7 +247,7 @@ def build_model(frames: int, subcarriers: int, n_classes: int) -> tf.keras.Model
     ], name="BiLSTM_CSI_HAR")
 
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3, clipnorm=1.0),
         loss="categorical_crossentropy",
         metrics=["accuracy"],
     )
@@ -487,6 +488,25 @@ def main():
     model.save(final_path)
     print(f"💾 Final model saved : {final_path}")
     print(f"💾 Best model saved  : {model_path}")
+
+    # ── Save training config (reproducibility + live inference) ────────
+    config = {
+        "classes":       args.classes,
+        "frames":        args.frames,
+        "subcarriers":   args.subcarriers,
+        "epochs_trained": len(history.history["accuracy"]),
+        "best_epoch":    int(np.argmax(history.history["val_accuracy"])) + 1,
+        "best_val_acc":  float(max(history.history["val_accuracy"])),
+        "test_accuracy":  float(accuracy),
+        "test_loss":      float(loss),
+        "batch_size":    args.batch_size,
+        "augmentation":  not args.no_augment,
+        "seed":          SEED,
+    }
+    config_path = os.path.join(args.output_dir, "training_config.json")
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+    print(f"💾 Training config   : {config_path}")
 
     # ── Plots ─────────────────────────────────────────────────────────────
     plot_history(history, args.output_dir)
