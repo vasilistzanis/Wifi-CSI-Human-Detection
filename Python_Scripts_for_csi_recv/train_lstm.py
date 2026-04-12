@@ -516,6 +516,8 @@ def main():
         "test_accuracy":  float(accuracy),
         "test_loss":      float(loss),
         "batch_size":    args.batch_size,
+        "val_split":     float(args.val_split),
+        "test_split":    float(args.test_split),
         "augmentation":  not args.no_augment,
         "seed":          SEED,
     }
