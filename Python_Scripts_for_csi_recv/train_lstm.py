@@ -184,21 +184,37 @@ def augment(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     Augmentation for time-series CSI — triples the dataset:
       Original + Gaussian noise + time-shift = 3× samples.
 
-      1. Gaussian noise injection  (σ = 2% of signal std)
-      2. Time jitter (random ±5% shift with wrap-around)
+      1. Gaussian noise injection  (σ = 2% of each sample's own std)
+      2. Time jitter (random ±5% shift with zero-padding)
 
     Applied ONLY to training data, never to validation or test.
     """
     rng = np.random.default_rng(SEED)
-    noise_std = X.std() * 0.02
 
-    # Noise augmentation
-    X_noise = X + rng.normal(0, noise_std, X.shape).astype(np.float32)
+    # Per-sample noise: each sample gets noise proportional to its own intensity.
+    # This ensures low-energy samples (idle) aren't overwhelmed by noise scaled
+    # to high-energy samples (fall), and vice versa.
+    per_sample_std = X.std(axis=(1, 2), keepdims=True) * 0.02  # (N, 1, 1)
+    X_noise = X + (rng.standard_normal(X.shape) * per_sample_std).astype(np.float32)
 
-    # Time-shift augmentation (±5% of frames)
+    # Time-shift augmentation (±5% of frames) with zero-padding.
+    # Zero-pad instead of np.roll wrap-around to avoid artificial discontinuities
+    # at window boundaries — consistent with motion_detector's zero-padded exports.
     max_shift = max(1, int(X.shape[1] * 0.05))
     shifts = rng.integers(-max_shift, max_shift + 1, size=len(X))
-    X_shift = np.stack([np.roll(x, s, axis=0) for x, s in zip(X, shifts)])
+
+    def _shift_pad(x: np.ndarray, s: int) -> np.ndarray:
+        """Shift time axis by s frames, zero-pad instead of wrap-around."""
+        out = np.zeros_like(x)
+        if s > 0:
+            out[s:] = x[:-s]       # shift right → beginning = 0
+        elif s < 0:
+            out[:s] = x[-s:]       # shift left  → end = 0
+        else:
+            out[:] = x
+        return out
+
+    X_shift = np.stack([_shift_pad(x, s) for x, s in zip(X, shifts)])
 
     X_aug = np.concatenate([X, X_noise, X_shift], axis=0).astype(np.float32)
     y_aug = np.concatenate([y, y, y])
