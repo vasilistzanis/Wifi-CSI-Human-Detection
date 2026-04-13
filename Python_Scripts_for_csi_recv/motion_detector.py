@@ -91,9 +91,10 @@ def parse_args():
                    help="Background calibration frames (default: 100 = 1 s)")
     p.add_argument("--cutoff", type=float, default=12.0,
                    help="Butterworth cutoff Hz (default: 12)")
-    p.add_argument("--threshold-k", type=float, default=3.0,
-                   help="Threshold multiplier k: threshold = bg_mean + k×bg_std "
-                        "(default: 3.0 → 3-sigma rule)")
+    p.add_argument("--threshold-k-high", type=float, default=3.0,
+                   help="High threshold multiplier (trigger event) (default: 3.0)")
+    p.add_argument("--threshold-k-low", type=float, default=1.5,
+                   help="Low threshold multiplier (end event) (default: 1.5)")
     p.add_argument("--smooth-ms", type=float, default=200.0,
                    help="Energy smoothing window in ms (default: 200 ms)")
     p.add_argument("--min-duration-ms", type=float, default=150.0,
@@ -148,23 +149,18 @@ def smooth_energy(energy: np.ndarray, window_frames: int) -> np.ndarray:
     return np.convolve(energy, kernel, mode='same').astype(np.float32)
 
 
-def compute_adaptive_threshold(energy: np.ndarray,
-                               bg_frames: int,
-                               k: float) -> tuple[float, float, float]:
+def compute_adaptive_thresholds(energy: np.ndarray,
+                                bg_frames: int,
+                                k_high: float,
+                                k_low: float) -> tuple[float, float, float, float]:
     """
-    Estimate threshold from the background (calibration) period.
+    Estimate hysteresis thresholds from the background (calibration) period.
 
     Returns:
-      threshold : bg_mean + k * bg_std
+      thresh_high : bg_mean + k_high * bg_std
+      thresh_low  : bg_mean + k_low  * bg_std
       bg_mean   : mean energy during background
       bg_std    : std  energy during background
-
-    Why adaptive?
-      Different rooms, distances, and antenna orientations produce
-      different baseline energy levels. A fixed threshold would need
-      manual tuning for every new environment.
-      By estimating from the first `bg_frames` (where we know nobody
-      is moving), the threshold automatically adapts.
     """
     n_bg = min(bg_frames, energy.shape[0])
     if n_bg < 5:
@@ -178,39 +174,44 @@ def compute_adaptive_threshold(energy: np.ndarray,
 
     # ✅ Floor for bg_std: prevents threshold == bg_mean when signal is
     # perfectly flat (synthetic data / ideal conditions).
-    # In real hardware, bg_std is always > 0 due to thermal noise.
-    # 1% of bg_mean as minimum, or a tiny absolute floor.
     bg_std = max(bg_std, bg_mean * 0.01, 1e-6)
 
-    threshold = bg_mean + k * bg_std
-    return threshold, bg_mean, bg_std
+    thresh_high = bg_mean + k_high * bg_std
+    thresh_low  = bg_mean + k_low * bg_std
+    return thresh_high, thresh_low, bg_mean, bg_std
 
 
 def detect_motion_events(energy_smooth: np.ndarray,
-                         threshold: float,
+                         thresh_high: float,
+                         thresh_low: float,
                          fs: float,
                          min_duration_ms: float,
                          merge_gap_ms: float) -> list[MotionEvent]:
     """
-    Convert the thresholded binary signal into a list of MotionEvent objects.
-
-    Steps:
-      1. Binary mask: above_threshold[t] = energy[t] > threshold
-      2. Find rising/falling edges → raw segments
-      3. Remove segments shorter than min_duration_ms
-      4. Merge segments with gaps shorter than merge_gap_ms
-
-    Returns list of MotionEvent (sorted by start time).
+    Convert the analog energy signal into MotionEvents using Hysteresis (Double Threshold).
     """
     min_frames   = max(1, int(min_duration_ms * fs / 1000))
     merge_frames = max(1, int(merge_gap_ms    * fs / 1000))
 
-    above = (energy_smooth > threshold).astype(np.int8)
+    above_high = energy_smooth > thresh_high
+    below_low = energy_smooth < thresh_low
 
-    # Find transitions: rising edge (+1), falling edge (-1)
-    diff = np.diff(above, prepend=0, append=0)
-    starts = np.where(diff ==  1)[0]
-    ends   = np.where(diff == -1)[0]
+    in_event = False
+    starts = []
+    ends = []
+
+    for i in range(len(energy_smooth)):
+        if not in_event:
+            if above_high[i]:
+                in_event = True
+                starts.append(i)
+        else:
+            if below_low[i]:
+                in_event = False
+                ends.append(i)
+
+    if in_event:
+        ends.append(len(energy_smooth))
 
     if len(starts) == 0:
         return []
@@ -261,7 +262,8 @@ def main():
             "--fs", str(args.fs),
             "--background-frames", str(args.background_frames),
             "--cutoff", str(args.cutoff),
-            "--threshold-k", str(args.threshold_k),
+            "--threshold-k-high", str(args.threshold_k_high),
+            "--threshold-k-low", str(args.threshold_k_low),
             "--smooth-ms", str(args.smooth_ms),
             "--min-duration-ms", str(args.min_duration_ms),
             "--merge-gap-ms", str(args.merge_gap_ms),
@@ -365,20 +367,20 @@ def main():
     smooth_frames = max(1, int(args.smooth_ms * args.fs / 1000))
     energy_smooth = smooth_energy(energy_raw, smooth_frames)
 
-    threshold, bg_mean, bg_std = compute_adaptive_threshold(
-        energy_smooth, args.background_frames, args.threshold_k
+    thresh_high, thresh_low, bg_mean, bg_std = compute_adaptive_thresholds(
+        energy_smooth, args.background_frames, args.threshold_k_high, args.threshold_k_low
     )
 
     events = detect_motion_events(
-        energy_smooth, threshold, args.fs,
+        energy_smooth, thresh_high, thresh_low, args.fs,
         args.min_duration_ms, args.merge_gap_ms
     )
 
     # ── Console report ────────────────────────────────────────────────────
     print(f"\n🔍 Motion Detection Results")
     print(f"   Background: mean={bg_mean:.4f}  std={bg_std:.4f}")
-    print(f"   Threshold:  {threshold:.4f}  "
-          f"(bg_mean + {args.threshold_k:.1f} × bg_std)")
+    print(f"   High Threshold:  {thresh_high:.4f}  (bg_mean + {args.threshold_k_high:.1f} × bg_std)")
+    print(f"   Low  Threshold:  {thresh_low:.4f}  (bg_mean + {args.threshold_k_low:.1f} × bg_std)")
     print(f"   Smooth window: {smooth_frames} frames ({args.smooth_ms:.0f} ms)")
     print(f"   Min event duration: {args.min_duration_ms:.0f} ms")
     print(f"   Merge gap: {args.merge_gap_ms:.0f} ms")
@@ -437,7 +439,7 @@ def main():
         f"{n_frames} frames  ·  {n_active} active subcarriers  ·  "
         f"duration {duration_s:.1f} s  ·  "
         f"{len(events)} event(s)  ·  "
-        f"threshold k={args.threshold_k}",
+        f"thresholds: High({args.threshold_k_high}), Low({args.threshold_k_low})",
         fontsize=12, fontweight='bold', y=0.985, color="#111111"
     )
 
@@ -506,11 +508,14 @@ def main():
             color="#2a9d8f", linewidth=2.0, alpha=0.95,
             label=f"Smoothed energy ({args.smooth_ms:.0f} ms window)", zorder=3)
 
-    # Threshold line
-    ax.axhline(threshold, color="#e63946", linewidth=1.5,
+    # High Threshold line
+    ax.axhline(thresh_high, color="#e63946", linewidth=1.5,
                linestyle="--", zorder=4,
-               label=f"Threshold = bg_mean + {args.threshold_k:.1f}×bg_std"
-                     f" = {threshold:.4f}")
+               label=f"High Threshold: {thresh_high:.4f} (+{args.threshold_k_high}σ)")
+    # Low Threshold line
+    ax.axhline(thresh_low, color="#e63946", linewidth=1.2,
+               linestyle=":", alpha=0.8, zorder=4,
+               label=f"Low Threshold: {thresh_low:.4f} (+{args.threshold_k_low}σ)")
 
     # Background mean line
     ax.axhline(bg_mean, color="#f4a261", linewidth=0.9,
