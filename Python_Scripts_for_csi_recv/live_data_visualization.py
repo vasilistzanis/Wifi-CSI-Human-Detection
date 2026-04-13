@@ -119,6 +119,7 @@ def extract_seq(line: str):
     return int(parts[1]) if parts is not None else None
 
 
+
 def parse_csi_frame(line: str, subcarriers: int):
     payload = extract_payload(line)
     if not payload:
@@ -133,6 +134,13 @@ def parse_csi_frame(line: str, subcarriers: int):
 
     imag = values[0::2]
     real = values[1::2]
+
+    # ✅ HT40 Hardware Fix: Null first 2 subcarriers (guard bands/corrupted data)
+    # matching the logic in data_preprocessing.py for 100% consistency.
+    if subcarriers == 128:
+        real[0] = 0; imag[0] = 0
+        real[1] = 0; imag[1] = 0
+
     return (real + 1j * imag).astype(np.complex64)
 
 
