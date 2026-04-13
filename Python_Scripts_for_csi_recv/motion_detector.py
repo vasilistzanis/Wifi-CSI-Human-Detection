@@ -101,6 +101,9 @@ def parse_args():
                    help="Minimum motion event duration in ms (default: 150 ms)")
     p.add_argument("--merge-gap-ms", type=float, default=300.0,
                    help="Merge events closer than this gap in ms (default: 300 ms)")
+    p.add_argument("--min-peak-ratio", type=float, default=2.5,
+                   help="Minimum peak_energy/bg_mean ratio for ML export (default: 2.5). "
+                        "Events below this are weak/out-of-LOS and are skipped.")
     return p.parse_args()
 
 # ════════════════════════════════════════════════════════════════════════
@@ -392,8 +395,15 @@ def main():
     else:
         print(f"   ✅ {len(events)} motion event(s) detected:\n")
         for i, ev in enumerate(events):
+            # Compute peak ratio for this event (quality score)
+            ev_energy = energy_smooth[ev.start_frame:ev.end_frame]
+            ev_peak   = float(ev_energy.max()) if len(ev_energy) > 0 else 0.0
+            ev_ratio  = ev_peak / bg_mean if bg_mean > 0 else 0.0
+            quality_ok = ev_ratio >= args.min_peak_ratio
+            quality_tag = "✅" if quality_ok else f"⚠️  WEAK (ratio={ev_ratio:.2f} < {args.min_peak_ratio})"
             print(f"   [{i+1:2d}]  {ev.start_s:6.2f} s → {ev.end_s:6.2f} s  "
-                  f"(duration: {ev.duration_s*1000:.0f} ms)")
+                  f"(duration: {ev.duration_s*1000:.0f} ms)  "
+                  f"peak_ratio={ev_ratio:.2f}x  {quality_tag}")
 
     # ── Time axes ─────────────────────────────────────────────────────────
     # amp_filt has N frames, amp_diff has N-1 → offset by 1 frame
@@ -624,7 +634,9 @@ def main():
             print(f"💾 Motion CSV saved: {out_csv}")
 
     # ── Export for Machine Learning (Windowing) ───────────────────────────
-    is_idle_file = "idle" in file_path.name.lower()
+    fname_lower    = file_path.name.lower()
+    is_idle_file   = "idle"  in fname_lower
+    is_action_file = any(kw in fname_lower for kw in ("fall", "sit"))
 
     if args.export_ml and (events or is_idle_file):
         # ✅ FIX: Use amp_diff (background subtracted + temporal diff) with
@@ -700,31 +712,74 @@ def main():
                     print(f"   💾 {out_npy.name}  shape={window.shape}")
                     
         else:
+            exported_count = 0
+
+            # ── Safe Export Zone for fall/sit ─────────────────────────────
+            # When recording fall/sit, someone must physically get up at the
+            # end to stop the recording → this creates a false motion event
+            # in the last portion of the file. We ignore events centered in
+            # the last 20% of the recording to eliminate this artifact.
+            N_frames = processed.shape[0]
+            if is_action_file:
+                safe_zone_end = int(N_frames * 0.80)
+                print(f"   ℹ️  'fall'/'sit' label detected — Safe Export Zone: "
+                      f"first 80% ({safe_zone_end}/{N_frames} frames). "
+                      f"Events in the last 20% (closing motion) will be ignored.")
+            else:
+                safe_zone_end = N_frames  # walk: no restriction
+
             for i, ev in enumerate(events):
-                # 1. Start from the center of motion
-                center = (ev.start_frame + ev.end_frame) // 2
+                # ── Safe Zone Check (fall/sit only) ───────────────────────
+                ev_center = (ev.start_frame + ev.end_frame) // 2
+                if ev_center > safe_zone_end:
+                    print(f"   ⚠️  Event #{i+1} SKIPPED  "
+                          f"center={ev_center} > safe_zone={safe_zone_end}  "
+                          f"→ closing-motion artifact at end of recording")
+                    continue
+
+                # ── Event Quality Gate ────────────────────────────────────
+                ev_energy = energy_smooth[ev.start_frame:ev.end_frame]
+                ev_peak   = float(ev_energy.max()) if len(ev_energy) > 0 else 0.0
+                ev_ratio  = ev_peak / bg_mean if bg_mean > 0 else 0.0
+
+                if ev_ratio < args.min_peak_ratio:
+                    print(f"   ⚠️  Event #{i+1} SKIPPED  "
+                          f"peak_ratio={ev_ratio:.2f} < {args.min_peak_ratio:.2f}  "
+                          f"→ weak/out-of-LOS signal, not suitable for ML")
+                    continue
+
+                # 1. Center of motion window
+                center   = ev_center
                 half_win = args.window_frames // 2
 
                 w_start = center - half_win
-                w_end = center + (args.window_frames - half_win)
+                w_end   = center + (args.window_frames - half_win)
 
-                # 2. Setup zero-padded window for consistent sizing
+                # 2. Zero-padded window
                 window = np.zeros((args.window_frames, num_features), dtype=np.float32)
 
-                # 3. Calculate bounded indices
+                # 3. Bounded indices
                 src_start = max(0, w_start)
-                src_end = min(processed.shape[0], w_end)
-
+                src_end   = min(processed.shape[0], w_end)
                 dst_start = src_start - w_start
-                dst_end = dst_start + (src_end - src_start)
+                dst_end   = dst_start + (src_end - src_start)
 
-                # 4. Copy the data into the padded window
+                # 4. Copy data
                 window[dst_start:dst_end, :] = processed[src_start:src_end, :]
 
-                # 5. Save as NPY
-                out_npy = file_path.parent / f"{file_path.stem}_ml_ev{i+1}.npy"
+                # 5. Save
+                exported_count += 1
+                out_npy = file_path.parent / f"{file_path.stem}_ml_ev{exported_count}.npy"
                 np.save(out_npy, window)
-                print(f"   💾 {out_npy.name}  shape={window.shape}")
+                print(f"   💾 {out_npy.name}  shape={window.shape}  "
+                      f"peak_ratio={ev_ratio:.2f}x  ✅")
+
+            if exported_count == 0:
+                print(f"   ❌ No events passed the quality gate "
+                      f"(min_peak_ratio={args.min_peak_ratio:.2f}).")
+                print(f"   → Lower --min-peak-ratio or capture data closer to LOS.")
+            else:
+                print(f"\n   ✅ {exported_count}/{len(events)} event(s) exported to NPY.")
 
     if not args.export_ml:
         plt.show()
