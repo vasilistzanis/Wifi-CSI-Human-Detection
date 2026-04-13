@@ -619,7 +619,9 @@ def main():
             print(f"💾 Motion CSV saved: {out_csv}")
 
     # ── Export for Machine Learning (Windowing) ───────────────────────────
-    if args.export_ml and events:
+    is_idle_file = "idle" in file_path.name.lower()
+
+    if args.export_ml and (events or is_idle_file):
         # ✅ FIX: Use amp_diff (background subtracted + temporal diff) with
         # StandardScaler normalization instead of raw amp_filt.
         #
@@ -650,31 +652,74 @@ def main():
               f"features: {num_features}, "
               f"window: {args.window_frames} frames)")
 
-        for i, ev in enumerate(events):
-            # 1. Start from the center of motion
-            center = (ev.start_frame + ev.end_frame) // 2
-            half_win = args.window_frames // 2
+        if is_idle_file:
+            print("   ℹ️ 'idle' label detected in filename. Extracting quiet windows from the middle of the recording, bypassing detected motion.")
+            N = processed.shape[0]
+            
+            if N < args.window_frames:
+                print("   ⚠️ File is too short for even a single idle window.")
+            else:
+                # Calculate safe middle region (assume first 20% and last 20% are noisy due to walking)
+                safe_start = int(N * 0.2)
+                safe_end = int(N * 0.8)
+                safe_duration = safe_end - safe_start
+                
+                # If safe duration is smaller than a window, just take the absolute center
+                if safe_duration <= args.window_frames:
+                    centers = [N // 2]
+                else:
+                    # Extract up to 3 non-overlapping windows from the safe middle region
+                    num_idle_windows = min(3, safe_duration // args.window_frames)
+                    if num_idle_windows < 1: 
+                        num_idle_windows = 1
+                    
+                    # Space them out evenly within the safe region
+                    step = safe_duration // (num_idle_windows + 1)
+                    centers = [safe_start + step * (j + 1) for j in range(num_idle_windows)]
+                
+                for i, center in enumerate(centers):
+                    half_win = args.window_frames // 2
+                    w_start = center - half_win
+                    w_end = center + (args.window_frames - half_win)
+                    
+                    window = np.zeros((args.window_frames, num_features), dtype=np.float32)
+                    src_start = max(0, w_start)
+                    src_end = min(processed.shape[0], w_end)
+                    dst_start = src_start - w_start
+                    dst_end = dst_start + (src_end - src_start)
+                    
+                    window[dst_start:dst_end, :] = processed[src_start:src_end, :]
+                    
+                    out_npy = file_path.parent / f"{file_path.stem}_ml_ev{i+1}.npy"
+                    np.save(out_npy, window)
+                    print(f"   💾 {out_npy.name}  shape={window.shape}")
+                    
+        else:
+            for i, ev in enumerate(events):
+                # 1. Start from the center of motion
+                center = (ev.start_frame + ev.end_frame) // 2
+                half_win = args.window_frames // 2
 
-            w_start = center - half_win
-            w_end = center + (args.window_frames - half_win)
+                w_start = center - half_win
+                w_end = center + (args.window_frames - half_win)
 
-            # 2. Setup zero-padded window for consistent sizing
-            window = np.zeros((args.window_frames, num_features), dtype=np.float32)
+                # 2. Setup zero-padded window for consistent sizing
+                window = np.zeros((args.window_frames, num_features), dtype=np.float32)
 
-            # 3. Calculate bounded indices
-            src_start = max(0, w_start)
-            src_end = min(processed.shape[0], w_end)
+                # 3. Calculate bounded indices
+                src_start = max(0, w_start)
+                src_end = min(processed.shape[0], w_end)
 
-            dst_start = src_start - w_start
-            dst_end = dst_start + (src_end - src_start)
+                dst_start = src_start - w_start
+                dst_end = dst_start + (src_end - src_start)
 
-            # 4. Copy the data into the padded window
-            window[dst_start:dst_end, :] = processed[src_start:src_end, :]
+                # 4. Copy the data into the padded window
+                window[dst_start:dst_end, :] = processed[src_start:src_end, :]
 
-            # 5. Save as NPY
-            out_npy = file_path.parent / f"{file_path.stem}_ml_ev{i+1}.npy"
-            np.save(out_npy, window)
-            print(f"   💾 {out_npy.name}  shape={window.shape}")
+                # 5. Save as NPY
+                out_npy = file_path.parent / f"{file_path.stem}_ml_ev{i+1}.npy"
+                np.save(out_npy, window)
+                print(f"   💾 {out_npy.name}  shape={window.shape}")
 
     if not args.export_ml:
         plt.show()
