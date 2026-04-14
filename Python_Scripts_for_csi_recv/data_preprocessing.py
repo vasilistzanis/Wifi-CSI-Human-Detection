@@ -230,17 +230,14 @@ class CSIPipeline:
       1. Null Subcarrier Removal    (guard/null band removal, saves mask)
       2. Hampel Filter              (outlier / spike removal)
       3. Butterworth Low-Pass       (noise smoothing, zero phase, 12 Hz)
-      4. Background Subtraction     (static environment removal)
-      5. Temporal Difference        (first-order diff, motion focus)
-      6. PCA                        (dimensionality reduction)
-      7. StandardScaler             (environment-scale normalization)
+      4. Temporal Difference        (first-order diff, motion focus)
+      5. PCA                        (dimensionality reduction)
+      6. StandardScaler             (environment-scale normalization)
 
-    Why steps 4 & 5 make HAR environment-independent:
-      - Background subtraction zeros out static reflections (walls, furniture).
-        Only dynamic changes (human motion) remain.
+    Why step 4 makes HAR environment-independent:
       - Temporal difference converts absolute values → rate of change.
         A static room gives diff ≈ 0, a person moving gives large diff values.
-      - Together they make the model "blind" to room layout and see only motion.
+      - This makes the model "blind" to room layout and see only motion.
 
     This is the standard approach used in academic papers like Widar3.0, EI,
     CrossSense, and is essential for cross-environment model generalization.
@@ -371,7 +368,7 @@ class CSIPipeline:
 
 
 
-    # ── 5. Temporal Difference ────────────────────────────────────────────
+    # ── 4. Temporal Difference ────────────────────────────────────────────
     def apply_temporal_diff(self, data: np.ndarray) -> np.ndarray:
         """
         First-order temporal difference: replaces absolute amplitude with
@@ -433,17 +430,15 @@ class CSIPipeline:
         data = self.apply_lowpass_filter(data)
         print(f"   [3] Butterworth ✅")
 
-
-
-        # [5] Temporal difference
+        # [4] Temporal difference
         if self.use_diff:
             data = self.apply_temporal_diff(data)
-            print(f"   [5] Temporal diff ✅  shape={data.shape}  "
+            print(f"   [4] Temporal diff ✅  shape={data.shape}  "
                   f"(N-1={data.shape[0]} frames)")
         else:
-            print(f"   [5] Temporal diff: disabled")
+            print(f"   [4] Temporal diff: disabled")
 
-        # [6] PCA
+        # [5] PCA
         if use_pca:
             if data.shape[0] < 2:
                 raise ValueError(
@@ -460,12 +455,12 @@ class CSIPipeline:
             self.pca = PCA(n_components=actual_n)
             data = self.pca.fit_transform(data)
             explained = self.pca.explained_variance_ratio_.sum() * 100
-            print(f"   [6] PCA: {actual_n} components, {explained:.1f}% variance ✅")
+            print(f"   [5] PCA: {actual_n} components, {explained:.1f}% variance ✅")
         else:
             self.pca = None
-            print(f"   [6] PCA: skipped")
+            print(f"   [5] PCA: skipped")
 
-        # [7] Scaler
+        # [6] Scaler
         if scaler_type == 'minmax':
             self.scaler = MinMaxScaler()
         elif scaler_type == 'standard':
@@ -474,7 +469,7 @@ class CSIPipeline:
             raise ValueError(f"Unknown scaler_type '{scaler_type}'")
 
         data = self.scaler.fit_transform(data)
-        print(f"   [7] {scaler_type} scaling → output {data.shape} ✅")
+        print(f"   [6] {scaler_type} scaling → output {data.shape} ✅")
 
         self.is_fitted = True
         return data

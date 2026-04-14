@@ -99,6 +99,10 @@ def parse_args():
         help="Number of PCA components to show (default: 3)"
     )
     p.add_argument(
+        "--cutoff", type=float, default=12.0,
+        help="Butterworth cutoff in Hz (default: 12)"
+    )
+    p.add_argument(
         "--no-diff", action="store_true",
         help="Disable temporal difference"
     )
