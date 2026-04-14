@@ -91,16 +91,16 @@ def parse_args():
                    help="Background calibration frames (default: 100 = 1 s)")
     p.add_argument("--cutoff", type=float, default=12.0,
                    help="Butterworth cutoff Hz (default: 12)")
-    p.add_argument("--threshold-k-high", type=float, default=3.0,
-                   help="High threshold multiplier (trigger event) (default: 3.0)")
-    p.add_argument("--threshold-k-low", type=float, default=1.5,
-                   help="Low threshold multiplier (end event) (default: 1.5)")
-    p.add_argument("--smooth-ms", type=float, default=200.0,
-                   help="Energy smoothing window in ms (default: 200 ms)")
+    p.add_argument("--threshold-k-high", type=float, default=2.5,
+                   help="High threshold multiplier (trigger event) (default: 2.5)")
+    p.add_argument("--threshold-k-low", type=float, default=1.2,
+                   help="Low threshold multiplier (end event) (default: 1.2)")
+    p.add_argument("--smooth-ms", type=float, default=350.0,
+                   help="Energy smoothing window in ms (default: 350 ms)")
     p.add_argument("--min-duration-ms", type=float, default=150.0,
                    help="Minimum motion event duration in ms (default: 150 ms)")
-    p.add_argument("--merge-gap-ms", type=float, default=300.0,
-                   help="Merge events closer than this gap in ms (default: 300 ms)")
+    p.add_argument("--merge-gap-ms", type=float, default=800.0,
+                   help="Merge events closer than this gap in ms (default: 800 ms)")
     p.add_argument("--min-peak-ratio", type=float, default=2.5,
                    help="Minimum peak_energy/bg_mean ratio for ML export (default: 2.5). "
                         "Events below this are weak/out-of-LOS and are skipped.")
