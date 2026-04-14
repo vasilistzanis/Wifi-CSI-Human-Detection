@@ -99,18 +99,6 @@ def parse_args():
         help="Number of PCA components to show (default: 3)"
     )
     p.add_argument(
-        "--background-frames", type=int, default=100,
-        help="Frames used as static background (default: 100 = 1 s)"
-    )
-    p.add_argument(
-        "--cutoff", type=float, default=12.0,
-        help="Butterworth cutoff in Hz (default: 12)"
-    )
-    p.add_argument(
-        "--no-bg", action="store_true",
-        help="Disable background subtraction"
-    )
-    p.add_argument(
         "--no-diff", action="store_true",
         help="Disable temporal difference"
     )
@@ -143,12 +131,7 @@ def make_time_axis(n_frames: int, fs: float) -> np.ndarray:
     return np.arange(n_frames) / fs
 
 
-def annotate_bg_region(ax, bg_frames: int, fs: float, alpha: float = 0.12):
-    """Shade the background calibration period on an axis."""
-    bg_end_s = bg_frames / fs
-    ax.axvspan(0, bg_end_s, color="#ffcc00", alpha=alpha, zorder=0)
-    ax.axvline(bg_end_s, color="#ffcc00", linewidth=1.0,
-               linestyle="--", alpha=0.7, zorder=1)
+
 
 
 def style_ax(ax, title: str, ylabel: str, show_xlabel: bool = True):
@@ -222,10 +205,8 @@ def main():
           f"seq {seq_stats.first_seq}→{seq_stats.last_seq}")
 
     # ── Pipeline — step by step to capture every stage ───────────────────
-    bg_frames = 0 if args.no_bg else args.background_frames
     pipeline = CSIPipeline(
         fs=args.fs,
-        background_frames=bg_frames,
         use_diff=not args.no_diff,
     )
 
@@ -243,13 +224,9 @@ def main():
         amp_hamp = pipeline.apply_hampel_filter(amp_null)
         amp_filt = pipeline.apply_lowpass_filter(amp_hamp, cutoff=args.cutoff)
 
-        # Stage 2: Background subtraction
-        amp_bg   = pipeline.apply_background_subtraction(amp_filt, fit=True)
-        bg_enabled = bg_frames > 0 and pipeline.background_mean is not None
-
-        # Stage 3: Temporal diff
-        amp_diff = pipeline.apply_temporal_diff(amp_bg)
-        diff_enabled = not args.no_diff and amp_diff.shape[0] < amp_bg.shape[0]
+        # Stage 2: Temporal diff
+        amp_diff = pipeline.apply_temporal_diff(amp_filt)
+        diff_enabled = not args.no_diff and amp_diff.shape[0] < amp_filt.shape[0]
 
         # ✅ NEW: Validate PCA inputs
         if amp_diff.shape[0] < 2:
@@ -327,15 +304,7 @@ def main():
         return fig, ax
 
     def add_shared_legend(fig):
-        if bg_enabled:
-            bg_patch = mpatches.Patch(
-                facecolor="#ffcc00", alpha=0.4,
-                label=f"Background calibration period (first {bg_frames} frames = "
-                      f"{bg_frames / args.fs:.1f} s  ·  empty room)"
-            )
-            fig.legend(handles=[bg_patch], loc="lower center",
-                       fontsize=9, framealpha=0.9,
-                       bbox_to_anchor=(0.5, 0.01))
+        pass # Removed background subtraction legend
 
     # ════════════════════════════════════════════════════════════════════
     # CREATE PLOTS WITH ERROR HANDLING
@@ -348,13 +317,12 @@ def main():
             ax0.plot(t_full, amp_null[:, sc],
                     color=SC_COLORS[i], linewidth=1.2, alpha=0.85,
                     label=f"SC {sc}")
-        if bg_enabled:
-            annotate_bg_region(ax0, bg_frames, args.fs)
+
+
         style_ax(ax0,
                  "① Raw Amplitude  (null bands removed, no temporal filtering)",
                  "Amplitude (a.u.)")
         ax0.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5), framealpha=0.7)
-        add_shared_legend(fig0)
         fig0.tight_layout(rect=[0, 0.05, 1, 0.92])
         
         if args.save:
@@ -368,13 +336,10 @@ def main():
             ax1.plot(t_full, amp_filt[:, sc],
                     color=SC_COLORS[i], linewidth=1.5, alpha=0.9,
                     label=f"SC {sc}")
-        if bg_enabled:
-            annotate_bg_region(ax1, bg_frames, args.fs)
         style_ax(ax1,
                  f"② Hampel + Butterworth Low-Pass ({args.cutoff} Hz)  —  noise removed",
                  "Amplitude (a.u.)")
         ax1.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5), framealpha=0.7)
-        add_shared_legend(fig1)
         fig1.tight_layout(rect=[0, 0.05, 1, 0.92])
 
         if args.save:
@@ -382,25 +347,24 @@ def main():
             fig1.savefig(out_path, dpi=200, bbox_inches="tight")
             print(f"💾 Saved: {out_path}")
 
-        # ── PANEL 2 — After Background Subtraction (Window 3) ─────────────
+        # ── PANEL 2 — Temporal Difference (Window 3) ──────────────────────
         fig2, ax2 = create_window()
-        if bg_enabled:
+        if diff_enabled:
             for i, sc in enumerate(sc_indices):
-                ax2.plot(t_full, amp_bg[:, sc],
-                        color=SC_COLORS[i], linewidth=1.5, alpha=0.9,
+                ax2.plot(t_diff, amp_diff[:, sc],
+                        color=SC_COLORS[i], linewidth=1.2, alpha=0.85,
                         label=f"SC {sc}")
-            annotate_bg_region(ax2, bg_frames, args.fs)
             ax2.axhline(0, color="#999999", linewidth=1.0, linestyle="--")
             style_ax(ax2,
-                     f"③ Background Subtraction  (first {bg_frames} frames = static room removed)",
-                     "Δ Amplitude")
+                     f"③ Temporal Difference  [frame(t+1) − frame(t)]  →  "
+                     f"motion events visible  ({amp_diff.shape[0]} frames)",
+                     "Δ Amplitude / frame")
             ax2.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5), framealpha=0.7)
-            add_shared_legend(fig2)
         else:
-            ax2.text(0.5, 0.5, "Background subtraction DISABLED (--no-bg)",
+            ax2.text(0.5, 0.5, "Temporal difference DISABLED (--no-diff)",
                     ha='center', va='center', transform=ax2.transAxes,
                     fontsize=13, color="#888888", style='italic')
-            style_ax(ax2, "③ Background Subtraction  [DISABLED]", "Δ Amplitude")
+            style_ax(ax2, "③ Temporal Difference  [DISABLED]", "Δ Amplitude / frame")
         
         fig2.tight_layout(rect=[0, 0.05, 1, 0.92])
 
@@ -409,51 +373,25 @@ def main():
             fig2.savefig(out_path, dpi=200, bbox_inches="tight")
             print(f"💾 Saved: {out_path}")
 
-        # ── PANEL 3 — Temporal Difference (Window 4) ──────────────────────
+        # ── PANEL 3 — PCA Components (Window 4) ───────────────────────────
         fig3, ax3 = create_window()
-        if diff_enabled:
-            for i, sc in enumerate(sc_indices):
-                ax3.plot(t_diff, amp_diff[:, sc],
-                        color=SC_COLORS[i], linewidth=1.2, alpha=0.85,
-                        label=f"SC {sc}")
-            ax3.axhline(0, color="#999999", linewidth=1.0, linestyle="--")
-            style_ax(ax3,
-                     f"④ Temporal Difference  [frame(t+1) − frame(t)]  →  "
-                     f"motion events visible  ({amp_diff.shape[0]} frames)",
-                     "Δ Amplitude / frame")
-            ax3.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5), framealpha=0.7)
-        else:
-            ax3.text(0.5, 0.5, "Temporal difference DISABLED (--no-diff)",
-                    ha='center', va='center', transform=ax3.transAxes,
-                    fontsize=13, color="#888888", style='italic')
-            style_ax(ax3, "④ Temporal Difference  [DISABLED]", "Δ Amplitude / frame")
+        for i in range(n_pca):
+            color = PCA_COLORS[i % len(PCA_COLORS)]
+            label = (f"PC{i+1}  ({explained[i]:.1f}% var)")
+            ax3.plot(t_pca, pca_data[:, i],
+                    color=color, linewidth=1.5, alpha=0.9, label=label)
+        ax3.axhline(0, color="#999999", linewidth=1.0, linestyle="--")
+        style_ax(ax3,
+                 f"④ PCA  ({n_pca} components · {explained.sum():.1f}% variance explained)  "
+                 f"—  Final AI Input",
+                 "Component Value")
+        ax3.legend(loc="upper right", fontsize=9, ncol=min(n_pca, 5), framealpha=0.8)
         
         fig3.tight_layout(rect=[0, 0.05, 1, 0.92])
 
         if args.save:
             out_path = file_path.parent / f"{file_path.stem}_line_3.png"
             fig3.savefig(out_path, dpi=200, bbox_inches="tight")
-            print(f"💾 Saved: {out_path}")
-
-        # ── PANEL 4 — PCA Components (Window 5) ───────────────────────────
-        fig4, ax4 = create_window()
-        for i in range(n_pca):
-            color = PCA_COLORS[i % len(PCA_COLORS)]
-            label = (f"PC{i+1}  ({explained[i]:.1f}% var)")
-            ax4.plot(t_pca, pca_data[:, i],
-                    color=color, linewidth=1.5, alpha=0.9, label=label)
-        ax4.axhline(0, color="#999999", linewidth=1.0, linestyle="--")
-        style_ax(ax4,
-                 f"⑤ PCA  ({n_pca} components · {explained.sum():.1f}% variance explained)  "
-                 f"—  Final AI Input",
-                 "Component Value")
-        ax4.legend(loc="upper right", fontsize=9, ncol=min(n_pca, 5), framealpha=0.8)
-        
-        fig4.tight_layout(rect=[0, 0.05, 1, 0.92])
-
-        if args.save:
-            out_path = file_path.parent / f"{file_path.stem}_line_4.png"
-            fig4.savefig(out_path, dpi=200, bbox_inches="tight")
             print(f"💾 Saved: {out_path}")
 
     except Exception as e:
@@ -463,7 +401,7 @@ def main():
         traceback.print_exc()
         sys.exit(1)
 
-    print("\n✅ Created 5 separate windows! (Close them all to end the script)")
+    print("\n✅ Created 4 separate windows! (Close them all to end the script)")
     
     # ── Show All Windows ──────────────────────────────────────────────────
     try:

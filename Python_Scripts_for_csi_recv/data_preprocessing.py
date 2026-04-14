@@ -249,24 +249,19 @@ class CSIPipeline:
     def __init__(
         self,
         fs: float = 100.0,
-        background_frames: int = 100,
         use_diff: bool = True,
     ):
         """
         Args:
           fs                : Sampling frequency in Hz (default: 100)
-          background_frames : First N frames used as static background
-                              Set to 0 to disable background subtraction
           use_diff          : Enable temporal difference (frame[t+1] - frame[t])
                               Set to False to disable temporal differencing
         """
         self.fs = fs
-        self.background_frames = background_frames
         self.use_diff = use_diff
 
         # State (saved after fit_transform for reuse in transform)
         self.active_mask = None
-        self.background_mean = None
         self.pca = None
         self.scaler = None
         self.is_fitted = False
@@ -374,52 +369,7 @@ class CSIPipeline:
         # sosfiltfilt with axis=0 filters ALL subcarriers in one vectorized call
         return sosfiltfilt(sos, data, axis=0).astype(data.dtype)
 
-    # ── 4. Background Subtraction ─────────────────────────────────────────
-    def apply_background_subtraction(self, data: np.ndarray,
-                                     fit: bool = False) -> np.ndarray:
-        """
-        Subtract static background (walls, furniture, stationary objects).
 
-        In fit mode: estimates background from first N frames (static room).
-        In transform mode: applies stored background from training data.
-
-        This is THE KEY to environment-independent HAR:
-          - Training room background is subtracted during training
-          - Test room background is ALSO subtracted (using stored mean),
-            leaving only the CHANGES (human motion) in both datasets.
-          - The model sees "motion relative to baseline", not "absolute CSI".
-
-        CRITICAL: The recording MUST start with an empty, static room for
-        the first ~1 second (background_frames / fs). This is a standard
-        data collection protocol in WiFi sensing research.
-        """
-        if fit:
-            n_bg = min(self.background_frames, data.shape[0])
-
-            if n_bg < 10:
-                print(f"⚠️  Background subtraction: only {n_bg} frames available "
-                      f"(need ≥10) — skipping")
-                self.background_mean = None
-                return data
-
-            # ✅ IMPROVED: Better warning when insufficient frames
-            if n_bg < self.background_frames:
-                pct = 100.0 * n_bg / self.background_frames
-                print(f"⚠️  Background subtraction: requested {self.background_frames} "
-                      f"frames but only {n_bg} available ({pct:.0f}%). "
-                      f"Ensure recording starts with an empty room for at least "
-                      f"{self.background_frames / self.fs:.1f} seconds.")
-
-            # Mean over first n_bg frames, shape: (N_active_subcarriers,)
-            self.background_mean = data[:n_bg].mean(axis=0)
-            print(f"   Background estimated: first {n_bg} frames "
-                  f"(≈{n_bg / self.fs:.1f}s)")
-
-        if self.background_mean is None:
-            return data
-
-        # Subtract static background — broadcasts over all N frames
-        return data - self.background_mean
 
     # ── 5. Temporal Difference ────────────────────────────────────────────
     def apply_temporal_diff(self, data: np.ndarray) -> np.ndarray:
@@ -483,12 +433,7 @@ class CSIPipeline:
         data = self.apply_lowpass_filter(data)
         print(f"   [3] Butterworth ✅")
 
-        # [4] Background subtraction (fit=True estimates background)
-        if self.background_frames > 0:
-            data = self.apply_background_subtraction(data, fit=True)
-            print(f"   [4] Background subtraction ✅  shape={data.shape}")
-        else:
-            print(f"   [4] Background subtraction: disabled")
+
 
         # [5] Temporal difference
         if self.use_diff:
@@ -561,9 +506,7 @@ class CSIPipeline:
         data = self.apply_hampel_filter(data)
         data = self.apply_lowpass_filter(data)
 
-        # Apply stored background (fit=False reuses background_mean)
-        if self.background_frames > 0:
-            data = self.apply_background_subtraction(data, fit=False)
+
 
         # Temporal diff
         if self.use_diff:
@@ -610,7 +553,6 @@ if __name__ == "__main__":
     # Default: environment-independent pipeline
     pipeline = CSIPipeline(
         fs=100.0,
-        background_frames=100,  # first 1 second = static background
         use_diff=True,           # temporal diff for environment independence
     )
     processed = pipeline.fit_transform(

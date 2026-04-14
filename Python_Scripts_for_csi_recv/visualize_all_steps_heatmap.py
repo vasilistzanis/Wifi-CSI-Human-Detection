@@ -85,10 +85,6 @@ def parse_args():
         help="Butterworth cutoff frequency in Hz (default: 12)"
     )
     parser.add_argument(
-        "--background-frames", type=int, default=100,
-        help="Frames for background estimation (default: 100 = 1 s). Set 0 to disable."
-    )
-    parser.add_argument(
         "--no-diff", action="store_true",
         help="Disable temporal difference step"
     )
@@ -136,7 +132,6 @@ def main():
     # ── Pipeline step-by-step ─────────────────────────────────────────────
     pipeline = CSIPipeline(
         fs=100.0,
-        background_frames=args.background_frames,
         use_diff=not args.no_diff,
     )
 
@@ -153,26 +148,25 @@ def main():
         
         amp_step2 = pipeline.apply_hampel_filter(amp_step1, window_size=11, n_sigmas=3.0)
         amp_step3 = pipeline.apply_lowpass_filter(amp_step2, cutoff=args.cutoff)
-        amp_step4 = pipeline.apply_background_subtraction(amp_step3, fit=True)
-        amp_step5 = pipeline.apply_temporal_diff(amp_step4)
+        amp_step4 = pipeline.apply_temporal_diff(amp_step3)
 
         # ✅ NEW: Validate PCA inputs
-        if amp_step5.shape[0] < 2:
-            print(f"❌ Too few frames ({amp_step5.shape[0]}) for PCA after temporal diff")
+        if amp_step4.shape[0] < 2:
+            print(f"❌ Too few frames ({amp_step4.shape[0]}) for PCA after temporal diff")
             print("   Need at least 2 frames. Try capturing more data.")
             sys.exit(1)
 
-        n_components = min(args.pca_components, amp_step5.shape[0] - 1, amp_step5.shape[1])
+        n_components = min(args.pca_components, amp_step4.shape[0] - 1, amp_step4.shape[1])
         if n_components < 1:
-            print(f"❌ Cannot perform PCA: shape {amp_step5.shape} too small")
+            print(f"❌ Cannot perform PCA: shape {amp_step4.shape} too small")
             sys.exit(1)
 
         pca = PCA(n_components=n_components)
-        amp_step6 = pca.fit_transform(amp_step5)
+        amp_step5 = pca.fit_transform(amp_step4)
         explained_var = pca.explained_variance_ratio_.sum() * 100
 
         scaler = StandardScaler()
-        amp_step7 = scaler.fit_transform(amp_step6)
+        amp_step6 = scaler.fit_transform(amp_step5)
 
     except Exception as e:
         print(f"❌ Error during preprocessing: {e}")
@@ -183,33 +177,25 @@ def main():
     # ── Stats ─────────────────────────────────────────────────────────────
     active_count   = amp_step1.shape[1]
     null_count     = n_sub - active_count
-    bg_enabled     = args.background_frames > 0
     diff_enabled   = not args.no_diff
     print(f"\n📊 Pipeline stats:")
     print(f"   [0] Raw:            {amp_step0.shape}")
     print(f"   [1] Null removed:   {amp_step1.shape} ({null_count} nulls)")
     print(f"   [2] Hampel:         {amp_step2.shape}")
     print(f"   [3] Butterworth:    {amp_step3.shape}")
-    print(f"   [4] Background sub: {amp_step4.shape}")
-    print(f"   [5] Temporal diff:  {amp_step5.shape}")
-    print(f"   [6] PCA:            {amp_step6.shape} ({explained_var:.1f}% variance)")
-    print(f"   [7] StandardScaler: {amp_step7.shape}")
+    print(f"   [4] Temporal diff:  {amp_step4.shape}")
+    print(f"   [5] PCA:            {amp_step5.shape} ({explained_var:.1f}% variance)")
+    print(f"   [6] StandardScaler: {amp_step6.shape}")
 
     # ════════════════════════════════════════════════════════════════════
     # SEPARATE WINDOW VISUALIZATION
     # ════════════════════════════════════════════════════════════════════
 
     step4_title = (
-        f"4. Background Subtraction\n(≈{args.background_frames / 100:.1f}s static room removed)"
-        if bg_enabled else "4. Background Subtraction\n⚠ DISABLED"
+        f"4. Temporal Difference\n(Rate of change  {amp_step4.shape[0]} frames)"
+        if diff_enabled else "4. Temporal Difference\n⚠ DISABLED"
     )
-    step4_cmap = "RdBu_r" if bg_enabled else "jet"
-
-    step5_title = (
-        f"5. Temporal Difference\n(Rate of change  {amp_step5.shape[0]} frames)"
-        if diff_enabled else "5. Temporal Difference\n⚠ DISABLED"
-    )
-    step5_cmap = "RdBu_r" if diff_enabled else ("RdBu_r" if bg_enabled else "jet")
+    step4_cmap = "RdBu_r" if diff_enabled else "jet"
 
     plots_config = [
         (amp_step0, "0. Raw Amplitude\n(with guard/null bands)",          "jet"),
@@ -217,9 +203,8 @@ def main():
         (amp_step2, "2. Hampel Filter\n(spike / outlier removal)",        "jet"),
         (amp_step3, f"3. Butterworth Low-Pass\n({args.cutoff} Hz cutoff)", "jet"),
         (amp_step4, step4_title,                                           step4_cmap),
-        (amp_step5, step5_title,                                           step5_cmap),
-        (amp_step6, f"6. PCA\n({n_components} components · {explained_var:.0f}% variance)", "viridis"),
-        (amp_step7, "7. StandardScaler (Z-score)\nFinal AI Input",         "viridis"),
+        (amp_step5, f"5. PCA\n({n_components} components · {explained_var:.0f}% variance)", "viridis"),
+        (amp_step6, "6. StandardScaler (Z-score)\nFinal AI Input",         "viridis"),
     ]
 
     STYLE_BG    = "#1a1a2e"
@@ -291,8 +276,6 @@ def main():
             plt.tight_layout(rect=[0, 0, 1, 0.90])
 
             if args.save:
-                # Αποθηκεύει 8 διαφορετικές εικόνες αν βάλεις --save
-                step_num = title.split(".")[0]
                 out_path = file_path.parent / f"{file_path.stem}_step{step_num}.png"
                 try:
                     plt.savefig(out_path, dpi=150, bbox_inches='tight', facecolor=STYLE_BG)
@@ -307,7 +290,7 @@ def main():
         traceback.print_exc()
         sys.exit(1)
 
-    print("\n✅ Created 8 separate windows! (Close them all to end the script)")
+    print("\n✅ Created 7 separate windows! (Close them all to end the script)")
     
     try:
         plt.show()
