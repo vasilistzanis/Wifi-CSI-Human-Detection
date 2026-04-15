@@ -232,7 +232,7 @@ def main():
     # Δημιουργούμε ένα ξεχωριστό παράθυρο (figure) για κάθε γράφημα
     # ✅ IMPROVED: Better error handling for plotting
     try:
-        for data, title, cmap in plots_config:
+        for step_num, (data, title, cmap) in enumerate(plots_config):
             fig, ax = plt.subplots(figsize=(10, 6))
             fig.patch.set_facecolor(STYLE_BG)
             ax.set_facecolor(STYLE_PANEL)
@@ -278,7 +278,7 @@ def main():
             if args.save:
                 out_path = file_path.parent / f"{file_path.stem}_step{step_num}.png"
                 try:
-                    plt.savefig(out_path, dpi=150, bbox_inches='tight', facecolor=STYLE_BG)
+                    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor=STYLE_BG)
                     print(f"💾 Saved: {out_path}")
                 except (PermissionError, OSError) as e:
                     print(f"⚠️  Could not save {out_path}: {e}")

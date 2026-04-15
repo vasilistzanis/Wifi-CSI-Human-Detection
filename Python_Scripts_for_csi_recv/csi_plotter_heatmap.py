@@ -181,6 +181,11 @@ def parse_csi_line(line: str) -> np.ndarray | None:
     if values.size != token_count or values.size < 2 or values.size % 2 != 0:
         return None
 
+    first_word_invalid = int(parts[13]) != 0
+    if first_word_invalid and values.size >= 4:
+        values = values.copy()
+        values[:4] = 0.0
+
     imag = values[0::2]
     real = values[1::2]
     return (real + 1j * imag).astype(np.complex64)
