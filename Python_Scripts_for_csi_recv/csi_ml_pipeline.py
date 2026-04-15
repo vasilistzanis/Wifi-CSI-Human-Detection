@@ -554,16 +554,23 @@ def train_and_evaluate(
             'confusion_matrix': cm,
             'y_pred': y_pred,
             'y_test': y_test,
+            'feature_importances': [] # Default empty
         }
 
         if hasattr(model, 'feature_importances_'):
             importances = model.feature_importances_
             feat_names  = _get_feature_names(n_pca)
             top_idx     = np.argsort(importances)[::-1][:10]
+            
+            top_features = []
             print(f"\n  Top 10 Important Features:")
             for rank, idx in enumerate(top_idx):
                 fname = feat_names[idx] if idx < len(feat_names) else f"feat_{idx}"
-                print(f"    {rank+1:2}. {fname:30s}  {importances[idx]*100:.2f}%")
+                importance_val = float(importances[idx])
+                top_features.append({"name": fname, "importance": importance_val})
+                print(f"    {rank+1:2}. {fname:30s}  {importance_val*100:.2f}%")
+            
+            results[name]['feature_importances'] = top_features
 
     print(f"\n{'═'*60}")
     print(f" SUMMARY")
@@ -622,6 +629,7 @@ def save_models(results: dict,
             'test_f1_macro':    round(res['test_f1_macro'],  4),
             'confusion_matrix': res['confusion_matrix'].tolist(),
             'classes':          list(le.classes_),
+            'feature_importances': res.get('feature_importances', [])
         }
 
     json_path = out / "metrics.json"
