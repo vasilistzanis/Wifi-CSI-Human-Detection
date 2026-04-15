@@ -369,13 +369,18 @@ def build_dataset(
     print(f"   Train : {len(X_train)} samples "
           f"(orig={len(X_train_orig)}) | Test: {len(X_test)} samples")
 
-    # NEW 3: print both train AND test distribution
+    # Print distribution
     dist_tr = ", ".join(f"{cls}={int((y_train_orig==i).sum())}"
                         for i, cls in enumerate(le.classes_))
     dist_te = ", ".join(f"{cls}={int((y_test==i).sum())}"
                         for i, cls in enumerate(le.classes_))
     print(f"   Train distribution (orig): {dist_tr}")
     print(f"   Test  distribution       : {dist_te}")
+
+    # Distribution shift check
+    print(f"\n📊 Distribution Check:")
+    print(f"   Train mean/std: {X_train.mean():.4f} / {X_train.std():.4f}")
+    print(f"   Test  mean/std: {X_test.mean():.4f} / {X_test.std():.4f}")
 
     return (X_train, X_train_orig, X_test,
             y_train, y_train_orig, y_test, le, pipeline)
@@ -657,11 +662,19 @@ def predict_recording(csv_path: str,
 
     feats  = np.array([extract_features_from_window(w) for w in wins],
                       dtype=np.float32)
-    preds  = model.predict(feats)
-    labels = le.inverse_transform(preds)
+    
+    if hasattr(model, "predict_proba"):
+        probs = model.predict_proba(feats)
+        avg_probs = probs.mean(axis=0)
+        final_idx = np.argmax(avg_probs)
+        final = le.inverse_transform([final_idx])[0]
+        conf = avg_probs[final_idx] * 100
+    else:
+        preds  = model.predict(feats)
+        labels = le.inverse_transform(preds)
+        final = Counter(labels).most_common(1)[0][0]
+        conf  = Counter(labels)[final] / len(labels) * 100
 
-    final = Counter(labels).most_common(1)[0][0]
-    conf  = Counter(labels)[final] / len(labels) * 100
     print(f"🎯 Predicted: {final}  ({conf:.1f}% confidence, {len(wins)} windows)")
     return final
 
