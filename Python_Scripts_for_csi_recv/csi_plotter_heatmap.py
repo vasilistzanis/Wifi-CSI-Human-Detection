@@ -2,14 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-CSI Amplitude & Phase Plotter (Thesis Grade - Improved)
+CSI Amplitude & Phase Plotter (Thesis Grade)
 Reads raw serial dump (.txt) or CSV (.csv) from the ESP32-C6 recv.
-
-Improvements:
-  - Fixed deprecated np.fromstring() → np.fromstring replaced with np.frombuffer
-  - Added file I/O error handling
-  - Better empty file validation
-  - More informative error messages
 
 Usage:
   python csi_plotter_heatmap.py                          # latest file in datasets/
@@ -205,7 +199,7 @@ def load_csi_matrix(dataset_path: Path) -> tuple[np.ndarray, int, SeqStats]:
       PermissionError: if file can't be read
       ValueError: if file is empty or contains no valid CSI data
     """
-    # ✅ IMPROVED: Better file validation
+    # File validation
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
     
@@ -217,7 +211,7 @@ def load_csi_matrix(dataset_path: Path) -> tuple[np.ndarray, int, SeqStats]:
     expected_subcarriers: int | None = None
     seq_stats = SeqStats()
 
-    # ✅ IMPROVED: Added error handling for file I/O
+    # File I/O with error handling
     try:
         with open(dataset_path, "r", encoding="utf-8", errors="ignore") as fh:
             for line in fh:
@@ -248,7 +242,7 @@ def load_csi_matrix(dataset_path: Path) -> tuple[np.ndarray, int, SeqStats]:
         raise ValueError(f"File encoding error in {dataset_path}: {e}")
 
     if not frames:
-        # ✅ IMPROVED: More specific error message
+        # Validation empty check
         raise ValueError(
             f"No valid CSI frames found in {dataset_path}. "
             f"Dropped {dropped_frames} malformed lines. "
@@ -389,7 +383,7 @@ def main():
 
     print(f"📂 Reading: {dataset_path}")
     
-    # ✅ IMPROVED: Better error handling
+    # Execute safely
     try:
         complex_matrix, dropped_frames, seq_stats = load_csi_matrix(dataset_path)
     except (FileNotFoundError, PermissionError, ValueError) as e:
