@@ -110,18 +110,24 @@ def augment_window(window: np.ndarray,
 
 def extract_features_from_window(window: np.ndarray) -> np.ndarray:
     """
-    9 statistical features per PCA component → flat vector.
+    11 statistical features per PCA component → flat vector.
 
     Input:  (window_size, n_pca_components)  e.g. (50, 10)
-    Output: (90,)  [9 stats x 10 components]
+    Output: (110,)  [11 stats x 10 components]
 
-    Stats: mean, std, max, min, range, median, energy, skewness, kurtosis
+    Stats: mean, std, max, min, range, median, energy, skewness, kurtosis, fft_mean, fft_std
     """
     feats = []
     for c in range(window.shape[1]):
         col      = window[:, c].astype(np.float64)
         mean_val = col.mean()
         std_val  = col.std() + 1e-8
+        
+        # FFT features
+        fft_vals = np.abs(np.fft.rfft(col))
+        fft_mean = float(fft_vals.mean())
+        fft_std  = float(fft_vals.std())
+        
         feats.extend([
             mean_val,
             std_val,
@@ -132,13 +138,15 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
             float(np.sum(col ** 2)),
             float(np.mean(((col - mean_val) / std_val) ** 3)),
             float(np.mean(((col - mean_val) / std_val) ** 4)),
+            fft_mean,
+            fft_std,
         ])
     return np.array(feats, dtype=np.float32)
 
 
 def _get_feature_names(n_pca_components: int) -> list[str]:
     stats = ['mean', 'std', 'max', 'min', 'range',
-             'median', 'energy', 'skewness', 'kurtosis']
+             'median', 'energy', 'skewness', 'kurtosis', 'fft_mean', 'fft_std']
     return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in stats]
 
 
@@ -179,9 +187,9 @@ def build_dataset(
     Returns train/test split at recording level (no leakage).
 
     Returns:
-      X_train      : (N, 90) augmented train features
-      X_train_orig : (N_orig, 90) non-augmented train features  ← NEW for CV
-      X_test       : (M, 90) test features (no augmentation)
+      X_train      : (N, 110) augmented train features
+      X_train_orig : (N_orig, 110) non-augmented train features  ← NEW for CV
+      X_test       : (M, 110) test features (no augmentation)
       y_train      : (N,) labels for X_train
       y_train_orig : (N_orig,) labels for X_train_orig
       y_test       : (M,) labels for X_test
@@ -496,7 +504,7 @@ def train_and_evaluate(
 
     # FIX 2: CV on non-augmented data
     cv    = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-    n_pca = X_train.shape[1] // 9
+    n_pca = X_train.shape[1] // 11
 
     for name, model in models.items():
         print(f"\n{'─'*50}")
