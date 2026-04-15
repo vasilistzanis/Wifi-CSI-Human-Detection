@@ -121,7 +121,14 @@ def extract_seq(line: str):
 
 
 def parse_csi_frame(line: str, subcarriers: int):
-    payload = extract_payload(line)
+    parts = split_recv_fields(line)
+    if parts is None:
+        return None
+
+    payload = parts[14].strip().strip('"')
+    if not payload.startswith("[") or not payload.endswith("]"):
+        return None
+    payload = payload[1:-1].strip()
     if not payload:
         return None
 
@@ -132,15 +139,16 @@ def parse_csi_frame(line: str, subcarriers: int):
     if token_count != expected_values or values.size != expected_values:
         return None
 
+    first_word_invalid = int(parts[13]) != 0
+    if first_word_invalid and values.size >= 4:
+        values = values.copy()
+        values[:4] = 0.0
+
     imag = values[0::2]
     real = values[1::2]
 
     # ✅ HT40 Hardware Fix: Null first 2 subcarriers (guard bands/corrupted data)
     # matching the logic in data_preprocessing.py for 100% consistency.
-    if subcarriers == 128:
-        real[0] = 0; imag[0] = 0
-        real[1] = 0; imag[1] = 0
-
     return (real + 1j * imag).astype(np.complex64)
 
 
