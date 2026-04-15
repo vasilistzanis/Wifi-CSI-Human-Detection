@@ -2,41 +2,46 @@
 # -*- coding: utf-8 -*-
 
 """
-CSI HAR — Complete ML Pipeline
-================================
+CSI HAR — Complete ML Pipeline v2
+====================================
 Supports: SVM, Random Forest, (optional) CNN
 Compatible with: CSIPipeline from data_preprocessing.py
 
-Workflow:
-  1. Load CSI recordings per class
-  2. Preprocess with CSIPipeline
-  3. Extract statistical features (windowing)
-  4. Train/Evaluate SVM + Random Forest
-  5. (Optional) CNN with same windows
+Changes from v1:
+  FIX 1 — Pipeline fitted ONLY on train recordings (no test leakage)
+  FIX 2 — CV runs on non-augmented X_train_orig (no augmentation leakage)
+  FIX 3 — np.random.seed(seed) in augment_window for reproducibility
+  NEW 1 — GridSearchCV for SVM + RF hyperparameter tuning
+  NEW 2 — Metrics saved to JSON (for thesis tables)
+  NEW 3 — Test class distribution printed
+  NEW 4 — Per-class accuracy in summary
 
 Usage:
-  python csi_ml_pipeline.py --classes walk idle
-  python csi_ml_pipeline.py --classes walk sit fall idle --save_model
-  python csi_ml_pipeline.py --classes walk idle --cnn
+  python csi_ml_pipeline_v2.py --classes walk idle
+  python csi_ml_pipeline_v2.py --classes walk sit fall idle --save_model --tune
 """
 
 import os
 import sys
+import json
 import argparse
 import numpy as np
 from pathlib import Path
 from collections import Counter
 
-# Sklearn
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold, cross_val_score
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.model_selection import (
+    StratifiedKFold, cross_val_score, GridSearchCV
+)
+from sklearn.metrics import (
+    classification_report, confusion_matrix,
+    accuracy_score, f1_score
+)
 from sklearn.preprocessing import LabelEncoder
 
 import warnings
 warnings.filterwarnings("ignore")
-
 
 # ════════════════════════════════════════════════════════════════════════
 # IMPORT PREPROCESSING PIPELINE
@@ -55,7 +60,9 @@ except ImportError:
 # 1. DATA AUGMENTATION
 # ════════════════════════════════════════════════════════════════════════
 
-def augment_window(window: np.ndarray, n_augments: int = 4) -> list:
+def augment_window(window: np.ndarray,
+                   n_augments: int = 4,
+                   seed: int = None) -> list:       # FIX 3: seed param
     """
     Augment a single window to artificially increase dataset size.
 
@@ -67,10 +74,14 @@ def augment_window(window: np.ndarray, n_augments: int = 4) -> list:
 
     Args:
       window    : (window_size, n_components)
-      n_augments: augmented copies (default 4 = one per technique)
+      n_augments: augmented copies (default 4)
+      seed      : random seed for reproducibility
     Returns:
       List of augmented windows, same shape as input
     """
+    if seed is not None:                             # FIX 3
+        np.random.seed(seed)
+
     techniques = ['noise', 'shift', 'scale', 'reverse']
     augmented  = []
 
@@ -126,7 +137,6 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
 
 
 def _get_feature_names(n_pca_components: int) -> list[str]:
-    """PC1_mean, PC1_std, ..., PC10_kurtosis"""
     stats = ['mean', 'std', 'max', 'min', 'range',
              'median', 'energy', 'skewness', 'kurtosis']
     return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in stats]
@@ -146,10 +156,9 @@ def extract_windows(data: np.ndarray,
 # 3. DATASET BUILDER
 # ════════════════════════════════════════════════════════════════════════
 #
-# KEY FIX — Augmentation leakage prevention:
-#   Split is done at RECORDING level, not window level.
-#   Test recordings → no augmentation, never mixed with train.
-#   Train recordings → augmented freely.
+# FIX 1 — Pipeline fitted ONLY on train recordings.
+# FIX 2 — X_train_orig (non-augmented) returned separately for clean CV.
+# Recording-level split prevents any form of augmentation leakage.
 #
 # ════════════════════════════════════════════════════════════════════════
 
@@ -163,16 +172,21 @@ def build_dataset(
     n_augments: int = 4,
     simulation_mode: bool = False,
     test_recording_ratio: float = 0.2,
+    random_seed: int = 42,
 ) -> tuple:
     """
     Load recordings, preprocess, extract features.
     Returns train/test split at recording level (no leakage).
 
     Returns:
-      X_train, X_test : (N, 90) feature matrices
-      y_train, y_test : (N,) integer labels
-      le              : fitted LabelEncoder
-      pipeline        : fitted CSIPipeline  ← needed for CNN + inference
+      X_train      : (N, 90) augmented train features
+      X_train_orig : (N_orig, 90) non-augmented train features  ← NEW for CV
+      X_test       : (M, 90) test features (no augmentation)
+      y_train      : (N,) labels for X_train
+      y_train_orig : (N_orig,) labels for X_train_orig
+      y_test       : (M,) labels for X_test
+      le           : fitted LabelEncoder
+      pipeline     : fitted CSIPipeline
     """
     if pipeline_kwargs is None:
         pipeline_kwargs = {'fs': 100.0, 'use_diff': True}
@@ -184,8 +198,10 @@ def build_dataset(
     # ── Simulation Mode ──────────────────────────────────────────────────
     if simulation_mode or CSIPipeline is None:
         print("\n🔬 SIMULATION MODE")
-        np.random.seed(42)
-        X_tr, y_tr, X_te, y_te = [], [], [], []
+        np.random.seed(random_seed)
+        X_tr, y_tr = [], []
+        X_tr_orig, y_tr_orig = [], []
+        X_te, y_te = [], []
 
         for label_idx, cls in enumerate(classes):
             n_recs = 20
@@ -215,40 +231,65 @@ def build_dataset(
                 for w in extract_windows(processed, window_size, step):
                     feat = extract_features_from_window(w)
                     if is_test:
-                        X_te.append(feat);  y_te.append(label_idx)
+                        X_te.append(feat)
+                        y_te.append(label_idx)
                     else:
-                        X_tr.append(feat);  y_tr.append(label_idx)
+                        X_tr_orig.append(feat)               # FIX 2
+                        y_tr_orig.append(label_idx)
+                        X_tr.append(feat)
+                        y_tr.append(label_idx)
                         if augment:
-                            for aw in augment_window(w, n_augments):
+                            for aw in augment_window(w, n_augments,
+                                                     seed=random_seed):
                                 X_tr.append(extract_features_from_window(aw))
                                 y_tr.append(label_idx)
 
-        X_train = np.array(X_tr, dtype=np.float32)
-        X_test  = np.array(X_te, dtype=np.float32)
-        y_train = np.array(y_tr, dtype=np.int32)
-        y_test  = np.array(y_te, dtype=np.int32)
-        print(f"\n✅ Train={len(X_train)} | Test={len(X_test)} samples")
-        return X_train, X_test, y_train, y_test, le, None
+        X_train      = np.array(X_tr,      dtype=np.float32)
+        X_train_orig = np.array(X_tr_orig, dtype=np.float32)
+        X_test       = np.array(X_te,      dtype=np.float32)
+        y_train      = np.array(y_tr,      dtype=np.int32)
+        y_train_orig = np.array(y_tr_orig, dtype=np.int32)
+        y_test       = np.array(y_te,      dtype=np.int32)
+
+        print(f"\n✅ Train={len(X_train)} (orig={len(X_train_orig)}) "
+              f"| Test={len(X_test)} samples")
+        return (X_train, X_train_orig, X_test,
+                y_train, y_train_orig, y_test, le, None)
 
     # ── Real Data Mode ───────────────────────────────────────────────────
     print(f"\n📂 Loading data from: {data_dir}")
 
-    # Fit pipeline on first recording of each class
-    fit_matrices = []
+    # ── FIX 1: Determine train/test split FIRST, fit pipeline on train only ──
+    class_files = {}
+    train_files_all = {}
+    test_files_all  = {}
+
     for cls in classes:
         files = (sorted((data_dir/cls).glob("*.csv")) +
                  sorted((data_dir/cls).glob("*.txt")))
         if not files:
             print(f"⚠️  No files found for class '{cls}'")
+            class_files[cls] = []
+            train_files_all[cls] = []
+            test_files_all[cls]  = []
             continue
-        cm, _ = load_csi_csv(files[0])
-        if cm.size > 0:
-            fit_matrices.append(cm)
+        n_test = max(1, int(len(files) * test_recording_ratio))
+        train_files_all[cls] = files[:-n_test]
+        test_files_all[cls]  = files[-n_test:]
+        class_files[cls]     = files
+
+    # Fit pipeline ONLY on train recordings (FIX 1)
+    fit_matrices = []
+    for cls in classes:
+        for fpath in train_files_all.get(cls, [])[:1]:  # first train file only
+            cm, _ = load_csi_csv(fpath)
+            if cm.size > 0:
+                fit_matrices.append(cm)
 
     if not fit_matrices:
-        raise ValueError("No valid CSI data found.")
+        raise ValueError("No valid training CSI data found.")
 
-    print("\n🔧 Fitting CSIPipeline...")
+    print("\n🔧 Fitting CSIPipeline on TRAIN recordings only...")  # FIX 1
     pipeline = CSIPipeline(**pipeline_kwargs)
     pipeline.fit_transform(np.vstack(fit_matrices),
                            use_pca=True, n_components=10,
@@ -256,15 +297,13 @@ def build_dataset(
 
     # Extract features — recording-level split
     X_tr, y_tr = [], []
+    X_tr_orig, y_tr_orig = [], []      # FIX 2: non-augmented separately
     X_te, y_te = [], []
 
     for cls in classes:
-        files = (sorted((data_dir/cls).glob("*.csv")) +
-                 sorted((data_dir/cls).glob("*.txt")))
         label_idx   = int(le.transform([cls])[0])
-        n_test      = max(1, int(len(files) * test_recording_ratio))
-        train_files = files[:-n_test]
-        test_files  = files[-n_test:]
+        train_files = train_files_all.get(cls, [])
+        test_files  = test_files_all.get(cls, [])
 
         print(f"\n   [{cls}]  "
               f"train={len(train_files)} | test={len(test_files)} recordings")
@@ -280,12 +319,17 @@ def build_dataset(
             except ValueError as e:
                 print(f"   ⚠️  {fpath.name}: {e} — skipped")
                 continue
-            for w in extract_windows(processed, window_size, step):
-                X_tr.append(extract_features_from_window(w))
+            for w_idx, w in enumerate(extract_windows(processed,
+                                                       window_size, step)):
+                feat = extract_features_from_window(w)
+                X_tr_orig.append(feat)                       # FIX 2
+                y_tr_orig.append(label_idx)
+                X_tr.append(feat)
                 y_tr.append(label_idx)
                 tr_wins += 1
                 if augment:
-                    for aw in augment_window(w, n_augments):
+                    for aw in augment_window(w, n_augments,
+                                             seed=random_seed + w_idx):
                         X_tr.append(extract_features_from_window(aw))
                         y_tr.append(label_idx)
 
@@ -314,73 +358,162 @@ def build_dataset(
     if not X_te:
         raise ValueError("No test features extracted.")
 
-    X_train = np.array(X_tr, dtype=np.float32)
-    X_test  = np.array(X_te, dtype=np.float32)
-    y_train = np.array(y_tr, dtype=np.int32)
-    y_test  = np.array(y_te, dtype=np.int32)
+    X_train      = np.array(X_tr,      dtype=np.float32)
+    X_train_orig = np.array(X_tr_orig, dtype=np.float32)
+    X_test       = np.array(X_te,      dtype=np.float32)
+    y_train      = np.array(y_tr,      dtype=np.int32)
+    y_train_orig = np.array(y_tr_orig, dtype=np.int32)
+    y_test       = np.array(y_te,      dtype=np.int32)
 
     print(f"\n✅ Dataset ready:")
-    print(f"   Train: {len(X_train)} samples | Test: {len(X_test)} samples")
-    dist = ", ".join(f"{cls}={int((y_train==i).sum())}"
-                     for i, cls in enumerate(le.classes_))
-    print(f"   Train class distribution: {dist}")
+    print(f"   Train : {len(X_train)} samples "
+          f"(orig={len(X_train_orig)}) | Test: {len(X_test)} samples")
 
-    return X_train, X_test, y_train, y_test, le, pipeline
+    # NEW 3: print both train AND test distribution
+    dist_tr = ", ".join(f"{cls}={int((y_train_orig==i).sum())}"
+                        for i, cls in enumerate(le.classes_))
+    dist_te = ", ".join(f"{cls}={int((y_test==i).sum())}"
+                        for i, cls in enumerate(le.classes_))
+    print(f"   Train distribution (orig): {dist_tr}")
+    print(f"   Test  distribution       : {dist_te}")
+
+    return (X_train, X_train_orig, X_test,
+            y_train, y_train_orig, y_test, le, pipeline)
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 4. MODEL TRAINING & EVALUATION
+# 4. OPTIONAL HYPERPARAMETER TUNING  (NEW 1)
+# ════════════════════════════════════════════════════════════════════════
+
+def tune_hyperparameters(X_train_orig: np.ndarray,
+                         y_train_orig: np.ndarray,
+                         cv_folds: int = 5) -> dict:
+    """
+    GridSearchCV on non-augmented train data.
+    Returns best params for SVM and RF.
+
+    NOTE: runs on X_train_orig (not augmented) to avoid CV leakage.
+    """
+    print(f"\n{'═'*60}")
+    print(f" HYPERPARAMETER TUNING (GridSearchCV, {cv_folds}-fold)")
+    print(f" Data: {len(X_train_orig)} non-augmented train samples")
+    print(f"{'═'*60}")
+
+    cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    best_params = {}
+
+    # SVM grid
+    svm_grid = {
+        'C':     [1, 10, 100],
+        'gamma': ['scale', 'auto', 0.01, 0.001],
+    }
+    print("\n🔍 Tuning SVM...")
+    svm_search = GridSearchCV(
+        SVC(kernel='rbf', class_weight='balanced', probability=True),
+        svm_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+    )
+    svm_search.fit(X_train_orig, y_train_orig)
+    best_params['SVM (RBF)'] = svm_search.best_params_
+    print(f"   Best SVM params : {svm_search.best_params_}")
+    print(f"   Best SVM CV acc : {svm_search.best_score_*100:.2f}%")
+
+    # RF grid
+    rf_grid = {
+        'n_estimators': [100, 200, 300],
+        'max_depth':    [10, 15, 20, None],
+        'min_samples_leaf': [1, 2, 4],
+    }
+    print("\n🔍 Tuning Random Forest...")
+    rf_search = GridSearchCV(
+        RandomForestClassifier(class_weight='balanced',
+                               n_jobs=-1, random_state=42),
+        rf_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+    )
+    rf_search.fit(X_train_orig, y_train_orig)
+    best_params['Random Forest'] = rf_search.best_params_
+    print(f"   Best RF params  : {rf_search.best_params_}")
+    print(f"   Best RF CV acc  : {rf_search.best_score_*100:.2f}%")
+
+    return best_params
+
+
+# ════════════════════════════════════════════════════════════════════════
+# 5. MODEL TRAINING & EVALUATION
 # ════════════════════════════════════════════════════════════════════════
 
 def train_and_evaluate(
-    X_train: np.ndarray,
-    X_test:  np.ndarray,
-    y_train: np.ndarray,
-    y_test:  np.ndarray,
+    X_train:      np.ndarray,
+    X_train_orig: np.ndarray,    # FIX 2: for clean CV
+    X_test:       np.ndarray,
+    y_train:      np.ndarray,
+    y_train_orig: np.ndarray,
+    y_test:       np.ndarray,
     le: LabelEncoder,
     cv_folds: int = 5,
+    best_params: dict = None,    # NEW 1: from tune_hyperparameters
 ) -> dict:
-    """Train SVM + RF, evaluate with CV on train + hold-out test."""
+    """
+    Train SVM + RF.
+    CV runs on non-augmented X_train_orig (FIX 2).
+    Final model trained on full augmented X_train.
+    """
     results = {}
 
     print(f"\n{'═'*60}")
     print(f" MODEL TRAINING & EVALUATION")
     print(f" Classes : {list(le.classes_)}")
-    print(f" Train   : {len(X_train)} samples | Test: {len(X_test)} samples")
+    print(f" Train   : {len(X_train)} samples "
+          f"(orig={len(X_train_orig)}) | Test: {len(X_test)} samples")
     print(f" Features: {X_train.shape[1]}")
     print(f"{'═'*60}")
 
+    # Use tuned params if available (NEW 1)
+    svm_params = best_params.get('SVM (RBF)', {}) if best_params else {}
+    rf_params  = best_params.get('Random Forest', {}) if best_params else {}
+
     models = {
         'SVM (RBF)': SVC(
-            kernel='rbf', C=10, gamma='scale',
-            class_weight='balanced', probability=True,
+            kernel='rbf',
+            C=svm_params.get('C', 10),
+            gamma=svm_params.get('gamma', 'scale'),
+            class_weight='balanced',
+            probability=True,
         ),
         'Random Forest': RandomForestClassifier(
-            n_estimators=200, max_depth=15, min_samples_leaf=2,
-            class_weight='balanced', n_jobs=-1, random_state=42,
+            n_estimators=rf_params.get('n_estimators', 200),
+            max_depth=rf_params.get('max_depth', 15),
+            min_samples_leaf=rf_params.get('min_samples_leaf', 2),
+            class_weight='balanced',
+            n_jobs=-1,
+            random_state=42,
         ),
     }
 
-    cv        = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-    n_pca     = X_train.shape[1] // 9
+    # FIX 2: CV on non-augmented data
+    cv    = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    n_pca = X_train.shape[1] // 9
 
     for name, model in models.items():
         print(f"\n{'─'*50}")
         print(f"  {name}")
         print(f"{'─'*50}")
 
+        # CV on ORIGINAL (non-augmented) train data  ← FIX 2
         cv_scores = cross_val_score(
-            model, X_train, y_train,
+            model, X_train_orig, y_train_orig,
             cv=cv, scoring='accuracy', n_jobs=-1
         )
-        print(f"  {cv_folds}-Fold CV (train): "
+        print(f"  {cv_folds}-Fold CV (non-augmented train): "
               f"{cv_scores.mean()*100:.2f}% ± {cv_scores.std()*100:.2f}%")
 
+        # Final fit on FULL augmented train data
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
         acc    = accuracy_score(y_test, y_pred)
+        f1_mac = f1_score(y_test, y_pred, average='macro')   # NEW 4
 
-        print(f"  Hold-out Test Accuracy: {acc*100:.2f}%")
+        print(f"  Hold-out Test Accuracy : {acc*100:.2f}%")
+        print(f"  Hold-out F1 (macro)    : {f1_mac*100:.2f}%")  # NEW 4
         print(f"\n  Classification Report:")
         print(classification_report(y_test, y_pred,
                                     target_names=le.classes_, digits=3))
@@ -392,10 +525,22 @@ def train_and_evaluate(
             print(f"  {le.classes_[i]:>8}  " +
                   "  ".join(f"{v:>8}" for v in row))
 
+        # NEW 3: per-class accuracy
+        print(f"\n  Per-class Accuracy:")
+        for i, cls in enumerate(le.classes_):
+            mask    = y_test == i
+            cls_acc = accuracy_score(y_test[mask], y_pred[mask]) if mask.sum() > 0 else 0.0
+            print(f"    {cls:>10}: {cls_acc*100:.1f}%  ({mask.sum()} test samples)")
+
         results[name] = {
-            'model': model, 'cv_mean': cv_scores.mean(),
-            'cv_std': cv_scores.std(), 'test_accuracy': acc,
-            'confusion_matrix': cm, 'y_pred': y_pred, 'y_test': y_test,
+            'model': model,
+            'cv_mean': cv_scores.mean(),
+            'cv_std': cv_scores.std(),
+            'test_accuracy': acc,
+            'test_f1_macro': f1_mac,
+            'confusion_matrix': cm,
+            'y_pred': y_pred,
+            'y_test': y_test,
         }
 
         if hasattr(model, 'feature_importances_'):
@@ -413,7 +558,8 @@ def train_and_evaluate(
     for name, res in results.items():
         print(f"  {name:20s}  "
               f"CV={res['cv_mean']*100:.1f}% ±{res['cv_std']*100:.1f}%  "
-              f"Test={res['test_accuracy']*100:.1f}%")
+              f"Test={res['test_accuracy']*100:.1f}%  "
+              f"F1={res['test_f1_macro']*100:.1f}%")
 
     best = max(results.items(), key=lambda x: x[1]['test_accuracy'])
     print(f"\n  🏆 Best: {best[0]} ({best[1]['test_accuracy']*100:.1f}%)")
@@ -422,7 +568,7 @@ def train_and_evaluate(
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 5. SAVE MODELS  (FIX: saves pipeline + model + label_encoder)
+# 6. SAVE MODELS
 # ════════════════════════════════════════════════════════════════════════
 
 def save_models(results: dict,
@@ -433,8 +579,9 @@ def save_models(results: dict,
     Save everything needed for inference:
       csi_pipeline.joblib    ← preprocess new recordings
       label_encoder.joblib   ← int → class name
-      SVM_RBF.joblib         ← SVM model
-      Random_Forest.joblib   ← RF model
+      SVM_RBF.joblib
+      Random_Forest.joblib
+      metrics.json           ← NEW 2: for thesis tables
     """
     import joblib
     out = Path(output_dir)
@@ -447,11 +594,27 @@ def save_models(results: dict,
     joblib.dump(le, out / "label_encoder.joblib")
     print(f"💾 {out / 'label_encoder.joblib'}")
 
+    # NEW 2: save metrics to JSON
+    metrics = {}
     for name, res in results.items():
         safe = name.replace(" ", "_").replace("(", "").replace(")", "")
         path = out / f"{safe}.joblib"
         joblib.dump(res['model'], path)
         print(f"💾 {path}  (test={res['test_accuracy']*100:.1f}%)")
+
+        metrics[name] = {
+            'cv_accuracy_mean': round(res['cv_mean'], 4),
+            'cv_accuracy_std':  round(res['cv_std'],  4),
+            'test_accuracy':    round(res['test_accuracy'], 4),
+            'test_f1_macro':    round(res['test_f1_macro'],  4),
+            'confusion_matrix': res['confusion_matrix'].tolist(),
+            'classes':          list(le.classes_),
+        }
+
+    json_path = out / "metrics.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(metrics, f, indent=2, ensure_ascii=False)
+    print(f"📊 {json_path}  (metrics for thesis)")
 
     best = max(results.items(), key=lambda x: x[1]['test_accuracy'])[0]
     safe_best = best.replace(" ", "_").replace("(", "").replace(")", "")
@@ -463,7 +626,7 @@ def save_models(results: dict,
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 6. INFERENCE HELPER
+# 7. INFERENCE HELPER
 # ════════════════════════════════════════════════════════════════════════
 
 def predict_recording(csv_path: str,
@@ -504,18 +667,18 @@ def predict_recording(csv_path: str,
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 7. OPTIONAL CNN  (FIX: pipeline passed correctly — no longer None)
+# 8. OPTIONAL CNN
 # ════════════════════════════════════════════════════════════════════════
 
 def build_cnn_dataset(data_dir, classes, pipeline,
                       window_size=50, step=25, augment=True, n_augments=4,
-                      test_recording_ratio=0.2):
+                      test_recording_ratio=0.2, random_seed=42):
     """
     Build raw window arrays for CNN (no feature extraction).
-    Same recording-level split logic as build_dataset.
+    Same recording-level split + FIX 1/2/3 logic as build_dataset.
 
     Returns: X_train, X_test, y_train, y_test, le
-    Shape:   (N, n_components, window_size)  — ready for Conv1d
+    Shape:   (N, n_components, window_size) — ready for Conv1d
     """
     if pipeline is None:
         raise ValueError(
@@ -543,11 +706,15 @@ def build_cnn_dataset(data_dir, classes, pipeline,
                 processed = pipeline.transform(cm, use_pca=True)
             except ValueError:
                 continue
-            for w in extract_windows(processed, window_size, step):
-                X_tr.append(w.T);  y_tr.append(label_idx)
+            for w_idx, w in enumerate(extract_windows(processed,
+                                                       window_size, step)):
+                X_tr.append(w.T)
+                y_tr.append(label_idx)
                 if augment:
-                    for aw in augment_window(w, n_augments):
-                        X_tr.append(aw.T);  y_tr.append(label_idx)
+                    for aw in augment_window(w, n_augments,
+                                             seed=random_seed + w_idx):
+                        X_tr.append(aw.T)
+                        y_tr.append(label_idx)
 
         for fpath in test_files:
             cm, _ = load_csi_csv(fpath)
@@ -558,7 +725,8 @@ def build_cnn_dataset(data_dir, classes, pipeline,
             except ValueError:
                 continue
             for w in extract_windows(processed, window_size, step):
-                X_te.append(w.T);  y_te.append(label_idx)
+                X_te.append(w.T)
+                y_te.append(label_idx)
 
     return (np.array(X_tr, dtype=np.float32),
             np.array(X_te, dtype=np.float32),
@@ -646,7 +814,7 @@ def train_cnn(X_train, X_test, y_train, y_test, le,
 # ════════════════════════════════════════════════════════════════════════
 
 def main():
-    parser = argparse.ArgumentParser(description="CSI HAR — ML Pipeline")
+    parser = argparse.ArgumentParser(description="CSI HAR — ML Pipeline v2")
     parser.add_argument("--data_dir",    type=str,   default="./datasets")
     parser.add_argument("--classes",     nargs="+",  default=["walk", "idle"])
     parser.add_argument("--window_size", type=int,   default=50)
@@ -657,18 +825,24 @@ def main():
     parser.add_argument("--cnn",         action="store_true")
     parser.add_argument("--simulate",    action="store_true")
     parser.add_argument("--save_model",  action="store_true")
+    parser.add_argument("--tune",        action="store_true",  # NEW 1
+                        help="Run GridSearchCV hyperparameter tuning")
+    parser.add_argument("--seed",        type=int,   default=42)
     args = parser.parse_args()
 
     print("=" * 60)
-    print(" CSI HAR — ML Pipeline")
+    print(" CSI HAR — ML Pipeline v2")
     print(f" Classes : {args.classes}")
     print(f" Data dir: {args.data_dir}")
     print(f" Window  : {args.window_size} frames @ {args.fs} Hz = "
           f"{args.window_size/args.fs:.2f}s")
     print(f" Augment : {not args.no_augment} | Diff: {not args.no_diff}")
+    print(f" Tune    : {args.tune} | Seed: {args.seed}")
     print("=" * 60)
 
-    X_train, X_test, y_train, y_test, le, pipeline = build_dataset(
+    (X_train, X_train_orig, X_test,
+     y_train, y_train_orig, y_test,
+     le, pipeline) = build_dataset(
         data_dir=args.data_dir,
         classes=args.classes,
         pipeline_kwargs={'fs': args.fs, 'use_diff': not args.no_diff},
@@ -677,13 +851,23 @@ def main():
         augment=not args.no_augment,
         n_augments=4,
         simulation_mode=args.simulate or (CSIPipeline is None),
+        random_seed=args.seed,
     )
 
     if X_train.shape[0] == 0:
         print("❌ No samples — check data_dir and classes")
         sys.exit(1)
 
-    results = train_and_evaluate(X_train, X_test, y_train, y_test, le)
+    # Optional hyperparameter tuning (NEW 1)
+    best_params = None
+    if args.tune:
+        best_params = tune_hyperparameters(X_train_orig, y_train_orig)
+
+    results = train_and_evaluate(
+        X_train, X_train_orig, X_test,
+        y_train, y_train_orig, y_test,
+        le, best_params=best_params
+    )
 
     if args.save_model:
         save_models(results, pipeline, le)
@@ -694,19 +878,20 @@ def main():
         print("═" * 60)
 
         if args.simulate or pipeline is None:
-            n = len(X_train)
-            X_cnn_tr = np.random.randn(n, 10, args.window_size).astype(np.float32)
-            X_cnn_te = np.random.randn(len(X_test), 10,
-                                       args.window_size).astype(np.float32)
+            X_cnn_tr = np.random.randn(
+                len(X_train), 10, args.window_size).astype(np.float32)
+            X_cnn_te = np.random.randn(
+                len(X_test), 10, args.window_size).astype(np.float32)
             y_cnn_tr, y_cnn_te = y_train, y_test
         else:
             X_cnn_tr, X_cnn_te, y_cnn_tr, y_cnn_te, _ = build_cnn_dataset(
                 data_dir=args.data_dir,
                 classes=args.classes,
-                pipeline=pipeline,   # FIX: real pipeline, not None
+                pipeline=pipeline,
                 window_size=args.window_size,
                 step=args.step,
                 augment=not args.no_augment,
+                random_seed=args.seed,
             )
 
         train_cnn(X_cnn_tr, X_cnn_te, y_cnn_tr, y_cnn_te, le)
