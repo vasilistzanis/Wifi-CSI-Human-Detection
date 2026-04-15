@@ -32,7 +32,7 @@ from collections import Counter
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import (
-    StratifiedKFold, cross_val_score, GridSearchCV
+    GroupKFold, cross_val_score, GridSearchCV
 )
 from sklearn.metrics import (
     classification_report, confusion_matrix,
@@ -42,6 +42,11 @@ from sklearn.preprocessing import LabelEncoder
 
 import warnings
 warnings.filterwarnings("ignore")
+
+try:
+    from sklearn.model_selection import StratifiedGroupKFold
+except ImportError:
+    StratifiedGroupKFold = None
 
 # ════════════════════════════════════════════════════════════════════════
 # IMPORT PREPROCESSING PIPELINE
@@ -160,6 +165,48 @@ def extract_windows(data: np.ndarray,
             for s in range(0, data.shape[0] - window_size + 1, step)]
 
 
+def _make_group_cv(y: np.ndarray,
+                   groups: np.ndarray,
+                   requested_folds: int = 5) -> tuple:
+    """
+    Build a group-aware CV splitter so windows from the same recording
+    never appear in both train and validation folds.
+    """
+    if len(y) != len(groups):
+        raise ValueError("y and groups must have the same length")
+
+    group_to_label = {}
+    for label, group in zip(y, groups):
+        group = int(group)
+        label = int(label)
+        if group in group_to_label and group_to_label[group] != label:
+            raise ValueError("Each recording group must belong to exactly one class")
+        group_to_label[group] = label
+
+    if len(group_to_label) < 2:
+        raise ValueError("Need at least 2 train recordings for group-based CV.")
+
+    class_group_counts = Counter(group_to_label.values())
+    max_stratified_folds = min(class_group_counts.values()) if class_group_counts else 0
+
+    if StratifiedGroupKFold is not None and max_stratified_folds >= 2:
+        n_splits = min(requested_folds, max_stratified_folds, len(group_to_label))
+        splitter = StratifiedGroupKFold(
+            n_splits=n_splits, shuffle=True, random_state=42
+        )
+        splitter_name = "StratifiedGroupKFold"
+    else:
+        n_splits = min(requested_folds, len(group_to_label))
+        if n_splits < 2:
+            raise ValueError("Need at least 2 train recordings for GroupKFold.")
+        splitter = GroupKFold(n_splits=n_splits)
+        splitter_name = "GroupKFold"
+        print("Warning: StratifiedGroupKFold unavailable or unsupported by"
+              " class counts; falling back to GroupKFold.")
+
+    return splitter, n_splits, splitter_name
+
+
 # ════════════════════════════════════════════════════════════════════════
 # 3. DATASET BUILDER
 # ════════════════════════════════════════════════════════════════════════
@@ -193,6 +240,7 @@ def build_dataset(
       y_train      : (N,) labels for X_train
       y_train_orig : (N_orig,) labels for X_train_orig
       y_test       : (M,) labels for X_test
+      train_groups_orig : (N_orig,) recording ids for X_train_orig
       le           : fitted LabelEncoder
       pipeline     : fitted CSIPipeline
     """
@@ -209,7 +257,9 @@ def build_dataset(
         np.random.seed(random_seed)
         X_tr, y_tr = [], []
         X_tr_orig, y_tr_orig = [], []
+        train_groups_orig = []
         X_te, y_te = [], []
+        recording_group_id = 0
 
         for label_idx, cls in enumerate(classes):
             n_recs = 20
@@ -244,13 +294,15 @@ def build_dataset(
                     else:
                         X_tr_orig.append(feat)               # FIX 2
                         y_tr_orig.append(label_idx)
+                        train_groups_orig.append(recording_group_id)
                         X_tr.append(feat)
                         y_tr.append(label_idx)
                         if augment:
                             for aw in augment_window(w, n_augments,
-                                                     seed=random_seed):
+                                                     seed=random_seed + recording_group_id):
                                 X_tr.append(extract_features_from_window(aw))
                                 y_tr.append(label_idx)
+                recording_group_id += 1
 
         X_train      = np.array(X_tr,      dtype=np.float32)
         X_train_orig = np.array(X_tr_orig, dtype=np.float32)
@@ -258,11 +310,12 @@ def build_dataset(
         y_train      = np.array(y_tr,      dtype=np.int32)
         y_train_orig = np.array(y_tr_orig, dtype=np.int32)
         y_test       = np.array(y_te,      dtype=np.int32)
+        train_groups_orig = np.array(train_groups_orig, dtype=np.int32)
 
         print(f"\n✅ Train={len(X_train)} (orig={len(X_train_orig)}) "
               f"| Test={len(X_test)} samples")
         return (X_train, X_train_orig, X_test,
-                y_train, y_train_orig, y_test, le, None)
+                y_train, y_train_orig, y_test, train_groups_orig, le, None)
 
     # ── Real Data Mode ───────────────────────────────────────────────────
     print(f"\n📂 Loading data from: {data_dir}")
@@ -289,7 +342,7 @@ def build_dataset(
     # Fit pipeline ONLY on train recordings (FIX 1)
     fit_matrices = []
     for cls in classes:
-        for fpath in train_files_all.get(cls, [])[:1]:  # first train file only
+        for fpath in train_files_all.get(cls, []):
             cm, _ = load_csi_csv(fpath)
             if cm.size > 0:
                 fit_matrices.append(cm)
@@ -306,7 +359,9 @@ def build_dataset(
     # Extract features — recording-level split
     X_tr, y_tr = [], []
     X_tr_orig, y_tr_orig = [], []      # FIX 2: non-augmented separately
+    train_groups_orig = []
     X_te, y_te = [], []
+    recording_group_id = 0
 
     for cls in classes:
         label_idx   = int(le.transform([cls])[0])
@@ -332,6 +387,7 @@ def build_dataset(
                 feat = extract_features_from_window(w)
                 X_tr_orig.append(feat)                       # FIX 2
                 y_tr_orig.append(label_idx)
+                train_groups_orig.append(recording_group_id)
                 X_tr.append(feat)
                 y_tr.append(label_idx)
                 tr_wins += 1
@@ -340,6 +396,7 @@ def build_dataset(
                                              seed=random_seed + w_idx):
                         X_tr.append(extract_features_from_window(aw))
                         y_tr.append(label_idx)
+            recording_group_id += 1
 
         # Test files → NO augmentation
         te_wins = 0
@@ -372,6 +429,7 @@ def build_dataset(
     y_train      = np.array(y_tr,      dtype=np.int32)
     y_train_orig = np.array(y_tr_orig, dtype=np.int32)
     y_test       = np.array(y_te,      dtype=np.int32)
+    train_groups_orig = np.array(train_groups_orig, dtype=np.int32)
 
     print(f"\n✅ Dataset ready:")
     print(f"   Train : {len(X_train)} samples "
@@ -391,7 +449,7 @@ def build_dataset(
     print(f"   Test  mean/std: {X_test.mean():.4f} / {X_test.std():.4f}")
 
     return (X_train, X_train_orig, X_test,
-            y_train, y_train_orig, y_test, le, pipeline)
+            y_train, y_train_orig, y_test, train_groups_orig, le, pipeline)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -400,6 +458,7 @@ def build_dataset(
 
 def tune_hyperparameters(X_train_orig: np.ndarray,
                          y_train_orig: np.ndarray,
+                         train_groups_orig: np.ndarray,
                          cv_folds: int = 5) -> dict:
     """
     GridSearchCV on non-augmented train data.
@@ -408,11 +467,15 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     NOTE: runs on X_train_orig (not augmented) to avoid CV leakage.
     """
     print(f"\n{'═'*60}")
-    print(f" HYPERPARAMETER TUNING (GridSearchCV, {cv_folds}-fold)")
-    print(f" Data: {len(X_train_orig)} non-augmented train samples")
+    cv, actual_folds, splitter_name = _make_group_cv(
+        y_train_orig, train_groups_orig, requested_folds=cv_folds
+    )
+    n_recordings = len(np.unique(train_groups_orig))
+    print(f" HYPERPARAMETER TUNING ({splitter_name}, {actual_folds}-fold)")
+    print(f" Data: {len(X_train_orig)} non-augmented train windows "
+          f"from {n_recordings} recordings")
     print(f"{'═'*60}")
 
-    cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
     best_params = {}
 
     # SVM grid
@@ -425,7 +488,7 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
         SVC(kernel='rbf', class_weight='balanced', probability=True),
         svm_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
-    svm_search.fit(X_train_orig, y_train_orig)
+    svm_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
     best_params['SVM (RBF)'] = svm_search.best_params_
     print(f"   Best SVM params : {svm_search.best_params_}")
     print(f"   Best SVM CV acc : {svm_search.best_score_*100:.2f}%")
@@ -442,7 +505,7 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
                                n_jobs=-1, random_state=42),
         rf_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
-    rf_search.fit(X_train_orig, y_train_orig)
+    rf_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
     best_params['Random Forest'] = rf_search.best_params_
     print(f"   Best RF params  : {rf_search.best_params_}")
     print(f"   Best RF CV acc  : {rf_search.best_score_*100:.2f}%")
@@ -461,6 +524,7 @@ def train_and_evaluate(
     y_train:      np.ndarray,
     y_train_orig: np.ndarray,
     y_test:       np.ndarray,
+    train_groups_orig: np.ndarray,
     le: LabelEncoder,
     cv_folds: int = 5,
     best_params: dict = None,    # NEW 1: from tune_hyperparameters
@@ -503,7 +567,9 @@ def train_and_evaluate(
     }
 
     # FIX 2: CV on non-augmented data
-    cv    = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    cv, actual_folds, splitter_name = _make_group_cv(
+        y_train_orig, train_groups_orig, requested_folds=cv_folds
+    )
     n_pca = X_train.shape[1] // 11
 
     for name, model in models.items():
@@ -514,9 +580,10 @@ def train_and_evaluate(
         # CV on ORIGINAL (non-augmented) train data  ← FIX 2
         cv_scores = cross_val_score(
             model, X_train_orig, y_train_orig,
-            cv=cv, scoring='accuracy', n_jobs=-1
+            cv=cv, scoring='accuracy', n_jobs=-1,
+            groups=train_groups_orig
         )
-        print(f"  {cv_folds}-Fold CV (non-augmented train): "
+        print(f"  {actual_folds}-Fold {splitter_name} CV "
               f"{cv_scores.mean()*100:.2f}% ± {cv_scores.std()*100:.2f}%")
 
         # Final fit on FULL augmented train data
@@ -871,7 +938,7 @@ def main():
 
     (X_train, X_train_orig, X_test,
      y_train, y_train_orig, y_test,
-     le, pipeline) = build_dataset(
+     train_groups_orig, le, pipeline) = build_dataset(
         data_dir=args.data_dir,
         classes=args.classes,
         pipeline_kwargs={'fs': args.fs, 'use_diff': not args.no_diff},
@@ -890,12 +957,14 @@ def main():
     # Optional hyperparameter tuning (NEW 1)
     best_params = None
     if args.tune:
-        best_params = tune_hyperparameters(X_train_orig, y_train_orig)
+        best_params = tune_hyperparameters(
+            X_train_orig, y_train_orig, train_groups_orig
+        )
 
     results = train_and_evaluate(
         X_train, X_train_orig, X_test,
         y_train, y_train_orig, y_test,
-        le, best_params=best_params
+        train_groups_orig, le, best_params=best_params
     )
 
     if args.save_model:

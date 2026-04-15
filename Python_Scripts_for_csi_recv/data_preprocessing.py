@@ -208,10 +208,21 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
 
     print(f"✅ Loaded {complex_matrix.shape[0]} frames "
           f"× {complex_matrix.shape[1]} subcarriers")
-    if not metadata_df['rssi'].isna().all():
-        print(f"   RSSI: {metadata_df['rssi'].mean():.1f} dBm | "
-              f"AGC: {int(metadata_df['agc_gain'].mode().iloc[0])} | "
-              f"FFT: {int(metadata_df['fft_gain'].mode().iloc[0])}")
+    summary_parts = []
+    rssi_values = metadata_df['rssi'].dropna()
+    if not rssi_values.empty:
+        summary_parts.append(f"RSSI: {rssi_values.mean():.1f} dBm")
+
+    agc_mode = metadata_df['agc_gain'].dropna().mode()
+    if not agc_mode.empty:
+        summary_parts.append(f"AGC: {int(agc_mode.iloc[0])}")
+
+    fft_mode = metadata_df['fft_gain'].dropna().mode()
+    if not fft_mode.empty:
+        summary_parts.append(f"FFT: {int(fft_mode.iloc[0])}")
+
+    if summary_parts:
+        print("   " + " | ".join(summary_parts))
 
     return complex_matrix, metadata_df
 
