@@ -103,17 +103,6 @@ def safe_set_buffer_size(ser: serial.Serial, rx_size: int) -> None:
         pass
 
 
-def extract_payload(line: str):
-    parts = split_recv_fields(line)
-    if parts is None:
-        return None
-
-    payload = parts[14].strip().strip('"')
-    if not payload.startswith("[") or not payload.endswith("]"):
-        return None
-    return payload[1:-1].strip()
-
-
 def extract_seq(line: str):
     parts = split_recv_fields(line)
     return int(parts[1]) if parts is not None else None

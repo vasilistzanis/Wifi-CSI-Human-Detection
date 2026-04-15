@@ -74,7 +74,7 @@ def _build_complex_frame(raw: list, first_word_invalid: bool):
     if n < 2 or n % 2 != 0:
         return None
 
-    # ✅ IMPROVED: Make explicit copy and apply HT40 fix
+    # Apply HT40 hardware bug fix if flagged
     if first_word_invalid and n >= 4:
         raw = list(raw)  # explicit copy
         raw[0] = 0
@@ -144,7 +144,7 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
     for col in ['seq', 'rssi', 'fft_gain', 'agc_gain', 'len', 'first_word']:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    # ✅ FIX: first_word NaN → 0  (prevents int(NaN) ValueError crash)
+    # Handle NaN in first_word to prevent conversion crash
     df['first_word'] = df['first_word'].fillna(0).astype(int)
 
     df = df.dropna(subset=['seq', 'len']).reset_index(drop=True)
@@ -162,7 +162,7 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
         print(f"⚠️  Sequence gaps: {total_gaps} packets lost "
               f"in {gap_events} events out of {len(seqs)} received")
 
-    # ✅ FAST: vectorized JSON parsing instead of iterrows
+    # Vectorized JSON parsing for better performance
     parsed = df['data'].apply(_safe_json)
     valid_mask = parsed.notna()
 
@@ -274,7 +274,7 @@ class CSIPipeline:
         self.scaler = None
         self.is_fitted = False
 
-        # ✅ NEW: Store training shape for validation
+        # Store training shape for validation
         self._fitted_n_subcarriers = None
 
     # ── 1. Null Subcarrier Removal ────────────────────────────────────────
@@ -314,7 +314,7 @@ class CSIPipeline:
         Hampel filter: replaces outliers with median of local window.
         Applied per-subcarrier (along time axis).
 
-        ✅ OPTIMIZED: Uses pandas rolling instead of nested Python loops.
+        OPTIMIZED: Uses pandas rolling instead of nested Python loops.
         ~10-20x faster than the naive implementation.
         Mathematically identical results.
 
@@ -351,7 +351,7 @@ class CSIPipeline:
         Zero-phase Butterworth low-pass filter (4th order).
         Applied to ALL subcarriers at once via axis parameter.
 
-        ✅ OPTIMIZED: Uses sosfiltfilt with axis=0 instead of per-column loop.
+        Applied to ALL subcarriers at once via axis parameter.
 
         Default cutoff: 12 Hz — removes high-frequency noise while
         preserving human motion (walk ≈ 2 Hz, fall ≈ 5-10 Hz).
@@ -425,7 +425,7 @@ class CSIPipeline:
         """
         print(f"🔧 fit_transform — input {complex_matrix.shape}")
 
-        # ✅ NEW: Store training shape for validation
+        # Store training shape for validation
         self._fitted_n_subcarriers = complex_matrix.shape[1]
 
         # [1] Null removal
@@ -458,7 +458,7 @@ class CSIPipeline:
                 )
             actual_n = min(n_components, data.shape[0] - 1, data.shape[1])
             
-            # ✅ IMPROVED: Warn if components were reduced
+            # Warn if components were reduced by matrix rank limit
             if actual_n < n_components:
                 print(f"   ⚠️  PCA: requested {n_components} components, "
                       f"but limited to {actual_n} by data shape {data.shape}")
@@ -499,7 +499,7 @@ class CSIPipeline:
         if not self.is_fitted:
             raise RuntimeError("Pipeline not fitted. Call fit_transform() first.")
 
-        # ✅ NEW: Validate input shape matches training shape
+        # Validate input shape matches training shape
         if complex_matrix.shape[1] != self._fitted_n_subcarriers:
             raise ValueError(
                 f"Shape mismatch: input has {complex_matrix.shape[1]} subcarriers, "
