@@ -5,7 +5,7 @@
 CSI HAR — Complete ML Pipeline
 ================================
 Supports: SVM, Random Forest, (optional) CNN
-Compatible with: CSIPipeline from csi_preprocessing.py
+Compatible with: CSIPipeline from data_preprocessing.py
 
 Workflow:
   1. Load CSI recordings per class
@@ -15,39 +15,33 @@ Workflow:
   5. (Optional) CNN with same windows
 
 Usage:
-  python csi_ml_pipeline.py --data_dir ./data --classes walk sit fall stand
+  python csi_ml_pipeline.py --classes walk idle
+  python csi_ml_pipeline.py --classes walk sit fall idle --save_model
+  python csi_ml_pipeline.py --classes walk idle --cnn
 """
 
 import os
 import sys
-import json
 import argparse
 import numpy as np
-import pandas as pd
 from pathlib import Path
 from collections import Counter
 
 # Sklearn
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import (
-    train_test_split, StratifiedKFold, cross_val_score
-)
-from sklearn.metrics import (
-    classification_report, confusion_matrix, accuracy_score
-)
+from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from sklearn.preprocessing import LabelEncoder
-from sklearn.pipeline import Pipeline as SklearnPipeline
 
 import warnings
 warnings.filterwarnings("ignore")
 
 
 # ════════════════════════════════════════════════════════════════════════
-# IMPORT  PREPROCESSING PIPELINE
+# IMPORT PREPROCESSING PIPELINE
 # ════════════════════════════════════════════════════════════════════════
 
-# Make sure data_preprocessing.py is in the same folder
 try:
     from data_preprocessing import CSIPipeline, load_csi_csv
     print("✅ CSIPipeline imported successfully")
@@ -61,48 +55,37 @@ except ImportError:
 # 1. DATA AUGMENTATION
 # ════════════════════════════════════════════════════════════════════════
 
-def augment_window(window: np.ndarray, n_augments: int = 3) -> list:
+def augment_window(window: np.ndarray, n_augments: int = 4) -> list:
     """
     Augment a single window to artificially increase dataset size.
-    Essential when you have < 200 recordings.
 
-    Techniques:
-      - Gaussian noise injection
-      - Time shift
-      - Amplitude scaling
-      - Time reversal
+    Techniques (cycling through all 4):
+      noise   : Gaussian noise injection
+      shift   : Time shift 1-5 frames
+      scale   : Amplitude scaling +/-10%
+      reverse : Time reversal
 
     Args:
-      window    : (window_size, n_components) array
-      n_augments: how many augmented copies to create
-
+      window    : (window_size, n_components)
+      n_augments: augmented copies (default 4 = one per technique)
     Returns:
-      List of augmented windows (each same shape as input)
+      List of augmented windows, same shape as input
     """
-    augmented = []
     techniques = ['noise', 'shift', 'scale', 'reverse']
+    augmented  = []
 
     for i in range(n_augments):
+        aug  = window.copy()
         tech = techniques[i % len(techniques)]
-        aug = window.copy()
 
         if tech == 'noise':
-            # Small Gaussian noise — preserves signal shape
             noise_level = 0.02 * aug.std()
             aug = aug + np.random.normal(0, noise_level, aug.shape)
-
         elif tech == 'shift':
-            # Time shift by 1-5 frames
-            shift = np.random.randint(1, 6)
-            aug = np.roll(aug, shift, axis=0)
-
+            aug = np.roll(aug, np.random.randint(1, 6), axis=0)
         elif tech == 'scale':
-            # Amplitude scaling ±10%
-            scale = np.random.uniform(0.90, 1.10)
-            aug = aug * scale
-
+            aug = aug * np.random.uniform(0.90, 1.10)
         elif tech == 'reverse':
-            # Time reversal — same activity, different direction
             aug = aug[::-1].copy()
 
         augmented.append(aug.astype(np.float32))
@@ -111,90 +94,63 @@ def augment_window(window: np.ndarray, n_augments: int = 3) -> list:
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 2. FEATURE EXTRACTION (Windowing → Statistical Features)
+# 2. FEATURE EXTRACTION
 # ════════════════════════════════════════════════════════════════════════
 
 def extract_features_from_window(window: np.ndarray) -> np.ndarray:
     """
-    Extract statistical features from a single window.
+    9 statistical features per PCA component → flat vector.
 
     Input:  (window_size, n_pca_components)  e.g. (50, 10)
-    Output: (n_features,)                    e.g. (90,) flat vector
+    Output: (90,)  [9 stats x 10 components]
 
-    Features per PCA component (9 stats × 10 components = 90):
-      - mean, std, max, min, range, median,
-        energy, skewness, kurtosis (via manual calculation)
+    Stats: mean, std, max, min, range, median, energy, skewness, kurtosis
     """
     feats = []
-
     for c in range(window.shape[1]):
-        col = window[:, c].astype(np.float64)
-
-        mean_val  = col.mean()
-        std_val   = col.std() + 1e-8  # avoid division by zero
-
+        col      = window[:, c].astype(np.float64)
+        mean_val = col.mean()
+        std_val  = col.std() + 1e-8
         feats.extend([
-            mean_val,                              # 1. mean
-            std_val,                               # 2. std
-            col.max(),                             # 3. max
-            col.min(),                             # 4. min
-            col.max() - col.min(),                 # 5. range
-            float(np.median(col)),                 # 6. median
-            float(np.sum(col ** 2)),               # 7. energy
-            float(np.mean(((col - mean_val)        # 8. skewness
-                           / std_val) ** 3)),
-            float(np.mean(((col - mean_val)        # 9. kurtosis
-                           / std_val) ** 4)),
+            mean_val,
+            std_val,
+            col.max(),
+            col.min(),
+            col.max() - col.min(),
+            float(np.median(col)),
+            float(np.sum(col ** 2)),
+            float(np.mean(((col - mean_val) / std_val) ** 3)),
+            float(np.mean(((col - mean_val) / std_val) ** 4)),
         ])
-
     return np.array(feats, dtype=np.float32)
 
 
-def extract_features(
-    data: np.ndarray,
-    window_size: int = 50,
-    step: int = 25,
-    augment: bool = False,
-    n_augments: int = 3
-) -> tuple[np.ndarray, int]:
-    """
-    Slide a window over preprocessed CSI data and extract features.
+def _get_feature_names(n_pca_components: int) -> list[str]:
+    """PC1_mean, PC1_std, ..., PC10_kurtosis"""
+    stats = ['mean', 'std', 'max', 'min', 'range',
+             'median', 'energy', 'skewness', 'kurtosis']
+    return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in stats]
 
-    Args:
-      data        : (N_frames, n_pca_components) from CSIPipeline
-      window_size : frames per window (default 50 = 0.5s @ 100Hz)
-      step        : hop size (default 25 = 50% overlap)
-      augment     : whether to augment each window
-      n_augments  : augmented copies per window
 
-    Returns:
-      features    : (N_windows, n_features) or more if augmented
-      n_windows   : number of original (non-augmented) windows
-    """
+def extract_windows(data: np.ndarray,
+                    window_size: int = 50,
+                    step: int = 25) -> list[np.ndarray]:
+    """Sliding window → list of (window_size, n_components) arrays."""
     if data.shape[0] < window_size:
-        print(f"⚠️  Recording too short ({data.shape[0]} frames < "
-              f"window_size={window_size}) — skipping")
-        return np.zeros((0, 0), dtype=np.float32), 0
-
-    windows = []
-    for start in range(0, data.shape[0] - window_size + 1, step):
-        w = data[start:start + window_size]
-        windows.append(w)
-
-    n_windows = len(windows)
-    all_features = []
-
-    for w in windows:
-        all_features.append(extract_features_from_window(w))
-        if augment:
-            for aug_w in augment_window(w, n_augments):
-                all_features.append(extract_features_from_window(aug_w))
-
-    return np.array(all_features, dtype=np.float32), n_windows
+        return []
+    return [data[s:s + window_size]
+            for s in range(0, data.shape[0] - window_size + 1, step)]
 
 
 # ════════════════════════════════════════════════════════════════════════
 # 3. DATASET BUILDER
+# ════════════════════════════════════════════════════════════════════════
+#
+# KEY FIX — Augmentation leakage prevention:
+#   Split is done at RECORDING level, not window level.
+#   Test recordings → no augmentation, never mixed with train.
+#   Train recordings → augmented freely.
+#
 # ════════════════════════════════════════════════════════════════════════
 
 def build_dataset(
@@ -204,38 +160,19 @@ def build_dataset(
     window_size: int = 50,
     step: int = 25,
     augment: bool = True,
-    n_augments: int = 3,
-    simulation_mode: bool = False
-) -> tuple[np.ndarray, np.ndarray, LabelEncoder]:
+    n_augments: int = 4,
+    simulation_mode: bool = False,
+    test_recording_ratio: float = 0.2,
+) -> tuple:
     """
-    Load all CSI recordings, preprocess, extract features.
-
-    Expected directory structure:
-      data_dir/
-        walk/
-          rec_001.csv
-          rec_002.csv
-          ...
-        sit/
-          rec_001.csv
-          ...
-        fall/
-          ...
-
-    Args:
-      data_dir       : root directory
-      classes        : list of class names (subfolder names)
-      pipeline_kwargs: dict passed to CSIPipeline()
-      window_size    : frames per window
-      step           : hop size between windows
-      augment        : whether to use data augmentation
-      n_augments     : augmented copies per window
-      simulation_mode: generate synthetic data if True
+    Load recordings, preprocess, extract features.
+    Returns train/test split at recording level (no leakage).
 
     Returns:
-      X  : (N_samples, n_features) feature matrix
-      y  : (N_samples,) integer labels
-      le : fitted LabelEncoder (le.classes_ gives class names)
+      X_train, X_test : (N, 90) feature matrices
+      y_train, y_test : (N,) integer labels
+      le              : fitted LabelEncoder
+      pipeline        : fitted CSIPipeline  ← needed for CNN + inference
     """
     if pipeline_kwargs is None:
         pipeline_kwargs = {'fs': 100.0, 'use_diff': True}
@@ -244,137 +181,151 @@ def build_dataset(
     le = LabelEncoder()
     le.fit(classes)
 
-    X_list, y_list = [], []
-
     # ── Simulation Mode ──────────────────────────────────────────────────
     if simulation_mode or CSIPipeline is None:
-        print("\n🔬 SIMULATION MODE — generating synthetic CSI data")
-        print(f"   Classes: {classes}")
+        print("\n🔬 SIMULATION MODE")
         np.random.seed(42)
+        X_tr, y_tr, X_te, y_te = [], [], [], []
 
         for label_idx, cls in enumerate(classes):
-            print(f"\n   [{cls}] Generating 20 synthetic recordings...")
-            for rec_i in range(20):
-                # Each class has slightly different frequency content
-                t = np.linspace(0, 5, 500)
+            n_recs = 20
+            n_test = max(1, int(n_recs * test_recording_ratio))
+            print(f"   [{cls}] {n_recs} synthetic recordings "
+                  f"(train={n_recs-n_test}, test={n_test})")
+
+            for rec_i in range(n_recs):
+                t    = np.linspace(0, 5, 500)
                 freq = 1.0 + label_idx * 0.5
-                r  = (np.outer(np.sin(2 * np.pi * freq * t),
-                               np.ones(128)) +
-                      np.random.randn(500, 128) * 0.3)
-                im = (np.outer(np.cos(2 * np.pi * freq * t),
-                               np.ones(128)) +
-                      np.random.randn(500, 128) * 0.3)
-                complex_matrix = (r + 1j * im).astype(np.complex64)
-                complex_matrix[:, :6]  = 0
-                complex_matrix[:, -6:] = 0
+                r    = (np.outer(np.sin(2*np.pi*freq*t), np.ones(128))
+                        + np.random.randn(500, 128) * 0.3)
+                im   = (np.outer(np.cos(2*np.pi*freq*t), np.ones(128))
+                        + np.random.randn(500, 128) * 0.3)
+                cm   = (r + 1j*im).astype(np.complex64)
+                cm[:, :6]  = 0
+                cm[:, -6:] = 0
 
-                # Each recording gets its own pipeline (fit on training data)
                 pp = CSIPipeline(**pipeline_kwargs) if CSIPipeline else None
-                if pp:
-                    processed = pp.fit_transform(
-                        complex_matrix, use_pca=True,
-                        n_components=10, scaler_type='standard'
-                    )
-                else:
-                    processed = np.random.randn(499, 10).astype(np.float32)
+                processed = (pp.fit_transform(cm, use_pca=True,
+                                              n_components=10,
+                                              scaler_type='standard')
+                             if pp else
+                             np.random.randn(499, 10).astype(np.float32))
 
-                feats, nw = extract_features(
-                    processed, window_size, step,
-                    augment=(augment and rec_i < 10),
-                    n_augments=n_augments
-                )
-                if feats.shape[0] > 0:
-                    X_list.append(feats)
-                    y_list.extend([label_idx] * len(feats))
+                is_test = (rec_i >= n_recs - n_test)
+                for w in extract_windows(processed, window_size, step):
+                    feat = extract_features_from_window(w)
+                    if is_test:
+                        X_te.append(feat);  y_te.append(label_idx)
+                    else:
+                        X_tr.append(feat);  y_tr.append(label_idx)
+                        if augment:
+                            for aw in augment_window(w, n_augments):
+                                X_tr.append(extract_features_from_window(aw))
+                                y_tr.append(label_idx)
 
-        X = np.vstack(X_list)
-        y = np.array(y_list, dtype=np.int32)
-        print(f"\n✅ Simulation dataset: {X.shape[0]} samples, "
-              f"{X.shape[1]} features, {len(classes)} classes")
-        return X, y, le
+        X_train = np.array(X_tr, dtype=np.float32)
+        X_test  = np.array(X_te, dtype=np.float32)
+        y_train = np.array(y_tr, dtype=np.int32)
+        y_test  = np.array(y_te, dtype=np.int32)
+        print(f"\n✅ Train={len(X_train)} | Test={len(X_test)} samples")
+        return X_train, X_test, y_train, y_test, le, None
 
     # ── Real Data Mode ───────────────────────────────────────────────────
     print(f"\n📂 Loading data from: {data_dir}")
 
-    # Step 1: Fit pipeline on ALL training data combined (first pass)
-    # We collect one representative recording per class for fitting
-    first_pass_matrices = []
-
+    # Fit pipeline on first recording of each class
+    fit_matrices = []
     for cls in classes:
-        cls_dir = data_dir / cls
-        if not cls_dir.exists():
-            print(f"⚠️  Directory not found: {cls_dir} — skipping")
-            continue
-        files = sorted(cls_dir.glob("*.csv")) + sorted(cls_dir.glob("*.txt"))
+        files = (sorted((data_dir/cls).glob("*.csv")) +
+                 sorted((data_dir/cls).glob("*.txt")))
         if not files:
-            print(f"⚠️  No .csv/.txt files in {cls_dir}")
+            print(f"⚠️  No files found for class '{cls}'")
             continue
-        # Use first file for fitting
         cm, _ = load_csi_csv(files[0])
         if cm.size > 0:
-            first_pass_matrices.append(cm)
+            fit_matrices.append(cm)
 
-    if not first_pass_matrices:
-        raise ValueError("No valid CSI data found. Check data_dir and file format.")
+    if not fit_matrices:
+        raise ValueError("No valid CSI data found.")
 
-    # Fit pipeline on concatenated representative data
-    print("\n🔧 Fitting CSIPipeline on representative data...")
-    fit_matrix = np.vstack(first_pass_matrices)
+    print("\n🔧 Fitting CSIPipeline...")
     pipeline = CSIPipeline(**pipeline_kwargs)
-    pipeline.fit_transform(
-        fit_matrix, use_pca=True,
-        n_components=10, scaler_type='standard'
-    )
+    pipeline.fit_transform(np.vstack(fit_matrices),
+                           use_pca=True, n_components=10,
+                           scaler_type='standard')
 
-    # Step 2: Transform all recordings
+    # Extract features — recording-level split
+    X_tr, y_tr = [], []
+    X_te, y_te = [], []
+
     for cls in classes:
-        cls_dir = data_dir / cls
-        if not cls_dir.exists():
-            continue
+        files = (sorted((data_dir/cls).glob("*.csv")) +
+                 sorted((data_dir/cls).glob("*.txt")))
+        label_idx   = int(le.transform([cls])[0])
+        n_test      = max(1, int(len(files) * test_recording_ratio))
+        train_files = files[:-n_test]
+        test_files  = files[-n_test:]
 
-        files = sorted(cls_dir.glob("*.csv")) + sorted(cls_dir.glob("*.txt"))
-        label_idx = le.transform([cls])[0]
-        cls_windows = 0
+        print(f"\n   [{cls}]  "
+              f"train={len(train_files)} | test={len(test_files)} recordings")
 
-        print(f"\n   [{cls}] {len(files)} recordings...")
-
-        for f_idx, fpath in enumerate(files):
+        # Training files → augment
+        tr_wins = 0
+        for fpath in train_files:
             cm, _ = load_csi_csv(fpath)
             if cm.size == 0:
                 continue
-
             try:
                 processed = pipeline.transform(cm, use_pca=True)
             except ValueError as e:
                 print(f"   ⚠️  {fpath.name}: {e} — skipped")
                 continue
+            for w in extract_windows(processed, window_size, step):
+                X_tr.append(extract_features_from_window(w))
+                y_tr.append(label_idx)
+                tr_wins += 1
+                if augment:
+                    for aw in augment_window(w, n_augments):
+                        X_tr.append(extract_features_from_window(aw))
+                        y_tr.append(label_idx)
 
-            # Augment only training files (not the last 20%)
-            do_aug = augment and (f_idx < int(len(files) * 0.8))
-            feats, nw = extract_features(
-                processed, window_size, step,
-                augment=do_aug, n_augments=n_augments
-            )
+        # Test files → NO augmentation
+        te_wins = 0
+        for fpath in test_files:
+            cm, _ = load_csi_csv(fpath)
+            if cm.size == 0:
+                continue
+            try:
+                processed = pipeline.transform(cm, use_pca=True)
+            except ValueError as e:
+                print(f"   ⚠️  {fpath.name}: {e} — skipped")
+                continue
+            for w in extract_windows(processed, window_size, step):
+                X_te.append(extract_features_from_window(w))
+                y_te.append(label_idx)
+                te_wins += 1
 
-            if feats.shape[0] > 0:
-                X_list.append(feats)
-                y_list.extend([label_idx] * len(feats))
-                cls_windows += len(feats)
+        aug_count = tr_wins * n_augments if augment else 0
+        print(f"   → train: {tr_wins} orig + {aug_count} augmented | "
+              f"test: {te_wins} windows")
 
-        print(f"   → {cls_windows} windows total")
+    if not X_tr:
+        raise ValueError("No training features extracted.")
+    if not X_te:
+        raise ValueError("No test features extracted.")
 
-    if not X_list:
-        raise ValueError("No features extracted. Check recordings.")
+    X_train = np.array(X_tr, dtype=np.float32)
+    X_test  = np.array(X_te, dtype=np.float32)
+    y_train = np.array(y_tr, dtype=np.int32)
+    y_test  = np.array(y_te, dtype=np.int32)
 
-    X = np.vstack(X_list)
-    y = np.array(y_list, dtype=np.int32)
+    print(f"\n✅ Dataset ready:")
+    print(f"   Train: {len(X_train)} samples | Test: {len(X_test)} samples")
+    dist = ", ".join(f"{cls}={int((y_train==i).sum())}"
+                     for i, cls in enumerate(le.classes_))
+    print(f"   Train class distribution: {dist}")
 
-    print(f"\n✅ Dataset ready: {X.shape[0]} samples × {X.shape[1]} features")
-    print(f"   Class distribution: "
-          + ", ".join(f"{cls}={cnt}"
-                      for cls, cnt in zip(le.classes_,
-                                          np.bincount(y))))
-    return X, y, le
+    return X_train, X_test, y_train, y_test, le, pipeline
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -382,175 +333,209 @@ def build_dataset(
 # ════════════════════════════════════════════════════════════════════════
 
 def train_and_evaluate(
-    X: np.ndarray,
-    y: np.ndarray,
+    X_train: np.ndarray,
+    X_test:  np.ndarray,
+    y_train: np.ndarray,
+    y_test:  np.ndarray,
     le: LabelEncoder,
-    test_size: float = 0.2,
-    cv_folds: int = 5
+    cv_folds: int = 5,
 ) -> dict:
-    """
-    Train SVM and Random Forest, evaluate with both hold-out and
-    k-fold cross-validation.
-
-    Returns dict with all results.
-    """
+    """Train SVM + RF, evaluate with CV on train + hold-out test."""
     results = {}
-    n_classes = len(le.classes_)
 
     print(f"\n{'═'*60}")
     print(f" MODEL TRAINING & EVALUATION")
-    print(f" Classes: {list(le.classes_)}")
-    print(f" Total samples: {len(X)}  |  Features: {X.shape[1]}")
+    print(f" Classes : {list(le.classes_)}")
+    print(f" Train   : {len(X_train)} samples | Test: {len(X_test)} samples")
+    print(f" Features: {X_train.shape[1]}")
     print(f"{'═'*60}")
 
-    # Train/test split (stratified — keeps class balance)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y,
-        test_size=test_size,
-        random_state=42,
-        stratify=y
-    )
-    print(f"\n📊 Split: {len(X_train)} train / {len(X_test)} test")
-
-    # ── MODEL DEFINITIONS ────────────────────────────────────────────────
     models = {
         'SVM (RBF)': SVC(
-            kernel='rbf',
-            C=10,
-            gamma='scale',
-            class_weight='balanced',
-            probability=True,   # enables predict_proba
-            random_state=42
+            kernel='rbf', C=10, gamma='scale',
+            class_weight='balanced', probability=True,
         ),
         'Random Forest': RandomForestClassifier(
-            n_estimators=200,
-            max_depth=15,
-            min_samples_leaf=2,
-            class_weight='balanced',
-            n_jobs=-1,
-            random_state=42
+            n_estimators=200, max_depth=15, min_samples_leaf=2,
+            class_weight='balanced', n_jobs=-1, random_state=42,
         ),
     }
 
-    cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    cv        = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    n_pca     = X_train.shape[1] // 9
 
     for name, model in models.items():
         print(f"\n{'─'*50}")
         print(f"  {name}")
         print(f"{'─'*50}")
 
-        # ── Cross-Validation (on all data)
         cv_scores = cross_val_score(
-            model, X, y, cv=cv, scoring='accuracy', n_jobs=-1
+            model, X_train, y_train,
+            cv=cv, scoring='accuracy', n_jobs=-1
         )
-        print(f"  {cv_folds}-Fold CV Accuracy: "
+        print(f"  {cv_folds}-Fold CV (train): "
               f"{cv_scores.mean()*100:.2f}% ± {cv_scores.std()*100:.2f}%")
 
-        # ── Hold-out evaluation
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
+        acc    = accuracy_score(y_test, y_pred)
 
-        acc = accuracy_score(y_test, y_pred)
         print(f"  Hold-out Test Accuracy: {acc*100:.2f}%")
         print(f"\n  Classification Report:")
-        print(classification_report(
-            y_test, y_pred,
-            target_names=le.classes_,
-            digits=3
-        ))
+        print(classification_report(y_test, y_pred,
+                                    target_names=le.classes_, digits=3))
 
-        # Confusion Matrix (text)
         cm = confusion_matrix(y_test, y_pred)
         print(f"  Confusion Matrix:")
-        header = "         " + "  ".join(f"{c:>8}" for c in le.classes_)
-        print(header)
+        print("          " + "  ".join(f"{c:>8}" for c in le.classes_))
         for i, row in enumerate(cm):
-            row_str = f"  {le.classes_[i]:>8} " + "  ".join(
-                f"{v:>8}" for v in row
-            )
-            print(row_str)
+            print(f"  {le.classes_[i]:>8}  " +
+                  "  ".join(f"{v:>8}" for v in row))
 
         results[name] = {
-            'model': model,
-            'cv_mean': cv_scores.mean(),
-            'cv_std': cv_scores.std(),
-            'test_accuracy': acc,
-            'confusion_matrix': cm,
-            'y_pred': y_pred,
-            'y_test': y_test
+            'model': model, 'cv_mean': cv_scores.mean(),
+            'cv_std': cv_scores.std(), 'test_accuracy': acc,
+            'confusion_matrix': cm, 'y_pred': y_pred, 'y_test': y_test,
         }
 
-        # Feature Importance (RF only)
         if hasattr(model, 'feature_importances_'):
             importances = model.feature_importances_
-            top_k = 10
-            top_idx = np.argsort(importances)[::-1][:top_k]
-            feat_names = _get_feature_names(X.shape[1])
-            print(f"\n  Top {top_k} Important Features:")
+            feat_names  = _get_feature_names(n_pca)
+            top_idx     = np.argsort(importances)[::-1][:10]
+            print(f"\n  Top 10 Important Features:")
             for rank, idx in enumerate(top_idx):
                 fname = feat_names[idx] if idx < len(feat_names) else f"feat_{idx}"
                 print(f"    {rank+1:2}. {fname:30s}  {importances[idx]*100:.2f}%")
 
-    # ── Summary ─────────────────────────────────────────────────────────
     print(f"\n{'═'*60}")
     print(f" SUMMARY")
     print(f"{'═'*60}")
     for name, res in results.items():
-        print(f"  {name:20s} "
+        print(f"  {name:20s}  "
               f"CV={res['cv_mean']*100:.1f}% ±{res['cv_std']*100:.1f}%  "
               f"Test={res['test_accuracy']*100:.1f}%")
 
     best = max(results.items(), key=lambda x: x[1]['test_accuracy'])
-    print(f"\n  🏆 Best: {best[0]} "
-          f"({best[1]['test_accuracy']*100:.1f}% test accuracy)")
+    print(f"\n  🏆 Best: {best[0]} ({best[1]['test_accuracy']*100:.1f}%)")
 
     return results
 
 
-def _get_feature_names(n_features: int) -> list[str]:
-    """Generate feature names for 9 stats × n_components."""
-    stats = ['mean', 'std', 'max', 'min', 'range',
-             'median', 'energy', 'skewness', 'kurtosis']
-    n_components = n_features // len(stats)
-    names = []
-    for c in range(n_components):
-        for s in stats:
-            names.append(f"PC{c+1}_{s}")
-    return names
+# ════════════════════════════════════════════════════════════════════════
+# 5. SAVE MODELS  (FIX: saves pipeline + model + label_encoder)
+# ════════════════════════════════════════════════════════════════════════
+
+def save_models(results: dict,
+                pipeline,
+                le: LabelEncoder,
+                output_dir: str = "./models") -> None:
+    """
+    Save everything needed for inference:
+      csi_pipeline.joblib    ← preprocess new recordings
+      label_encoder.joblib   ← int → class name
+      SVM_RBF.joblib         ← SVM model
+      Random_Forest.joblib   ← RF model
+    """
+    import joblib
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    if pipeline is not None:
+        joblib.dump(pipeline, out / "csi_pipeline.joblib")
+        print(f"💾 {out / 'csi_pipeline.joblib'}")
+
+    joblib.dump(le, out / "label_encoder.joblib")
+    print(f"💾 {out / 'label_encoder.joblib'}")
+
+    for name, res in results.items():
+        safe = name.replace(" ", "_").replace("(", "").replace(")", "")
+        path = out / f"{safe}.joblib"
+        joblib.dump(res['model'], path)
+        print(f"💾 {path}  (test={res['test_accuracy']*100:.1f}%)")
+
+    best = max(results.items(), key=lambda x: x[1]['test_accuracy'])[0]
+    safe_best = best.replace(" ", "_").replace("(", "").replace(")", "")
+    print(f"\n   Load for inference:")
+    print(f"     import joblib")
+    print(f"     pipeline = joblib.load('{out}/csi_pipeline.joblib')")
+    print(f"     le       = joblib.load('{out}/label_encoder.joblib')")
+    print(f"     model    = joblib.load('{out}/{safe_best}.joblib')")
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 5. OPTIONAL CNN
+# 6. INFERENCE HELPER
 # ════════════════════════════════════════════════════════════════════════
 
-def build_cnn_dataset(
-    data_dir: str | Path,
-    classes: list[str],
-    pipeline: object,    # fitted CSIPipeline
-    window_size: int = 50,
-    step: int = 25,
-    augment: bool = True,
-    n_augments: int = 3
-) -> tuple:
+def predict_recording(csv_path: str,
+                      pipeline_path: str = "./models/csi_pipeline.joblib",
+                      model_path:    str = "./models/Random_Forest.joblib",
+                      le_path:       str = "./models/label_encoder.joblib",
+                      window_size:   int = 50,
+                      step:          int = 25) -> str:
     """
-    Build raw window dataset (no feature extraction) for CNN.
+    Classify a new CSI recording using saved models.
+    Uses majority vote across all windows.
+    """
+    import joblib
 
-    Returns:
-      X : (N_samples, n_pca_components, window_size) — for Conv1d
-      y : (N_samples,) labels
+    pipeline = joblib.load(pipeline_path)
+    model    = joblib.load(model_path)
+    le       = joblib.load(le_path)
+
+    cm, _ = load_csi_csv(csv_path)
+    if cm.size == 0:
+        return "ERROR: empty recording"
+
+    processed = pipeline.transform(cm, use_pca=True)
+    wins      = extract_windows(processed, window_size, step)
+
+    if not wins:
+        return "ERROR: recording too short"
+
+    feats  = np.array([extract_features_from_window(w) for w in wins],
+                      dtype=np.float32)
+    preds  = model.predict(feats)
+    labels = le.inverse_transform(preds)
+
+    final = Counter(labels).most_common(1)[0][0]
+    conf  = Counter(labels)[final] / len(labels) * 100
+    print(f"🎯 Predicted: {final}  ({conf:.1f}% confidence, {len(wins)} windows)")
+    return final
+
+
+# ════════════════════════════════════════════════════════════════════════
+# 7. OPTIONAL CNN  (FIX: pipeline passed correctly — no longer None)
+# ════════════════════════════════════════════════════════════════════════
+
+def build_cnn_dataset(data_dir, classes, pipeline,
+                      window_size=50, step=25, augment=True, n_augments=4,
+                      test_recording_ratio=0.2):
     """
+    Build raw window arrays for CNN (no feature extraction).
+    Same recording-level split logic as build_dataset.
+
+    Returns: X_train, X_test, y_train, y_test, le
+    Shape:   (N, n_components, window_size)  — ready for Conv1d
+    """
+    if pipeline is None:
+        raise ValueError(
+            "build_cnn_dataset needs a fitted pipeline. "
+            "Pass the pipeline returned by build_dataset()."
+        )
+
     le = LabelEncoder()
     le.fit(classes)
-    X_list, y_list = [], []
+    X_tr, y_tr, X_te, y_te = [], [], [], []
 
     for cls in classes:
-        cls_dir = Path(data_dir) / cls
-        if not cls_dir.exists():
-            continue
-        files = sorted(cls_dir.glob("*.csv")) + sorted(cls_dir.glob("*.txt"))
-        label_idx = le.transform([cls])[0]
+        files = (sorted((Path(data_dir)/cls).glob("*.csv")) +
+                 sorted((Path(data_dir)/cls).glob("*.txt")))
+        label_idx   = int(le.transform([cls])[0])
+        n_test      = max(1, int(len(files) * test_recording_ratio))
+        train_files = files[:-n_test]
+        test_files  = files[-n_test:]
 
-        for f_idx, fpath in enumerate(files):
+        for fpath in train_files:
             cm, _ = load_csi_csv(fpath)
             if cm.size == 0:
                 continue
@@ -558,149 +543,102 @@ def build_cnn_dataset(
                 processed = pipeline.transform(cm, use_pca=True)
             except ValueError:
                 continue
+            for w in extract_windows(processed, window_size, step):
+                X_tr.append(w.T);  y_tr.append(label_idx)
+                if augment:
+                    for aw in augment_window(w, n_augments):
+                        X_tr.append(aw.T);  y_tr.append(label_idx)
 
-            for start in range(0, processed.shape[0] - window_size + 1, step):
-                w = processed[start:start + window_size]  # (50, 10)
-                # CNN input: (channels, time) = (10, 50)
-                X_list.append(w.T)
-                y_list.append(label_idx)
+        for fpath in test_files:
+            cm, _ = load_csi_csv(fpath)
+            if cm.size == 0:
+                continue
+            try:
+                processed = pipeline.transform(cm, use_pca=True)
+            except ValueError:
+                continue
+            for w in extract_windows(processed, window_size, step):
+                X_te.append(w.T);  y_te.append(label_idx)
 
-                if augment and f_idx < int(len(files) * 0.8):
-                    for aug_w in augment_window(w, n_augments):
-                        X_list.append(aug_w.T)
-                        y_list.append(label_idx)
-
-    X = np.array(X_list, dtype=np.float32)
-    y = np.array(y_list, dtype=np.int64)
-    return X, y, le
+    return (np.array(X_tr, dtype=np.float32),
+            np.array(X_te, dtype=np.float32),
+            np.array(y_tr, dtype=np.int64),
+            np.array(y_te, dtype=np.int64),
+            le)
 
 
-def train_cnn(X: np.ndarray, y: np.ndarray,
-              le: LabelEncoder,
-              n_epochs: int = 50,
-              batch_size: int = 32) -> None:
-    """
-    Train a 1D CNN on windowed CSI data.
-    Requires: pip install torch
-
-    Input shape: (N, n_components, window_size) = (N, 10, 50)
-    """
+def train_cnn(X_train, X_test, y_train, y_test, le,
+              n_epochs=50, batch_size=32):
+    """1D CNN. Input shape: (N, n_components, window_size)"""
     try:
         import torch
         import torch.nn as nn
         from torch.utils.data import DataLoader, TensorDataset
     except ImportError:
-        print("❌ PyTorch not installed. Run: pip install torch")
+        print("❌ PyTorch not installed: pip install torch")
         return
 
-    n_classes = len(le.classes_)
-    n_channels = X.shape[1]   # 10
-    n_timesteps = X.shape[2]  # 50
+    n_classes   = len(le.classes_)
+    n_channels  = X_train.shape[1]
+    n_timesteps = X_train.shape[2]
 
     class CSI_CNN(nn.Module):
         def __init__(self):
             super().__init__()
             self.features = nn.Sequential(
                 nn.Conv1d(n_channels, 32, kernel_size=5, padding=2),
-                nn.BatchNorm1d(32),
-                nn.ReLU(),
-                nn.MaxPool1d(2),                   # → (32, 25)
-
+                nn.BatchNorm1d(32), nn.ReLU(), nn.MaxPool1d(2),
                 nn.Conv1d(32, 64, kernel_size=3, padding=1),
-                nn.BatchNorm1d(64),
-                nn.ReLU(),
-                nn.MaxPool1d(2),                   # → (64, 12)
-
+                nn.BatchNorm1d(64), nn.ReLU(), nn.MaxPool1d(2),
                 nn.Conv1d(64, 128, kernel_size=3, padding=1),
-                nn.BatchNorm1d(128),
-                nn.ReLU(),
-                nn.AdaptiveAvgPool1d(4),           # → (128, 4)
+                nn.BatchNorm1d(128), nn.ReLU(), nn.AdaptiveAvgPool1d(4),
             )
             self.classifier = nn.Sequential(
                 nn.Flatten(),
-                nn.Linear(128 * 4, 128),
-                nn.ReLU(),
-                nn.Dropout(0.5),
-                nn.Linear(128, n_classes)
+                nn.Linear(128 * 4, 128), nn.ReLU(), nn.Dropout(0.5),
+                nn.Linear(128, n_classes),
             )
-
         def forward(self, x):
             return self.classifier(self.features(x))
 
-    # Split
-    from sklearn.model_selection import train_test_split
-    X_tr, X_te, y_tr, y_te = train_test_split(
-        X, y, test_size=0.2, stratify=y, random_state=42
-    )
-
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"\n🧠 CNN Training on {device}")
-    print(f"   Input: ({n_channels}, {n_timesteps})  Classes: {n_classes}")
-
-    model = CSI_CNN().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3,
-                                 weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer, step_size=20, gamma=0.5
-    )
+    device    = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model     = CSI_CNN().to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
     criterion = nn.CrossEntropyLoss()
 
-    train_ds = TensorDataset(
-        torch.tensor(X_tr), torch.tensor(y_tr)
-    )
-    test_ds  = TensorDataset(
-        torch.tensor(X_te), torch.tensor(y_te)
-    )
-    train_loader = DataLoader(train_ds, batch_size=batch_size,
-                              shuffle=True,  drop_last=True)
-    test_loader  = DataLoader(test_ds,  batch_size=batch_size)
+    train_loader = DataLoader(
+        TensorDataset(torch.tensor(X_train), torch.tensor(y_train)),
+        batch_size=batch_size, shuffle=True, drop_last=True)
+    test_loader = DataLoader(
+        TensorDataset(torch.tensor(X_test), torch.tensor(y_test)),
+        batch_size=batch_size)
 
+    print(f"\n🧠 CNN on {device} | input ({n_channels}, {n_timesteps}) | {n_classes} classes")
     best_acc = 0.0
+
     for epoch in range(n_epochs):
-        # Train
         model.train()
         for xb, yb in train_loader:
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
-            loss = criterion(model(xb), yb)
-            loss.backward()
+            criterion(model(xb), yb).backward()
             optimizer.step()
         scheduler.step()
 
-        # Evaluate
         if (epoch + 1) % 10 == 0 or epoch == 0:
             model.eval()
-            correct, total = 0, 0
+            correct = total = 0
             with torch.no_grad():
                 for xb, yb in test_loader:
                     preds = model(xb.to(device)).argmax(1).cpu()
                     correct += (preds == yb).sum().item()
-                    total += len(yb)
-            acc = correct / total
+                    total   += len(yb)
+            acc      = correct / total
             best_acc = max(best_acc, acc)
-            print(f"   Epoch {epoch+1:3d}/{n_epochs}  "
-                  f"Test Accuracy: {acc*100:.2f}%")
+            print(f"   Epoch {epoch+1:3d}/{n_epochs}  Test: {acc*100:.2f}%")
 
-    print(f"\n  🏆 Best CNN Accuracy: {best_acc*100:.2f}%")
-
-
-# ════════════════════════════════════════════════════════════════════════
-# 6. SAVE / LOAD MODEL
-# ════════════════════════════════════════════════════════════════════════
-
-def save_model(results: dict, output_dir: str = "./models") -> None:
-    """Save best model to disk using joblib."""
-    import joblib
-    os.makedirs(output_dir, exist_ok=True)
-
-    best_name = max(results.items(),
-                    key=lambda x: x[1]['test_accuracy'])[0]
-    best_model = results[best_name]['model']
-
-    safe_name = best_name.replace(" ", "_").replace("(", "").replace(")", "")
-    path = Path(output_dir) / f"{safe_name}.joblib"
-    joblib.dump(best_model, path)
-    print(f"\n💾 Best model saved: {path}")
+    print(f"\n  🏆 Best CNN: {best_acc*100:.2f}%")
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -708,105 +646,70 @@ def save_model(results: dict, output_dir: str = "./models") -> None:
 # ════════════════════════════════════════════════════════════════════════
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="CSI HAR — SVM + Random Forest Pipeline"
-    )
-    parser.add_argument(
-        "--data_dir", type=str, default="./datasets",
-        help="Root directory with class subfolders"
-    )
-    parser.add_argument(
-        "--classes", nargs="+",
-        default=["walk", "sit", "fall", "idle"],
-        help="Class names (must match subfolder names)"
-    )
-    parser.add_argument(
-        "--window_size", type=int, default=50,
-        help="Window size in frames (default: 50 = 0.5s @ 100Hz)"
-    )
-    parser.add_argument(
-        "--step", type=int, default=25,
-        help="Window hop size (default: 25 = 50% overlap)"
-    )
-    parser.add_argument(
-        "--fs", type=float, default=100.0,
-        help="Sampling frequency Hz (default: 100)"
-    )
-    parser.add_argument(
-        "--no_augment", action="store_true",
-        help="Disable data augmentation"
-    )
-    parser.add_argument(
-        "--no_diff", action="store_true",
-        help="Disable temporal differencing"
-    )
-    parser.add_argument(
-        "--cnn", action="store_true",
-        help="Also train CNN (requires PyTorch)"
-    )
-    parser.add_argument(
-        "--simulate", action="store_true",
-        help="Use synthetic data (no real files needed)"
-    )
-    parser.add_argument(
-        "--save_model", action="store_true",
-        help="Save best model to ./models/"
-    )
+    parser = argparse.ArgumentParser(description="CSI HAR — ML Pipeline")
+    parser.add_argument("--data_dir",    type=str,   default="./datasets")
+    parser.add_argument("--classes",     nargs="+",  default=["walk", "idle"])
+    parser.add_argument("--window_size", type=int,   default=50)
+    parser.add_argument("--step",        type=int,   default=25)
+    parser.add_argument("--fs",          type=float, default=100.0)
+    parser.add_argument("--no_augment",  action="store_true")
+    parser.add_argument("--no_diff",     action="store_true")
+    parser.add_argument("--cnn",         action="store_true")
+    parser.add_argument("--simulate",    action="store_true")
+    parser.add_argument("--save_model",  action="store_true")
     args = parser.parse_args()
 
     print("=" * 60)
     print(" CSI HAR — ML Pipeline")
     print(f" Classes : {args.classes}")
     print(f" Data dir: {args.data_dir}")
-    print(f" Window  : {args.window_size} frames @ {args.fs} Hz "
-          f"= {args.window_size/args.fs:.2f}s")
-    print(f" Augment : {not args.no_augment}")
-    print(f" Diff    : {not args.no_diff}")
+    print(f" Window  : {args.window_size} frames @ {args.fs} Hz = "
+          f"{args.window_size/args.fs:.2f}s")
+    print(f" Augment : {not args.no_augment} | Diff: {not args.no_diff}")
     print("=" * 60)
 
-    # Build dataset
-    X, y, le = build_dataset(
+    X_train, X_test, y_train, y_test, le, pipeline = build_dataset(
         data_dir=args.data_dir,
         classes=args.classes,
         pipeline_kwargs={'fs': args.fs, 'use_diff': not args.no_diff},
         window_size=args.window_size,
         step=args.step,
         augment=not args.no_augment,
-        n_augments=3,
-        simulation_mode=args.simulate or (CSIPipeline is None)
+        n_augments=4,
+        simulation_mode=args.simulate or (CSIPipeline is None),
     )
 
-    if X.shape[0] == 0:
+    if X_train.shape[0] == 0:
         print("❌ No samples — check data_dir and classes")
         sys.exit(1)
 
-    # Train SVM + RF
-    results = train_and_evaluate(X, y, le)
+    results = train_and_evaluate(X_train, X_test, y_train, y_test, le)
 
-    # Save best model
     if args.save_model:
-        save_model(results)
+        save_models(results, pipeline, le)
 
-    # Optional CNN
     if args.cnn:
         print("\n" + "═" * 60)
         print(" CNN TRAINING")
         print("═" * 60)
-        if args.simulate or CSIPipeline is None:
-            # Synthetic CNN data
-            X_cnn = np.random.randn(len(X), 10, args.window_size).astype(np.float32)
-            y_cnn = y
+
+        if args.simulate or pipeline is None:
+            n = len(X_train)
+            X_cnn_tr = np.random.randn(n, 10, args.window_size).astype(np.float32)
+            X_cnn_te = np.random.randn(len(X_test), 10,
+                                       args.window_size).astype(np.float32)
+            y_cnn_tr, y_cnn_te = y_train, y_test
         else:
-            # Build CNN dataset with raw windows
-            X_cnn, y_cnn, _ = build_cnn_dataset(
+            X_cnn_tr, X_cnn_te, y_cnn_tr, y_cnn_te, _ = build_cnn_dataset(
                 data_dir=args.data_dir,
                 classes=args.classes,
-                pipeline=None,     # pass your fitted pipeline here
+                pipeline=pipeline,   # FIX: real pipeline, not None
                 window_size=args.window_size,
                 step=args.step,
-                augment=not args.no_augment
+                augment=not args.no_augment,
             )
-        train_cnn(X_cnn, y_cnn, le)
+
+        train_cnn(X_cnn_tr, X_cnn_te, y_cnn_tr, y_cnn_te, le)
 
 
 if __name__ == "__main__":
