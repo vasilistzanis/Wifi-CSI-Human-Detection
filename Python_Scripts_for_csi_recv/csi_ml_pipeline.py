@@ -45,6 +45,10 @@ from sklearn.preprocessing import LabelEncoder
 import warnings
 warnings.filterwarnings("ignore")
 
+N_STATS = len(['mean', 'std', 'max', 'min', 'range', 'median',
+               'energy', 'skewness', 'kurtosis', 'fft_mean', 'fft_std',
+               'zcr', 'fft_peak_idx', 'spectral_entropy'])
+
 try:
     from sklearn.model_selection import StratifiedGroupKFold
 except ImportError:
@@ -76,7 +80,7 @@ def augment_window(window: np.ndarray,
     Techniques (cycling through all 4):
       noise   : Gaussian noise injection
       shift   : Time shift 1-5 frames
-      scale   : Amplitude scaling +/-10%
+      scale   : Amplitude scaling +/-3%
       reverse : Time reversal
 
     Args:
@@ -86,8 +90,7 @@ def augment_window(window: np.ndarray,
     Returns:
       List of augmented windows, same shape as input
     """
-    if seed is not None:
-        np.random.seed(seed)
+    rng = np.random.default_rng(seed)
 
     techniques = ['noise', 'shift', 'scale', 'reverse']
     augmented  = []
@@ -97,12 +100,12 @@ def augment_window(window: np.ndarray,
         tech = techniques[i % len(techniques)]
 
         if tech == 'noise':
-            noise_level = 0.02 * aug.std()
-            aug = aug + np.random.normal(0, noise_level, aug.shape)
+            noise_level = 0.005 * aug.std()
+            aug = aug + rng.normal(0, noise_level, aug.shape)
         elif tech == 'shift':
-            aug = np.roll(aug, np.random.randint(1, 6), axis=0)
+            aug = np.roll(aug, rng.integers(1, 6), axis=0)
         elif tech == 'scale':
-            aug = aug * np.random.uniform(0.90, 1.10)
+            aug = aug * rng.uniform(0.97, 1.03)
         elif tech == 'reverse':
             aug = aug[::-1].copy()
 
@@ -249,9 +252,9 @@ def build_dataset(
     Returns train/test split at recording level (no leakage).
 
     Returns:
-      X_train      : (N, 110) augmented train features
-      X_train_orig : (N_orig, 110) non-augmented train features for clean CV
-      X_test       : (M, 110) test features (no augmentation)
+      X_train      : (N, 140) augmented train features
+      X_train_orig : (N_orig, 140) non-augmented train features for clean CV
+      X_test       : (M, 140) test features (no augmentation)
       y_train      : (N,) labels for X_train
       y_train_orig : (N_orig,) labels for X_train_orig
       y_test       : (M,) labels for X_test
@@ -275,6 +278,7 @@ def build_dataset(
         train_groups_orig = []
         X_te, y_te = [], []
         recording_group_id = 0
+        global_window_idx = 0
 
         for label_idx, cls in enumerate(classes):
             n_recs = 20
@@ -314,9 +318,10 @@ def build_dataset(
                         y_tr.append(label_idx)
                         if augment:
                             for aw in augment_window(w, n_augments,
-                                                     seed=random_seed + recording_group_id):
+                                                     seed=random_seed + global_window_idx):
                                 X_tr.append(extract_features_from_window(aw))
                                 y_tr.append(label_idx)
+                        global_window_idx += 1
                 recording_group_id += 1
 
         X_train      = np.array(X_tr,      dtype=np.float32)
@@ -371,6 +376,7 @@ def build_dataset(
     train_groups_orig = []
     X_te, y_te = [], []
     recording_group_id = 0
+    global_window_idx = 0
 
     for cls in classes:
         label_idx   = int(le.transform([cls])[0])
@@ -390,8 +396,7 @@ def build_dataset(
             except ValueError as e:
                 print(f"   ⚠️  {fpath.name}: {e} — skipped")
                 continue
-            for w_idx, w in enumerate(extract_windows(processed,
-                                                       window_size, step)):
+            for w in extract_windows(processed, window_size, step):
                 feat = extract_features_from_window(w)
                 X_tr_orig.append(feat)
                 y_tr_orig.append(label_idx)
@@ -401,9 +406,10 @@ def build_dataset(
                 tr_wins += 1
                 if augment:
                     for aw in augment_window(w, n_augments,
-                                             seed=random_seed + w_idx):
+                                             seed=random_seed + global_window_idx):
                         X_tr.append(extract_features_from_window(aw))
                         y_tr.append(label_idx)
+                global_window_idx += 1
             recording_group_id += 1
 
         te_wins = 0
@@ -683,7 +689,7 @@ def train_and_evaluate(
     cv, actual_folds, splitter_name = _make_group_cv(
         y_train_orig, train_groups_orig, requested_folds=cv_folds
     )
-    n_pca = X_train.shape[1] // 14
+    n_pca = X_train.shape[1] // N_STATS
 
     for name, model in models.items():
         print(f"\n{'─'*50}")
