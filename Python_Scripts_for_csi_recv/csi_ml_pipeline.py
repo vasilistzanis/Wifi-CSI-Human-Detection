@@ -494,6 +494,49 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     best_params['Random Forest'] = rf_search.best_params_
     print(f"   Best RF params  : {rf_search.best_params_}")
     print(f"   Best RF CV acc  : {rf_search.best_score_*100:.2f}%")
+    et_grid = {
+        'n_estimators':     [100, 200, 300],
+        'max_depth':        [10, 15, 20, None],
+        'min_samples_leaf': [1, 2, 4],
+    }
+    print("\n🔍 Tuning Extra Trees...")
+    et_search = GridSearchCV(
+        ExtraTreesClassifier(class_weight='balanced', n_jobs=-1, random_state=42),
+        et_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+    )
+    et_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
+    best_params['Extra Trees'] = et_search.best_params_
+    print(f"   Best ET params  : {et_search.best_params_}")
+    print(f"   Best ET CV acc  : {et_search.best_score_*100:.2f}%")
+
+    knn_grid = {
+        'n_neighbors': [3, 5, 7, 9],
+        'weights':     ['uniform', 'distance'],
+        'metric':      ['euclidean', 'manhattan'],
+    }
+    print("\n🔍 Tuning K-NN...")
+    knn_search = GridSearchCV(
+        KNeighborsClassifier(n_jobs=-1),
+        knn_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+    )
+    knn_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
+    best_params['K-NN'] = knn_search.best_params_
+    print(f"   Best K-NN params: {knn_search.best_params_}")
+    print(f"   Best K-NN CV acc: {knn_search.best_score_*100:.2f}%")
+
+    lr_grid = {
+        'C': [0.1, 1.0, 10.0, 100.0],
+    }
+    print("\n🔍 Tuning Logistic Regression...")
+    lr_search = GridSearchCV(
+        LogisticRegression(penalty='l2', solver='lbfgs', max_iter=1000,
+                           class_weight='balanced', random_state=42),
+        lr_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+    )
+    lr_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
+    best_params['Logistic Regression'] = lr_search.best_params_
+    print(f"   Best LR params  : {lr_search.best_params_}")
+    print(f"   Best LR CV acc  : {lr_search.best_score_*100:.2f}%")
 
     return best_params
 
@@ -529,8 +572,11 @@ def train_and_evaluate(
     print(f" Features: {X_train.shape[1]}")
     print(f"{'═'*60}")
 
-    svm_params = best_params.get('SVM (RBF)', {}) if best_params else {}
-    rf_params  = best_params.get('Random Forest', {}) if best_params else {}
+    svm_params = best_params.get('SVM (RBF)', {})          if best_params else {}
+    rf_params  = best_params.get('Random Forest', {})      if best_params else {}
+    et_params  = best_params.get('Extra Trees', {})        if best_params else {}
+    knn_params = best_params.get('K-NN', {})               if best_params else {}
+    lr_params  = best_params.get('Logistic Regression', {}) if best_params else {}
 
     models = {
         'SVM (RBF)': SVC(
@@ -549,21 +595,21 @@ def train_and_evaluate(
             random_state=42,
         ),
         'Extra Trees': ExtraTreesClassifier(
-            n_estimators=200,
-            max_depth=None,
-            min_samples_leaf=1,
+            n_estimators=et_params.get('n_estimators', 200),
+            max_depth=et_params.get('max_depth', None),
+            min_samples_leaf=et_params.get('min_samples_leaf', 1),
             class_weight='balanced',
             n_jobs=-1,
             random_state=42,
         ),
         'K-NN (k=5)': KNeighborsClassifier(
-            n_neighbors=5,
-            weights='distance',   # closer neighbors weigh more
-            metric='euclidean',
+            n_neighbors=knn_params.get('n_neighbors', 5),
+            weights=knn_params.get('weights', 'distance'),
+            metric=knn_params.get('metric', 'euclidean'),
             n_jobs=-1,
         ),
         'Logistic Regression': LogisticRegression(
-            C=1.0,
+            C=lr_params.get('C', 1.0),
             penalty='l2',
             solver='lbfgs',
             max_iter=1000,
