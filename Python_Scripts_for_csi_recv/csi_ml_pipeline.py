@@ -28,10 +28,11 @@ from pathlib import Path
 from collections import Counter
 
 from sklearn.svm import SVC
-from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
+from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, GradientBoostingClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.naive_bayes import GaussianNB
+from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import (
     GroupKFold, cross_val_score, GridSearchCV
 )
@@ -538,6 +539,36 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     print(f"   Best LR params  : {lr_search.best_params_}")
     print(f"   Best LR CV acc  : {lr_search.best_score_*100:.2f}%")
 
+    gb_grid = {
+        'n_estimators': [100, 200],
+        'learning_rate': [0.05, 0.1, 0.2],
+        'max_depth': [3, 5],
+    }
+    print("\n🔍 Tuning Gradient Boosting...")
+    gb_search = GridSearchCV(
+        GradientBoostingClassifier(random_state=42),
+        gb_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+    )
+    gb_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
+    best_params['Gradient Boosting'] = gb_search.best_params_
+    print(f"   Best GB params  : {gb_search.best_params_}")
+    print(f"   Best GB CV acc  : {gb_search.best_score_*100:.2f}%")
+
+    mlp_grid = {
+        'hidden_layer_sizes': [(100,), (100, 50), (50, 50)],
+        'alpha': [0.0001, 0.001, 0.01],
+        'learning_rate': ['constant', 'adaptive'],
+    }
+    print("\n🔍 Tuning MLP (Neural Network)...")
+    mlp_search = GridSearchCV(
+        MLPClassifier(max_iter=500, random_state=42),
+        mlp_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+    )
+    mlp_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
+    best_params['MLP'] = mlp_search.best_params_
+    print(f"   Best MLP params : {mlp_search.best_params_}")
+    print(f"   Best MLP CV acc : {mlp_search.best_score_*100:.2f}%")
+
     return best_params
 
 
@@ -577,6 +608,8 @@ def train_and_evaluate(
     et_params  = best_params.get('Extra Trees', {})        if best_params else {}
     knn_params = best_params.get('K-NN', {})               if best_params else {}
     lr_params  = best_params.get('Logistic Regression', {}) if best_params else {}
+    gb_params  = best_params.get('Gradient Boosting', {})  if best_params else {}
+    mlp_params = best_params.get('MLP', {})                if best_params else {}
 
     models = {
         'SVM (RBF)': SVC(
@@ -614,6 +647,19 @@ def train_and_evaluate(
             solver='lbfgs',
             max_iter=1000,
             class_weight='balanced',
+            random_state=42,
+        ),
+        'Gradient Boosting': GradientBoostingClassifier(
+            n_estimators=gb_params.get('n_estimators', 100),
+            learning_rate=gb_params.get('learning_rate', 0.1),
+            max_depth=gb_params.get('max_depth', 3),
+            random_state=42,
+        ),
+        'MLP (Neural Network)': MLPClassifier(
+            hidden_layer_sizes=mlp_params.get('hidden_layer_sizes', (100,)),
+            alpha=mlp_params.get('alpha', 0.0001),
+            learning_rate=mlp_params.get('learning_rate', 'constant'),
+            max_iter=500,
             random_state=42,
         ),
         'Naive Bayes': GaussianNB(),
