@@ -62,7 +62,7 @@ _IS_WIN        = os.name == "nt"
 DEFAULT_PORT   = "COM6" if _IS_WIN else "/dev/ttyUSB0"
 DEFAULT_BAUD   = 2_000_000
 WINDOW_SIZE    = 50      # frames per inference window (must match training)
-STEP           = 25      # predict every N new frames (lower = more frequent)
+STEP           = 10      # predict every N new frames (lower = more frequent)
 # Extra frames kept beyond window_size so the Butterworth filter has enough
 # edge context.  padlen for 4th-order SOS ≈ 3*(2*n_sections+1) ≈ 27.
 FILTER_WARMUP  = 35
@@ -136,7 +136,7 @@ def parse_args() -> argparse.Namespace:
                    help="Frames per inference window (must match training)")
     p.add_argument("--step",             type=int, default=STEP,
                    help="Run inference every N new frames")
-    p.add_argument("--history",          type=int, default=5,
+    p.add_argument("--history",          type=int, default=3,
                    help="Smoothing: majority vote over last N raw predictions")
     p.add_argument("--verbose", "-v",    action="store_true",
                    help="Show per-class probability breakdown each prediction")
