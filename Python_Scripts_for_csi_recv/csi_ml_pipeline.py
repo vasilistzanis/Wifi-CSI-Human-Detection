@@ -117,12 +117,12 @@ def augment_window(window: np.ndarray,
 
 def extract_features_from_window(window: np.ndarray) -> np.ndarray:
     """
-    11 statistical features per PCA component → flat vector.
+    14 statistical features per PCA component → flat vector.
 
     Input:  (window_size, n_pca_components)  e.g. (50, 10)
-    Output: (110,)  [11 stats x 10 components]
+    Output: (140,)  [14 stats x 10 components]
 
-    Stats: mean, std, max, min, range, median, energy, skewness, kurtosis, fft_mean, fft_std
+    Stats: mean, std, max, min, range, median, energy, skewness, kurtosis, fft_mean, fft_std, zcr, fft_peak_idx, spectral_entropy
     """
     feats = []
     for c in range(window.shape[1]):
@@ -134,6 +134,17 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
         fft_vals = np.abs(np.fft.rfft(col))
         fft_mean = float(fft_vals.mean())
         fft_std  = float(fft_vals.std())
+        
+        # ZCR (Zero-Crossing Rate)
+        centered = col - mean_val
+        zcr = float(np.sum(np.diff(np.sign(centered)) != 0) / max(1, len(col) - 1))
+        
+        # Dominant Frequency
+        fft_peak_idx = float(np.argmax(fft_vals))
+        
+        # Spectral Entropy
+        prob = fft_vals / (np.sum(fft_vals) + 1e-8)
+        spectral_entropy = float(-np.sum(prob * np.log2(prob + 1e-8)))
         
         feats.extend([
             mean_val,
@@ -147,13 +158,17 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
             float(np.mean(((col - mean_val) / std_val) ** 4)),
             fft_mean,
             fft_std,
+            zcr,
+            fft_peak_idx,
+            spectral_entropy,
         ])
     return np.array(feats, dtype=np.float32)
 
 
 def _get_feature_names(n_pca_components: int) -> list[str]:
     stats = ['mean', 'std', 'max', 'min', 'range',
-             'median', 'energy', 'skewness', 'kurtosis', 'fft_mean', 'fft_std']
+             'median', 'energy', 'skewness', 'kurtosis', 'fft_mean', 'fft_std',
+             'zcr', 'fft_peak_idx', 'spectral_entropy']
     return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in stats]
 
 
@@ -668,7 +683,7 @@ def train_and_evaluate(
     cv, actual_folds, splitter_name = _make_group_cv(
         y_train_orig, train_groups_orig, requested_folds=cv_folds
     )
-    n_pca = X_train.shape[1] // 11
+    n_pca = X_train.shape[1] // 14
 
     for name, model in models.items():
         print(f"\n{'─'*50}")
