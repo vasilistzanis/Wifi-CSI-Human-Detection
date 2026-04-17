@@ -811,145 +811,6 @@ def predict_recording(csv_path: str,
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 8. OPTIONAL CNN
-# ════════════════════════════════════════════════════════════════════════
-
-def build_cnn_dataset(data_dir, classes, pipeline,
-                      window_size=50, step=25, augment=True, n_augments=4,
-                      test_recording_ratio=0.2, random_seed=42):
-    """
-    Build raw window arrays for CNN (no feature extraction).
-    """
-    if pipeline is None:
-        raise ValueError(
-            "build_cnn_dataset needs a fitted pipeline. "
-            "Pass the pipeline returned by build_dataset()."
-        )
-
-    le = LabelEncoder()
-    le.fit(classes)
-    X_tr, y_tr, X_te, y_te = [], [], [], []
-
-    for cls in classes:
-        files = (sorted((Path(data_dir)/cls).glob("*.csv")) +
-                 sorted((Path(data_dir)/cls).glob("*.txt")))
-        label_idx   = int(le.transform([cls])[0])
-        n_test      = max(1, int(len(files) * test_recording_ratio))
-        train_files = files[:-n_test]
-        test_files  = files[-n_test:]
-
-        for fpath in train_files:
-            cm, _ = load_csi_csv(fpath)
-            if cm.size == 0:
-                continue
-            try:
-                processed = pipeline.transform(cm, use_pca=True)
-            except ValueError:
-                continue
-            for w_idx, w in enumerate(extract_windows(processed,
-                                                       window_size, step)):
-                X_tr.append(w.T)
-                y_tr.append(label_idx)
-                if augment:
-                    for aw in augment_window(w, n_augments,
-                                             seed=random_seed + w_idx):
-                        X_tr.append(aw.T)
-                        y_tr.append(label_idx)
-
-        for fpath in test_files:
-            cm, _ = load_csi_csv(fpath)
-            if cm.size == 0:
-                continue
-            try:
-                processed = pipeline.transform(cm, use_pca=True)
-            except ValueError:
-                continue
-            for w in extract_windows(processed, window_size, step):
-                X_te.append(w.T)
-                y_te.append(label_idx)
-
-    return (np.array(X_tr, dtype=np.float32),
-            np.array(X_te, dtype=np.float32),
-            np.array(y_tr, dtype=np.int64),
-            np.array(y_te, dtype=np.int64),
-            le)
-
-
-def train_cnn(X_train, X_test, y_train, y_test, le,
-              n_epochs=50, batch_size=32):
-    """1D CNN. Input shape: (N, n_components, window_size)"""
-    try:
-        import torch
-        import torch.nn as nn
-        from torch.utils.data import DataLoader, TensorDataset
-    except ImportError:
-        print("❌ PyTorch not installed: pip install torch")
-        return
-
-    n_classes   = len(le.classes_)
-    n_channels  = X_train.shape[1]
-    n_timesteps = X_train.shape[2]
-
-    class CSI_CNN(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.features = nn.Sequential(
-                nn.Conv1d(n_channels, 32, kernel_size=5, padding=2),
-                nn.BatchNorm1d(32), nn.ReLU(), nn.MaxPool1d(2),
-                nn.Conv1d(32, 64, kernel_size=3, padding=1),
-                nn.BatchNorm1d(64), nn.ReLU(), nn.MaxPool1d(2),
-                nn.Conv1d(64, 128, kernel_size=3, padding=1),
-                nn.BatchNorm1d(128), nn.ReLU(), nn.AdaptiveAvgPool1d(4),
-            )
-            self.classifier = nn.Sequential(
-                nn.Flatten(),
-                nn.Linear(128 * 4, 128), nn.ReLU(), nn.Dropout(0.5),
-                nn.Linear(128, n_classes),
-            )
-        def forward(self, x):
-            return self.classifier(self.features(x))
-
-    device    = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model     = CSI_CNN().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
-    criterion = nn.CrossEntropyLoss()
-
-    train_loader = DataLoader(
-        TensorDataset(torch.tensor(X_train), torch.tensor(y_train)),
-        batch_size=batch_size, shuffle=True, drop_last=True)
-    test_loader = DataLoader(
-        TensorDataset(torch.tensor(X_test), torch.tensor(y_test)),
-        batch_size=batch_size)
-
-    print(f"\n🧠 CNN on {device} | input ({n_channels}, {n_timesteps}) | {n_classes} classes")
-    best_acc = 0.0
-
-    for epoch in range(n_epochs):
-        model.train()
-        for xb, yb in train_loader:
-            xb, yb = xb.to(device), yb.to(device)
-            optimizer.zero_grad()
-            criterion(model(xb), yb).backward()
-            optimizer.step()
-        scheduler.step()
-
-        if (epoch + 1) % 10 == 0 or epoch == 0:
-            model.eval()
-            correct = total = 0
-            with torch.no_grad():
-                for xb, yb in test_loader:
-                    preds = model(xb.to(device)).argmax(1).cpu()
-                    correct += (preds == yb).sum().item()
-                    total   += len(yb)
-            acc      = correct / total
-            best_acc = max(best_acc, acc)
-            print(f"   Epoch {epoch+1:3d}/{n_epochs}  Test: {acc*100:.2f}%")
-
-    print(f"\n  🏆 Best CNN: {best_acc*100:.2f}%")
-
-
-# ════════════════════════════════════════════════════════════════════════
 # MAIN
 # ════════════════════════════════════════════════════════════════════════
 
@@ -962,7 +823,6 @@ def main():
     parser.add_argument("--fs",          type=float, default=100.0)
     parser.add_argument("--no_augment",  action="store_true")
     parser.add_argument("--no_diff",     action="store_true")
-    parser.add_argument("--cnn",         action="store_true")
     parser.add_argument("--simulate",    action="store_true")
     parser.add_argument("--save_model",  action="store_true")
     parser.add_argument("--tune",        action="store_true",
@@ -1015,29 +875,7 @@ def main():
     if args.save_model:
         save_models(results, pipeline, le)
 
-    if args.cnn:
-        print("\n" + "═" * 60)
-        print(" CNN TRAINING")
-        print("═" * 60)
 
-        if args.simulate or pipeline is None:
-            X_cnn_tr = np.random.randn(
-                len(X_train), 10, args.window_size).astype(np.float32)
-            X_cnn_te = np.random.randn(
-                len(X_test), 10, args.window_size).astype(np.float32)
-            y_cnn_tr, y_cnn_te = y_train, y_test
-        else:
-            X_cnn_tr, X_cnn_te, y_cnn_tr, y_cnn_te, _ = build_cnn_dataset(
-                data_dir=args.data_dir,
-                classes=args.classes,
-                pipeline=pipeline,
-                window_size=args.window_size,
-                step=args.step,
-                augment=not args.no_augment,
-                random_seed=args.seed,
-            )
-
-        train_cnn(X_cnn_tr, X_cnn_te, y_cnn_tr, y_cnn_te, le)
 
 
 if __name__ == "__main__":
