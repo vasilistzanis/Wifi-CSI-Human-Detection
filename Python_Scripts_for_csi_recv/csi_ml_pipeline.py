@@ -253,9 +253,9 @@ def build_dataset(
     Returns train/test split at recording level (no leakage).
 
     Returns:
-      X_train      : (N, 140) augmented train features
-      X_train_orig : (N_orig, 140) non-augmented train features for clean CV
-      X_test       : (M, 140) test features (no augmentation)
+      X_train      : (N, n_pca * N_STATS) augmented train features
+      X_train_orig : (N_orig, n_pca * N_STATS) non-augmented train features for clean CV
+      X_test       : (M, n_pca * N_STATS) test features (no augmentation)
       y_train      : (N,) labels for X_train
       y_train_orig : (N_orig,) labels for X_train_orig
       y_test       : (M,) labels for X_test
@@ -282,7 +282,6 @@ def build_dataset(
         global_window_idx = 0
 
         # Collect all synthetic CMs first
-        sim_cms = []
         rec_data = []
 
         for label_idx, cls in enumerate(classes):
@@ -303,7 +302,6 @@ def build_dataset(
                 cm[:, -6:] = 0
                 
                 is_test = (rec_i >= n_recs - n_test)
-                sim_cms.append(cm)
                 rec_data.append((cm, label_idx, is_test))
 
         pp = CSIPipeline(**pipeline_kwargs) if CSIPipeline else None
@@ -870,7 +868,8 @@ def main():
     print(f" Data dir: {args.data_dir}")
     print(f" Window  : {args.window_size} frames @ {args.fs} Hz = "
           f"{args.window_size/args.fs:.2f}s")
-    print(f" Augment : {not args.no_augment} | Diff: {not args.no_diff}")
+    print(f" Augment : {not args.no_augment} (×{args.n_augments}) | "
+          f"PCA: {args.pca} | Diff: {not args.no_diff}")
     print(f" Tune    : {args.tune} | Seed: {args.seed}")
     print("=" * 60)
 
