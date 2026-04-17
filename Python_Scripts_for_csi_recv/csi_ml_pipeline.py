@@ -246,6 +246,7 @@ def build_dataset(
     simulation_mode: bool = False,
     test_recording_ratio: float = 0.2,
     random_seed: int = 42,
+    n_pca: int = 10,
 ) -> tuple:
     """
     Load recordings, preprocess, extract features.
@@ -280,6 +281,10 @@ def build_dataset(
         recording_group_id = 0
         global_window_idx = 0
 
+        # Collect all synthetic CMs first
+        sim_cms = []
+        rec_data = []
+
         for label_idx, cls in enumerate(classes):
             n_recs = 20
             n_test = max(1, int(n_recs * test_recording_ratio))
@@ -296,33 +301,41 @@ def build_dataset(
                 cm   = (r + 1j*im).astype(np.complex64)
                 cm[:, :6]  = 0
                 cm[:, -6:] = 0
-
-                pp = CSIPipeline(**pipeline_kwargs) if CSIPipeline else None
-                processed = (pp.fit_transform(cm, use_pca=True,
-                                              n_components=10,
-                                              scaler_type='standard')
-                             if pp else
-                             np.random.randn(499, 10).astype(np.float32))
-
+                
                 is_test = (rec_i >= n_recs - n_test)
-                for w in extract_windows(processed, window_size, step):
-                    feat = extract_features_from_window(w)
-                    if is_test:
-                        X_te.append(feat)
-                        y_te.append(label_idx)
-                    else:
-                        X_tr_orig.append(feat)
-                        y_tr_orig.append(label_idx)
-                        train_groups_orig.append(recording_group_id)
-                        X_tr.append(feat)
-                        y_tr.append(label_idx)
-                        if augment:
-                            for aw in augment_window(w, n_augments,
-                                                     seed=random_seed + global_window_idx):
-                                X_tr.append(extract_features_from_window(aw))
-                                y_tr.append(label_idx)
-                        global_window_idx += 1
-                recording_group_id += 1
+                sim_cms.append(cm)
+                rec_data.append((cm, label_idx, is_test))
+
+        pp = CSIPipeline(**pipeline_kwargs) if CSIPipeline else None
+        if pp:
+            print("   Fitting single CSIPipeline for simulation...")
+            train_cms = [r[0] for r in rec_data if not r[2]]
+            if train_cms:
+                pp.fit_transform(np.vstack(train_cms), use_pca=True, n_components=n_pca, scaler_type='standard')
+
+        for cm, label_idx, is_test in rec_data:
+            processed = (pp.transform(cm, use_pca=True)
+                         if pp else
+                         np.random.randn(499, n_pca).astype(np.float32))
+
+            for w in extract_windows(processed, window_size, step):
+                feat = extract_features_from_window(w)
+                if is_test:
+                    X_te.append(feat)
+                    y_te.append(label_idx)
+                else:
+                    X_tr_orig.append(feat)
+                    y_tr_orig.append(label_idx)
+                    train_groups_orig.append(recording_group_id)
+                    X_tr.append(feat)
+                    y_tr.append(label_idx)
+                    if augment:
+                        for aw in augment_window(w, n_augments,
+                                                 seed=random_seed + global_window_idx):
+                            X_tr.append(extract_features_from_window(aw))
+                            y_tr.append(label_idx)
+                    global_window_idx += 1
+            recording_group_id += 1
 
         X_train      = np.array(X_tr,      dtype=np.float32)
         X_train_orig = np.array(X_tr_orig, dtype=np.float32)
@@ -368,7 +381,7 @@ def build_dataset(
     print("\n🔧 Fitting CSIPipeline on TRAIN recordings only...")
     pipeline = CSIPipeline(**pipeline_kwargs)
     pipeline.fit_transform(np.vstack(fit_matrices),
-                           use_pca=True, n_components=10,
+                           use_pca=True, n_components=n_pca,
                            scaler_type='standard')
 
     X_tr, y_tr = [], []
@@ -764,8 +777,8 @@ def train_and_evaluate(
               f"Test={res['test_accuracy']*100:.1f}%  "
               f"F1={res['test_f1_macro']*100:.1f}%")
 
-    best = max(results.items(), key=lambda x: x[1]['test_accuracy'])
-    print(f"\n  🏆 Best: {best[0]} ({best[1]['test_accuracy']*100:.1f}%)")
+    best = max(results.items(), key=lambda x: x[1]['cv_mean'])
+    print(f"\n  🏆 Best: {best[0]} (CV {best[1]['cv_mean']*100:.1f}%)")
 
     return results
 
@@ -819,62 +832,13 @@ def save_models(results: dict,
         json.dump(metrics, f, indent=2, ensure_ascii=False)
     print(f"📊 {json_path}  (metrics for thesis)")
 
-    best = max(results.items(), key=lambda x: x[1]['test_accuracy'])[0]
+    best = max(results.items(), key=lambda x: x[1]['cv_mean'])[0]
     safe_best = best.replace(" ", "_").replace("(", "").replace(")", "")
     print(f"\n   Load for inference:")
     print(f"     import joblib")
     print(f"     pipeline = joblib.load('{out}/csi_pipeline.joblib')")
     print(f"     le       = joblib.load('{out}/label_encoder.joblib')")
     print(f"     model    = joblib.load('{out}/{safe_best}.joblib')")
-
-
-# ════════════════════════════════════════════════════════════════════════
-# 7. INFERENCE HELPER
-# ════════════════════════════════════════════════════════════════════════
-
-def predict_recording(csv_path: str,
-                      pipeline_path: str = "./models/csi_pipeline.joblib",
-                      model_path:    str = "./models/Random_Forest.joblib",
-                      le_path:       str = "./models/label_encoder.joblib",
-                      window_size:   int = 50,
-                      step:          int = 25) -> str:
-    """
-    Classify a new CSI recording using saved models.
-    Uses majority vote across all windows.
-    """
-    import joblib
-
-    pipeline = joblib.load(pipeline_path)
-    model    = joblib.load(model_path)
-    le       = joblib.load(le_path)
-
-    cm, _ = load_csi_csv(csv_path)
-    if cm.size == 0:
-        return "ERROR: empty recording"
-
-    processed = pipeline.transform(cm, use_pca=True)
-    wins      = extract_windows(processed, window_size, step)
-
-    if not wins:
-        return "ERROR: recording too short"
-
-    feats  = np.array([extract_features_from_window(w) for w in wins],
-                      dtype=np.float32)
-    
-    if hasattr(model, "predict_proba"):
-        probs = model.predict_proba(feats)
-        avg_probs = probs.mean(axis=0)
-        final_idx = np.argmax(avg_probs)
-        final = le.inverse_transform([final_idx])[0]
-        conf = avg_probs[final_idx] * 100
-    else:
-        preds  = model.predict(feats)
-        labels = le.inverse_transform(preds)
-        final = Counter(labels).most_common(1)[0][0]
-        conf  = Counter(labels)[final] / len(labels) * 100
-
-    print(f"🎯 Predicted: {final}  ({conf:.1f}% confidence, {len(wins)} windows)")
-    return final
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -889,6 +853,9 @@ def main():
     parser.add_argument("--step",        type=int,   default=25)
     parser.add_argument("--fs",          type=float, default=100.0)
     parser.add_argument("--no_augment",  action="store_true")
+    parser.add_argument("--n_augments",  type=int,   default=4)
+    parser.add_argument("--pca",         type=int,   default=10)
+    parser.add_argument("--test_ratio",  type=float, default=0.2)
     parser.add_argument("--no_diff",     action="store_true")
     parser.add_argument("--simulate",    action="store_true")
     parser.add_argument("--save_model",  action="store_true")
@@ -916,9 +883,11 @@ def main():
         window_size=args.window_size,
         step=args.step,
         augment=not args.no_augment,
-        n_augments=4,
+        n_augments=args.n_augments,
         simulation_mode=args.simulate or (CSIPipeline is None),
+        test_recording_ratio=args.test_ratio,
         random_seed=args.seed,
+        n_pca=args.pca,
     )
 
     if X_train.shape[0] == 0:
