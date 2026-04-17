@@ -3,11 +3,6 @@
 
 """
 High-speed ESP32 CSI logger with improved validation and error handling.
-Improvements:
-  - Port validation before connection
-  - File size monitoring
-  - Better error messages
-  - Cross-platform default port
 """
 
 import argparse
@@ -38,7 +33,6 @@ configure_console_output()
 # Cross-platform defaults
 DEFAULT_PORT = "COM6" if os.name == "nt" else "/dev/ttyUSB0"
 
-# ✅ Must match ESP-IDF monitor baud rate (default: 2 Mbps).
 # Mismatch causes garbled output and zero valid frames.
 DEFAULT_BAUD = 2_000_000
 DEFAULT_IDLE_SLEEP = 0.001
@@ -221,7 +215,7 @@ def main() -> int:
         last_flush = start_time
         last_status = start_time
 
-        with open(output_path, "wb") as handle:
+        with open(output_path, "wb", buffering=1024*1024) as handle:
             capture_started = True
 
             while True:
