@@ -129,8 +129,9 @@ def parse_args() -> argparse.Namespace:
                    help="Baud rate")
     p.add_argument("--models_dir",       default="./models",
                    help="Directory containing joblib model files")
-    p.add_argument("--model",            default="rf", choices=["rf", "svm"],
-                   help="Which classifier to load  (rf = Random Forest)")
+    p.add_argument("--model",            default="rf", 
+                   choices=["rf", "svm", "et", "knn", "lr", "gb", "mlp", "nb"],
+                   help="Which classifier to load (rf, svm, et, knn, lr, gb, mlp, nb)")
     p.add_argument("--window",           type=int, default=WINDOW_SIZE,
                    help="Frames per inference window (must match training)")
     p.add_argument("--step",             type=int, default=STEP,
@@ -151,11 +152,20 @@ def load_models(models_dir: str, model_choice: str):
     Exits with a clear message if any file is missing.
     """
     d = Path(models_dir)
+    model_files = {
+        "rf": "Random_Forest.joblib",
+        "svm": "SVM_RBF.joblib",
+        "et": "Extra_Trees.joblib",
+        "knn": "K-NN_k=5.joblib",
+        "lr": "Logistic_Regression.joblib",
+        "gb": "Gradient_Boosting.joblib",
+        "mlp": "MLP_Neural_Network.joblib",
+        "nb": "Naive_Bayes.joblib"
+    }
     files = {
         "pipeline": d / "csi_pipeline.joblib",
         "le":       d / "label_encoder.joblib",
-        "model":    d / ("Random_Forest.joblib" if model_choice == "rf"
-                         else "SVM_RBF.joblib"),
+        "model":    d / model_files.get(model_choice, "Random_Forest.joblib"),
     }
     for key, path in files.items():
         if not path.exists():
@@ -347,7 +357,17 @@ def main() -> int:
         for i, cls in enumerate(classes)
     }
 
-    model_name = "Random Forest" if args.model == "rf" else "SVM (RBF)"
+    model_names = {
+        "rf": "Random Forest",
+        "svm": "SVM (RBF)",
+        "et": "Extra Trees",
+        "knn": "K-NN (k=5)",
+        "lr": "Logistic Regression",
+        "gb": "Gradient Boosting",
+        "mlp": "MLP (Neural Network)",
+        "nb": "Naive Bayes"
+    }
+    model_name = model_names.get(args.model, "Unknown Model")
     print(f"  Model   : {model_name}")
     print(f"  Classes : {classes}")
     print(f"  Port    : {args.port} @ {args.baud} baud")
