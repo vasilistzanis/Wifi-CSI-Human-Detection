@@ -4,7 +4,7 @@
 """
 CSI HAR — Complete ML Pipeline
 ====================================
-Supports: SVM, Random Forest, (optional) CNN
+Supports: SVM, Random Forest, K-NN, Logistic Regression, Extra Trees, Naive Bayes
 Compatible with: CSIPipeline from data_preprocessing.py
 
 Features:
@@ -28,7 +28,10 @@ from pathlib import Path
 from collections import Counter
 
 from sklearn.svm import SVC
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import GaussianNB
 from sklearn.model_selection import (
     GroupKFold, cross_val_score, GridSearchCV
 )
@@ -512,7 +515,7 @@ def train_and_evaluate(
     best_params: dict = None,
 ) -> dict:
     """
-    Train SVM + RF.
+    Train SVM, RF, K-NN, Logistic Regression, Extra Trees, Naive Bayes.
     CV runs on non-augmented X_train_orig.
     Final model trained on full augmented X_train.
     """
@@ -545,6 +548,29 @@ def train_and_evaluate(
             n_jobs=-1,
             random_state=42,
         ),
+        'Extra Trees': ExtraTreesClassifier(
+            n_estimators=200,
+            max_depth=None,
+            min_samples_leaf=1,
+            class_weight='balanced',
+            n_jobs=-1,
+            random_state=42,
+        ),
+        'K-NN (k=5)': KNeighborsClassifier(
+            n_neighbors=5,
+            weights='distance',   # closer neighbors weigh more
+            metric='euclidean',
+            n_jobs=-1,
+        ),
+        'Logistic Regression': LogisticRegression(
+            C=1.0,
+            penalty='l2',
+            solver='lbfgs',
+            max_iter=1000,
+            class_weight='balanced',
+            random_state=42,
+        ),
+        'Naive Bayes': GaussianNB(),
     }
 
     cv, actual_folds, splitter_name = _make_group_cv(
