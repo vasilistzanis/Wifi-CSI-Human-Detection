@@ -88,39 +88,69 @@ except ImportError:
 ALL_AUGMENT_TECHNIQUES = ['noise', 'shift', 'scale', 'time_warp']
 
 
-def _aug_noise(window: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """Jitter: Gaussian noise, std ∈ [0.003, 0.01]  — simulates ambient RF interference."""
-    sigma = rng.uniform(0.003, 0.01)
-    return window + rng.normal(0, sigma, window.shape)
+def _aug_noise(window: np.ndarray, rng: np.random.Generator, class_label: str = None) -> np.ndarray:
+    """Scaled Gaussian noise relative to signal standard deviation. Reduces intensity for falls."""
+    signal_std = np.std(window)
+    noise_level = rng.uniform(0.003, 0.01) * (signal_std if signal_std > 1e-6 else 1.0)
+    
+    if class_label == 'fall':
+        noise_level *= 0.5
+    elif class_label == 'sit':
+        noise_level *= 0.7
+        
+    return window + rng.normal(0, noise_level, window.shape)
 
 
-def _aug_shift(window: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """Temporal shift 1–4 frames via np.roll — simulates activity start jitter."""
-    k = int(rng.integers(1, 5))
-    return np.roll(window, k, axis=0)
+def _aug_shift(window: np.ndarray, rng: np.random.Generator, class_label: str = None) -> np.ndarray:
+    """Non-circular temporal shift (padding-based). Avoids discontinuities."""
+    shift_steps = int(rng.integers(1, 4))
+    direction = rng.choice([-1, 1])
+    
+    if direction == 1:
+        # Shift forward: pad start with edge value, drop end
+        pad = np.repeat(window[0:1], shift_steps, axis=0)
+        return np.vstack([pad, window[:-shift_steps]])
+    else:
+        # Shift backward: drop start, pad end with edge value
+        pad = np.repeat(window[-1:], shift_steps, axis=0)
+        return np.vstack([window[shift_steps:], pad])
 
 
-def _aug_scale(window: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """Magnitude scaling ×[0.9, 1.1] — simulates distance / attenuation variation."""
-    factor = rng.uniform(0.9, 1.1)
-    return window * factor
+def _aug_scale(window: np.ndarray, rng: np.random.Generator, class_label: str = None) -> np.ndarray:
+    """Physics-aware magnitude scaling. Tighter constraints for falls."""
+    if class_label == 'fall':
+        scale = rng.uniform(0.97, 1.03)
+    elif class_label == 'sit':
+        scale = rng.uniform(0.95, 1.05)
+    else:
+        scale = rng.uniform(0.9, 1.1)
+    return window * scale
 
 
-def _aug_time_warp(window: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """
-    Mild time warp ×[0.9, 1.1] via 1-D linear interpolation, resampled
-    back to the original length.  Simulates variation in movement speed.
-    Applied identically to every subcarrier column.
-    """
+def _aug_time_warp(window: np.ndarray, rng: np.random.Generator, class_label: str = None) -> np.ndarray:
+    """Advanced Time Warp with Reflect Padding to avoid artifacts."""
     T = window.shape[0]
-    factor = rng.uniform(0.9, 1.1)
-    # Source time axis stretched/compressed by factor
-    src = np.linspace(0, T - 1, int(round(T * factor)))
-    dst = np.linspace(0, len(src) - 1, T)
-    warped = np.empty_like(window)
+    
+    # Class-aware factor selection
+    if class_label == 'walk':
+        factor = rng.uniform(0.9, 1.1)
+    elif class_label == 'sit':
+        factor = rng.uniform(0.95, 1.05)
+    else:  # idle/static
+        factor = rng.uniform(0.98, 1.02)
+        
+    src_indices = np.linspace(0, T - 1, T) / factor
+    
+    # Reflect Padding logic (no flat tails)
+    overflow = src_indices > (T - 1)
+    src_indices[overflow] = 2 * (T - 1) - src_indices[overflow]
+    src_indices = np.clip(src_indices, 0, T - 1)
+    
+    warped = np.empty_like(window, dtype=np.float64)
     for c in range(window.shape[1]):
-        warped[:, c] = np.interp(dst, np.arange(len(src)), window[src.astype(int), c])
-    return warped
+        warped[:, c] = np.interp(src_indices, np.arange(T), window[:, c])
+        
+    return warped.astype(np.float32)
 
 
 _AUG_FN_MAP = {
@@ -134,52 +164,36 @@ _AUG_FN_MAP = {
 def augment_window(window: np.ndarray,
                    n_augments: int = 4,
                    techniques: list = None,
-                   seed: int = None) -> list:
+                   seed: int = None,
+                   class_label: str = None) -> list:
     """
-    Augment a single RAW amplitude window (BEFORE PCA).
-
-    For each of the n_augments copies, 1–2 techniques are chosen at random
-    from the allowed pool, applied sequentially, using a fully local RNG
-    (no global state mutation).
-
-    Physics-aware techniques (strict limits to preserve temporal patterns):
-      noise     : Gaussian jitter, σ ∈ [0.003, 0.01]
-      shift     : Roll along time axis, k ∈ [1, 4] frames
-      scale     : Magnitude warp, factor ∈ [0.9, 1.1]
-      time_warp : Linear interpolation warp, speed ∈ [0.9×, 1.1×]
-
-    Args:
-      window     : (window_size, n_subcarriers)  raw amplitude
-      n_augments : number of augmented copies to produce (default 4)
-      techniques : list of technique names to draw from
-                   (default: ALL_AUGMENT_TECHNIQUES)
-      seed       : integer seed for full reproducibility
-    Returns:
-      List of n_augments augmented windows, same shape as input
+    Advanced Class-Aware Multi-Stage Augmenter (BEFORE PCA).
+    Applies selected techniques sequentially based on class physical constraints.
     """
     if techniques is None:
         techniques = ALL_AUGMENT_TECHNIQUES
-
-    # Validate requested techniques
-    unknown = set(techniques) - set(_AUG_FN_MAP)
-    if unknown:
-        raise ValueError(f"Unknown augmentation technique(s): {unknown}. "
-                         f"Valid: {list(_AUG_FN_MAP)}")
+    if not techniques:
+        return []
 
     rng = np.random.default_rng(seed)
-    augmented = []
+    augmented_windows = []
+
+    # Fall safety: Gravity doesn't warp
+    safe_techs = [t for t in techniques if t != 'time_warp'] if class_label == 'fall' else techniques
 
     for _ in range(n_augments):
-        aug = window.copy().astype(np.float64)  # float64 for precision during augment
-        # Randomly pick 1 or 2 techniques and apply sequentially
-        n_pick = int(rng.integers(1, min(3, len(techniques) + 1)))
-        chosen = rng.choice(techniques, size=n_pick, replace=False)
+        # Pick 1 or 2 techniques
+        n_to_apply = rng.choice([1, 2])
+        chosen = rng.choice(safe_techs, size=min(n_to_apply, len(safe_techs)), replace=False)
+        
+        aug = window.copy()
         for tech in chosen:
-            aug = _AUG_FN_MAP[tech](aug, rng)
-        augmented.append(aug.astype(np.float32))
+            if tech in _AUG_FN_MAP:
+                aug = _AUG_FN_MAP[tech](aug, rng, class_label=class_label)
+        
+        augmented_windows.append(aug.astype(np.float32))
 
-    return augmented
-
+    return augmented_windows
 
 # ════════════════════════════════════════════════════════════════════════
 # 2. FEATURE EXTRACTION
@@ -489,10 +503,12 @@ def build_dataset(
 
                     # Augmentation on RAW window, THEN project
                     if do_augment:
+                        cls_name = classes[label_idx]
                         for aw_raw in augment_window(
                                 w_raw, n_augments,
                                 techniques=augment_techniques,
-                                seed=random_seed + global_window_idx):
+                                seed=random_seed + global_window_idx,
+                                class_label=cls_name):
                             if pp:
                                 aw_proj = pp.pca.transform(aw_raw)
                                 aw_proj = pp.scaler.transform(aw_proj)
@@ -600,7 +616,8 @@ def build_dataset(
                     for aw_raw in augment_window(
                             w_raw, n_augments,
                             techniques=augment_techniques,
-                            seed=random_seed + global_window_idx):
+                            seed=random_seed + global_window_idx,
+                            class_label=cls):
                         aw_proj = pipeline.pca.transform(aw_raw)
                         aw_proj = pipeline.scaler.transform(aw_proj)
                         X_tr.append(extract_features_from_window(aw_proj))
