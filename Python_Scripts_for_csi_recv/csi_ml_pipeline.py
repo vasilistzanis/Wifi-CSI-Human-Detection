@@ -45,9 +45,23 @@ from sklearn.preprocessing import LabelEncoder
 import warnings
 warnings.filterwarnings("ignore")
 
-N_STATS = len(['mean', 'std', 'max', 'min', 'range', 'median',
-               'energy', 'skewness', 'kurtosis', 'fft_mean', 'fft_std',
-               'zcr', 'fft_peak_idx', 'spectral_entropy'])
+# 14 classical stats + 6 DWT (energy+std × 3 levels with db4 wavelet)
+# DWT_LEVELS = 3  →  detail coeff d1,d2,d3  (approx a3 excluded — slow drift)
+_DWT_STATS_PER_COMPONENT = 6          # energy_d1, std_d1, ... energy_d3, std_d3
+N_STATS = 14 + _DWT_STATS_PER_COMPONENT   # = 20
+
+try:
+    import pywt as _pywt
+    _PYWT_AVAILABLE = True
+except ImportError:
+    _pywt = None
+    _PYWT_AVAILABLE = False
+    import warnings as _warnings
+    _warnings.warn(
+        "PyWavelets (pywt) not installed — DWT features will be zero-padded. "
+        "Run: pip install PyWavelets",
+        RuntimeWarning, stacklevel=1
+    )
 
 try:
     from sklearn.model_selection import StratifiedGroupKFold
@@ -68,47 +82,100 @@ except ImportError:
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 1. DATA AUGMENTATION
+# 1. DATA AUGMENTATION  (applied on RAW amplitude windows, BEFORE PCA)
 # ════════════════════════════════════════════════════════════════════════
+
+ALL_AUGMENT_TECHNIQUES = ['noise', 'shift', 'scale', 'time_warp']
+
+
+def _aug_noise(window: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Jitter: Gaussian noise, std ∈ [0.003, 0.01]  — simulates ambient RF interference."""
+    sigma = rng.uniform(0.003, 0.01)
+    return window + rng.normal(0, sigma, window.shape)
+
+
+def _aug_shift(window: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Temporal shift 1–4 frames via np.roll — simulates activity start jitter."""
+    k = int(rng.integers(1, 5))
+    return np.roll(window, k, axis=0)
+
+
+def _aug_scale(window: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Magnitude scaling ×[0.9, 1.1] — simulates distance / attenuation variation."""
+    factor = rng.uniform(0.9, 1.1)
+    return window * factor
+
+
+def _aug_time_warp(window: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """
+    Mild time warp ×[0.9, 1.1] via 1-D linear interpolation, resampled
+    back to the original length.  Simulates variation in movement speed.
+    Applied identically to every subcarrier column.
+    """
+    T = window.shape[0]
+    factor = rng.uniform(0.9, 1.1)
+    # Source time axis stretched/compressed by factor
+    src = np.linspace(0, T - 1, int(round(T * factor)))
+    dst = np.linspace(0, len(src) - 1, T)
+    warped = np.empty_like(window)
+    for c in range(window.shape[1]):
+        warped[:, c] = np.interp(dst, np.arange(len(src)), window[src.astype(int), c])
+    return warped
+
+
+_AUG_FN_MAP = {
+    'noise':     _aug_noise,
+    'shift':     _aug_shift,
+    'scale':     _aug_scale,
+    'time_warp': _aug_time_warp,
+}
+
 
 def augment_window(window: np.ndarray,
                    n_augments: int = 4,
+                   techniques: list = None,
                    seed: int = None) -> list:
     """
-    Augment a single window to artificially increase dataset size.
+    Augment a single RAW amplitude window (BEFORE PCA).
 
-    Techniques (cycling through all 4):
-      noise   : Gaussian noise injection
-      shift   : Time shift 1-5 frames
-      scale   : Amplitude scaling +/-3%
-      reverse : Time reversal
+    For each of the n_augments copies, 1–2 techniques are chosen at random
+    from the allowed pool, applied sequentially, using a fully local RNG
+    (no global state mutation).
+
+    Physics-aware techniques (strict limits to preserve temporal patterns):
+      noise     : Gaussian jitter, σ ∈ [0.003, 0.01]
+      shift     : Roll along time axis, k ∈ [1, 4] frames
+      scale     : Magnitude warp, factor ∈ [0.9, 1.1]
+      time_warp : Linear interpolation warp, speed ∈ [0.9×, 1.1×]
 
     Args:
-      window    : (window_size, n_components)
-      n_augments: augmented copies (default 4)
-      seed      : random seed for reproducibility
+      window     : (window_size, n_subcarriers)  raw amplitude
+      n_augments : number of augmented copies to produce (default 4)
+      techniques : list of technique names to draw from
+                   (default: ALL_AUGMENT_TECHNIQUES)
+      seed       : integer seed for full reproducibility
     Returns:
-      List of augmented windows, same shape as input
+      List of n_augments augmented windows, same shape as input
     """
+    if techniques is None:
+        techniques = ALL_AUGMENT_TECHNIQUES
+
+    # Validate requested techniques
+    unknown = set(techniques) - set(_AUG_FN_MAP)
+    if unknown:
+        raise ValueError(f"Unknown augmentation technique(s): {unknown}. "
+                         f"Valid: {list(_AUG_FN_MAP)}")
+
     rng = np.random.default_rng(seed)
+    augmented = []
 
-    techniques = ['noise', 'shift', 'scale', 'reverse']
-    augmented  = []
-
-    for i in range(n_augments):
-        aug  = window.copy()
-        tech = techniques[i % len(techniques)]
-
-        if tech == 'noise':
-            noise_level = 0.005 * aug.std()
-            aug = aug + rng.normal(0, noise_level, aug.shape)
-        elif tech == 'shift':
-            aug = np.roll(aug, rng.integers(1, 6), axis=0)
-        elif tech == 'scale':
-            aug = aug * rng.uniform(0.97, 1.03)
-        elif tech == 'reverse':
-            aug = aug[::-1].copy()
-
+    for _ in range(n_augments):
+        aug = window.copy().astype(np.float64)  # float64 for precision during augment
+        # Randomly pick 1 or 2 techniques and apply sequentially
+        n_pick = int(rng.integers(1, min(3, len(techniques) + 1)))
+        chosen = rng.choice(techniques, size=n_pick, replace=False)
+        for tech in chosen:
+            aug = _AUG_FN_MAP[tech](aug, rng)
         augmented.append(aug.astype(np.float32))
 
     return augmented
@@ -118,37 +185,90 @@ def augment_window(window: np.ndarray,
 # 2. FEATURE EXTRACTION
 # ════════════════════════════════════════════════════════════════════════
 
+def _dwt_features_for_col(col: np.ndarray, wavelet: str = 'db4',
+                          level: int = 3) -> list:
+    """
+    Compute DWT features for a single 1-D column (one PCA component).
+
+    Decomposition: db4 wavelet, 3 levels.
+    Features extracted from DETAIL coefficients d1, d2, d3 only
+    (approximation a3 is excluded — it carries slow DC drift, already
+    captured by 'mean' in the classical stats block).
+
+    For window=50 frames @ 100 Hz the frequency bands are:
+      d1 : 25–50 Hz  (high-freq noise)
+      d2 : 12.5–25 Hz (rapid motion transients)
+      d3 :  6.25–12.5 Hz (fall / fast gestures)
+      a3 :  0–6.25 Hz  (walking ~2 Hz, idle ~0 Hz)  ← excluded
+
+    Returns 6 floats: [energy_d1, std_d1, energy_d2, std_d2, energy_d3, std_d3]
+    """
+    if not _PYWT_AVAILABLE:
+        return [0.0] * _DWT_STATS_PER_COMPONENT
+
+    # Clamp level to what the signal length supports
+    max_level = _pywt.dwt_max_level(len(col), wavelet)
+    actual_level = min(level, max_level)
+
+    coeffs = _pywt.wavedec(col, wavelet, level=actual_level)
+    # coeffs = [a_n, d_n, d_{n-1}, ..., d1]  (pywt order)
+    # We want detail coefficients d1..d3 (indices [-1], [-2], [-3])
+    detail_coeffs = coeffs[1:]   # drop approximation a_n
+
+    feats = []
+    for lvl in range(1, level + 1):
+        # detail coeffs are stored in reversed order: coeffs[-lvl]
+        if lvl <= len(detail_coeffs):
+            d = detail_coeffs[-lvl].astype(np.float64)
+            energy = float(np.sum(d ** 2))
+            std    = float(np.std(d))
+        else:
+            energy, std = 0.0, 0.0
+        feats.extend([energy, std])
+
+    return feats
+
+
 def extract_features_from_window(window: np.ndarray) -> np.ndarray:
     """
-    14 statistical features per PCA component → flat vector.
+    20 features per PCA component → flat feature vector.
 
     Input:  (window_size, n_pca_components)  e.g. (50, 10)
-    Output: (140,)  [14 stats x 10 components]
+    Output: (200,)  [20 features × 10 components]
 
-    Stats: mean, std, max, min, range, median, energy, skewness, kurtosis, fft_mean, fft_std, zcr, fft_peak_idx, spectral_entropy
+    Feature breakdown (20 per component):
+      [0–13]  Classical stats (14):
+              mean, std, max, min, range, median, energy,
+              skewness, kurtosis, fft_mean, fft_std, zcr,
+              fft_peak_idx, spectral_entropy
+      [14–19] DWT features (6) — db4 wavelet, 3 detail levels:
+              energy_d1, std_d1,   (d1: 25–50 Hz)
+              energy_d2, std_d2,   (d2: 12.5–25 Hz)
+              energy_d3, std_d3    (d3: 6.25–12.5 Hz)
     """
     feats = []
     for c in range(window.shape[1]):
         col      = window[:, c].astype(np.float64)
         mean_val = col.mean()
         std_val  = col.std() + 1e-8
-        
-        # FFT features
+
+        # ── FFT features ─────────────────────────────────────────────────
         fft_vals = np.abs(np.fft.rfft(col))
         fft_mean = float(fft_vals.mean())
         fft_std  = float(fft_vals.std())
-        
-        # ZCR (Zero-Crossing Rate)
+
+        # ── ZCR (Zero-Crossing Rate) ──────────────────────────────────────
         centered = col - mean_val
         zcr = float(np.sum(np.diff(np.sign(centered)) != 0) / max(1, len(col) - 1))
-        
-        # Dominant Frequency
+
+        # ── Dominant Frequency index ──────────────────────────────────────
         fft_peak_idx = float(np.argmax(fft_vals))
-        
-        # Spectral Entropy
+
+        # ── Spectral Entropy ──────────────────────────────────────────────
         prob = fft_vals / (np.sum(fft_vals) + 1e-8)
         spectral_entropy = float(-np.sum(prob * np.log2(prob + 1e-8)))
-        
+
+        # ── Classical 14 stats ────────────────────────────────────────────
         feats.extend([
             mean_val,
             std_val,
@@ -165,14 +285,22 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
             fft_peak_idx,
             spectral_entropy,
         ])
+
+        # ── DWT 6 stats (db4, 3 detail levels) ───────────────────────────
+        feats.extend(_dwt_features_for_col(col, wavelet='db4', level=3))
+
     return np.array(feats, dtype=np.float32)
 
 
 def _get_feature_names(n_pca_components: int) -> list[str]:
-    stats = ['mean', 'std', 'max', 'min', 'range',
-             'median', 'energy', 'skewness', 'kurtosis', 'fft_mean', 'fft_std',
-             'zcr', 'fft_peak_idx', 'spectral_entropy']
-    return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in stats]
+    classical = ['mean', 'std', 'max', 'min', 'range', 'median',
+                 'energy', 'skewness', 'kurtosis', 'fft_mean', 'fft_std',
+                 'zcr', 'fft_peak_idx', 'spectral_entropy']
+    dwt = ['dwt_d1_energy', 'dwt_d1_std',
+           'dwt_d2_energy', 'dwt_d2_std',
+           'dwt_d3_energy', 'dwt_d3_std']
+    all_stats = classical + dwt   # 20 total
+    return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in all_stats]
 
 
 def extract_windows(data: np.ndarray,
@@ -241,7 +369,7 @@ def build_dataset(
     pipeline_kwargs: dict = None,
     window_size: int = 50,
     step: int = 25,
-    augment: bool = True,
+    augment_techniques: list = None,
     n_augments: int = 4,
     simulation_mode: bool = False,
     test_recording_ratio: float = 0.2,
@@ -250,7 +378,14 @@ def build_dataset(
 ) -> tuple:
     """
     Load recordings, preprocess, extract features.
+    Augmentation is applied on RAW amplitude windows BEFORE PCA projection
+    (physics-aware: noise, shift, scale, time_warp with strict limits).
     Returns train/test split at recording level (no leakage).
+
+    Args:
+      augment_techniques : list of technique names to use, e.g. ['noise', 'scale'].
+                           None or empty list → no augmentation.
+                           Default (when called from main): ALL_AUGMENT_TECHNIQUES.
 
     Returns:
       X_train      : (N, n_pca * N_STATS) augmented train features
@@ -265,6 +400,10 @@ def build_dataset(
     """
     if pipeline_kwargs is None:
         pipeline_kwargs = {'fs': 100.0, 'use_diff': True}
+
+    do_augment = bool(augment_techniques)  # empty list / None → no augmentation
+    if do_augment:
+        print(f"   Augmentation techniques: {augment_techniques}")
 
     data_dir = Path(data_dir)
     le = LabelEncoder()
@@ -312,25 +451,54 @@ def build_dataset(
                 pp.fit_transform(np.vstack(train_cms), use_pca=True, n_components=n_pca, scaler_type='standard')
 
         for cm, label_idx, is_test in rec_data:
-            processed = (pp.transform(cm, use_pca=True)
-                         if pp else
-                         np.random.randn(499, n_pca).astype(np.float32))
+            # ── Get RAW amplitude (pre-PCA) for augmentation ──────────────
+            if pp:
+                # Replicate pipeline steps up to (but not including) PCA+scaler
+                amp = pp.remove_null_subcarriers(cm, fit=False)
+                amp = pp.apply_hampel_filter(amp)
+                amp = pp.apply_lowpass_filter(amp)
+                if pp.use_diff:
+                    amp = pp.apply_temporal_diff(amp)
+                raw_pre_pca = amp  # shape: (N_frames, n_active_subcarriers)
+            else:
+                raw_pre_pca = np.random.randn(499, 114).astype(np.float32)
 
-            for w in extract_windows(processed, window_size, step):
-                feat = extract_features_from_window(w)
+            for w_raw in extract_windows(raw_pre_pca, window_size, step):
                 if is_test:
-                    X_te.append(feat)
+                    # Test: project through PCA+scaler, then extract features
+                    if pp:
+                        w_proj = pp.pca.transform(w_raw)
+                        w_proj = pp.scaler.transform(w_proj)
+                    else:
+                        w_proj = w_raw[:, :n_pca]
+                    X_te.append(extract_features_from_window(w_proj))
                     y_te.append(label_idx)
                 else:
-                    X_tr_orig.append(feat)
+                    # Train original (no augmentation)
+                    if pp:
+                        w_proj = pp.pca.transform(w_raw)
+                        w_proj = pp.scaler.transform(w_proj)
+                    else:
+                        w_proj = w_raw[:, :n_pca]
+                    feat_orig = extract_features_from_window(w_proj)
+                    X_tr_orig.append(feat_orig)
                     y_tr_orig.append(label_idx)
                     train_groups_orig.append(recording_group_id)
-                    X_tr.append(feat)
+                    X_tr.append(feat_orig)
                     y_tr.append(label_idx)
-                    if augment:
-                        for aw in augment_window(w, n_augments,
-                                                 seed=random_seed + global_window_idx):
-                            X_tr.append(extract_features_from_window(aw))
+
+                    # Augmentation on RAW window, THEN project
+                    if do_augment:
+                        for aw_raw in augment_window(
+                                w_raw, n_augments,
+                                techniques=augment_techniques,
+                                seed=random_seed + global_window_idx):
+                            if pp:
+                                aw_proj = pp.pca.transform(aw_raw)
+                                aw_proj = pp.scaler.transform(aw_proj)
+                            else:
+                                aw_proj = aw_raw[:, :n_pca]
+                            X_tr.append(extract_features_from_window(aw_proj))
                             y_tr.append(label_idx)
                     global_window_idx += 1
             recording_group_id += 1
@@ -403,22 +571,39 @@ def build_dataset(
             if cm.size == 0:
                 continue
             try:
-                processed = pipeline.transform(cm, use_pca=True)
+                # ── Pre-PCA steps (for augmentation on raw signal) ────────
+                amp = pipeline.remove_null_subcarriers(cm, fit=False)
+                amp = pipeline.apply_hampel_filter(amp)
+                amp = pipeline.apply_lowpass_filter(amp)
+                if pipeline.use_diff:
+                    amp = pipeline.apply_temporal_diff(amp)
+                raw_pre_pca = amp  # (N_frames, n_active_subcarriers)
             except ValueError as e:
                 print(f"   ⚠️  {fpath.name}: {e} — skipped")
                 continue
-            for w in extract_windows(processed, window_size, step):
-                feat = extract_features_from_window(w)
-                X_tr_orig.append(feat)
+
+            for w_raw in extract_windows(raw_pre_pca, window_size, step):
+                # Project original window through PCA+scaler
+                w_proj = pipeline.pca.transform(w_raw)
+                w_proj = pipeline.scaler.transform(w_proj)
+                feat_orig = extract_features_from_window(w_proj)
+
+                X_tr_orig.append(feat_orig)
                 y_tr_orig.append(label_idx)
                 train_groups_orig.append(recording_group_id)
-                X_tr.append(feat)
+                X_tr.append(feat_orig)
                 y_tr.append(label_idx)
                 tr_wins += 1
-                if augment:
-                    for aw in augment_window(w, n_augments,
-                                             seed=random_seed + global_window_idx):
-                        X_tr.append(extract_features_from_window(aw))
+
+                # Augmentation: on RAW window → then project → features
+                if do_augment:
+                    for aw_raw in augment_window(
+                            w_raw, n_augments,
+                            techniques=augment_techniques,
+                            seed=random_seed + global_window_idx):
+                        aw_proj = pipeline.pca.transform(aw_raw)
+                        aw_proj = pipeline.scaler.transform(aw_proj)
+                        X_tr.append(extract_features_from_window(aw_proj))
                         y_tr.append(label_idx)
                 global_window_idx += 1
             recording_group_id += 1
@@ -433,12 +618,13 @@ def build_dataset(
             except ValueError as e:
                 print(f"   ⚠️  {fpath.name}: {e} — skipped")
                 continue
+            # Test files: use full pipeline.transform (no augmentation)
             for w in extract_windows(processed, window_size, step):
                 X_te.append(extract_features_from_window(w))
                 y_te.append(label_idx)
                 te_wins += 1
 
-        aug_count = tr_wins * n_augments if augment else 0
+        aug_count = tr_wins * n_augments if do_augment else 0
         print(f"   → train: {tr_wins} orig + {aug_count} augmented | "
               f"test: {te_wins} windows")
 
@@ -850,7 +1036,24 @@ def main():
     parser.add_argument("--window_size", type=int,   default=50)
     parser.add_argument("--step",        type=int,   default=25)
     parser.add_argument("--fs",          type=float, default=100.0)
-    parser.add_argument("--no_augment",  action="store_true")
+    parser.add_argument(
+        "--augment",
+        nargs="+",
+        metavar="TECHNIQUE",
+        default=ALL_AUGMENT_TECHNIQUES,
+        help=(
+            "Augmentation techniques to apply on RAW windows (BEFORE PCA). "
+            f"Choices: {ALL_AUGMENT_TECHNIQUES}. "
+            "Default: all 4 techniques. "
+            "Use '--augment noise scale' for a subset. "
+            "To disable completely use --no_augment."
+        )
+    )
+    parser.add_argument(
+        "--no_augment",
+        action="store_true",
+        help="Disable all data augmentation."
+    )
     parser.add_argument("--n_augments",  type=int,   default=4)
     parser.add_argument("--pca",         type=int,   default=10)
     parser.add_argument("--test_ratio",  type=float, default=0.2)
@@ -862,13 +1065,25 @@ def main():
     parser.add_argument("--seed",        type=int,   default=42)
     args = parser.parse_args()
 
+    # --no_augment disables everything; otherwise use the specified (or default) list
+    if args.no_augment:
+        augment_techniques = []
+    else:
+        augment_techniques = args.augment  # list of 1+ techniques
+    # Validate
+    unknown = set(augment_techniques) - set(ALL_AUGMENT_TECHNIQUES)
+    if unknown:
+        parser.error(f"Unknown augmentation technique(s): {unknown}. "
+                     f"Valid: {ALL_AUGMENT_TECHNIQUES}")
+
     print("=" * 60)
     print(" CSI HAR — ML Pipeline")
     print(f" Classes : {args.classes}")
     print(f" Data dir: {args.data_dir}")
     print(f" Window  : {args.window_size} frames @ {args.fs} Hz = "
           f"{args.window_size/args.fs:.2f}s")
-    print(f" Augment : {not args.no_augment} (×{args.n_augments}) | "
+    aug_label = ', '.join(augment_techniques) if augment_techniques else 'DISABLED'
+    print(f" Augment : [{aug_label}] (×{args.n_augments}) | "
           f"PCA: {args.pca} | Diff: {not args.no_diff}")
     print(f" Tune    : {args.tune} | Seed: {args.seed}")
     print("=" * 60)
@@ -881,7 +1096,7 @@ def main():
         pipeline_kwargs={'fs': args.fs, 'use_diff': not args.no_diff},
         window_size=args.window_size,
         step=args.step,
-        augment=not args.no_augment,
+        augment_techniques=augment_techniques,
         n_augments=args.n_augments,
         simulation_mode=args.simulate or (CSIPipeline is None),
         test_recording_ratio=args.test_ratio,
