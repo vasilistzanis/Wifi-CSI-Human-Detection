@@ -65,7 +65,7 @@ WINDOW_SIZE    = 50      # frames per inference window (must match training)
 STEP           = 10      # predict every N new frames (lower = more frequent)
 # Extra frames kept beyond window_size so the Butterworth filter has enough
 # edge context.  padlen for 4th-order SOS ≈ 3*(2*n_sections+1) ≈ 27.
-FILTER_WARMUP  = 35
+FILTER_WARMUP  = 20
 SERIAL_BUF_MB  = 2_000_000
 # Rolling FPS window: measure rate over the last N frames
 FPS_WINDOW     = 60
@@ -212,7 +212,14 @@ def run_inference(
 
     # 2. Preprocess using the masks/PCA/scaler fitted during training (no refit)
     try:
-        processed = pipeline.transform(cm, use_pca=True)    # (N-1, n_pca)
+        data = pipeline.remove_null_subcarriers(cm, fit=False)
+        # Skip Hampel for live inference performance
+        data = pipeline.apply_lowpass_filter(data)
+        if pipeline.use_diff:
+            data = pipeline.apply_temporal_diff(data)
+        if pipeline.pca is not None:
+            data = pipeline.pca.transform(data)
+        processed = pipeline.scaler.transform(data)     # (N-1, n_pca)
     except ValueError as exc:
         # Most likely: subcarrier count mismatch between training and live data
         print(f"\n❌  Pipeline transform error: {exc}", file=sys.stderr)
