@@ -181,16 +181,27 @@ def augment_window(window: np.ndarray,
     # Fall safety: Gravity doesn't warp
     safe_techs = [t for t in techniques if t != 'time_warp'] if class_label == 'fall' else techniques
 
+    # If class-aware filtering left nothing, fall back to noise (safest technique)
+    # to preserve dataset size consistency — do NOT return duplicates silently
+    if not safe_techs:
+        import warnings
+        warnings.warn(
+            f"augment_window: class_label='{class_label}' filtered out all requested "
+            f"techniques {techniques}. Falling back to 'noise' to preserve dataset size.",
+            RuntimeWarning, stacklevel=2
+        )
+        safe_techs = ['noise']
+
     for _ in range(n_augments):
         # Pick 1 or 2 techniques
         n_to_apply = rng.choice([1, 2])
         chosen = rng.choice(safe_techs, size=min(n_to_apply, len(safe_techs)), replace=False)
-        
+
         aug = window.copy()
         for tech in chosen:
             if tech in _AUG_FN_MAP:
                 aug = _AUG_FN_MAP[tech](aug, rng, class_label=class_label)
-        
+
         augmented_windows.append(aug.astype(np.float32))
 
     return augmented_windows
