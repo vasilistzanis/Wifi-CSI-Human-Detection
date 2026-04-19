@@ -91,6 +91,12 @@ def parse_args():
         default=5,
         help="Countdown in seconds before recording starts. Set to 0 to disable. (default: 5)",
     )
+    parser.add_argument(
+        "-d", "--duration",
+        type=int,
+        default=0,
+        help="Auto-stop recording after N seconds. Set to 0 to record continuously until Ctrl+C. (default: 0)",
+    )
     return parser.parse_args()
 
 
@@ -251,6 +257,11 @@ def main() -> int:
                 if now - last_flush >= args.flush_interval:
                     handle.flush()
                     last_flush = now
+
+                # ── Auto-Stop Timer ───────────────────────────────────────
+                if args.duration > 0 and (now - start_time) >= args.duration:
+                    print(f"\n⏱️  Auto-stop reached ({args.duration} seconds).")
+                    break
 
                 # ── Status Updates ────────────────────────────────────────
                 if now - last_status >= args.status_interval:
