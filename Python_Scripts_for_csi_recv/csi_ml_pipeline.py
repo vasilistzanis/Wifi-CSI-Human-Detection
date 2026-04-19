@@ -557,6 +557,10 @@ def build_dataset(
             train_files_all[cls] = []
             test_files_all[cls]  = []
             continue
+        # Shuffle: recordings are independent sessions, not time-dependent.
+        # Seeded shuffle ensures reproducibility while removing ordering bias.
+        import random
+        random.Random(random_seed).shuffle(files)
         n_test = max(1, int(len(files) * test_recording_ratio))
         train_files_all[cls] = files[:-n_test]
         test_files_all[cls]  = files[-n_test:]
