@@ -22,6 +22,7 @@ Usage:
 
 import sys
 import json
+import random
 import argparse
 import numpy as np
 from pathlib import Path
@@ -340,7 +341,8 @@ def extract_windows(data: np.ndarray,
 
 def _make_group_cv(y: np.ndarray,
                    groups: np.ndarray,
-                   requested_folds: int = 5) -> tuple:
+                   requested_folds: int = 5,
+                   random_seed: int = 42) -> tuple:
     """
     Build a group-aware CV splitter so windows from the same recording
     never appear in both train and validation folds.
@@ -365,7 +367,7 @@ def _make_group_cv(y: np.ndarray,
     if StratifiedGroupKFold is not None and max_stratified_folds >= 2:
         n_splits = min(requested_folds, max_stratified_folds, len(group_to_label))
         splitter = StratifiedGroupKFold(
-            n_splits=n_splits, shuffle=True, random_state=42
+            n_splits=n_splits, shuffle=True, random_state=random_seed
         )
         splitter_name = "StratifiedGroupKFold"
     else:
@@ -437,7 +439,7 @@ def build_dataset(
     # ── Simulation Mode ──────────────────────────────────────────────────
     if simulation_mode or CSIPipeline is None:
         print("\n🔬 SIMULATION MODE")
-        np.random.seed(random_seed)
+        sim_rng = np.random.default_rng(random_seed)
         X_tr, y_tr = [], []
         X_tr_orig, y_tr_orig = [], []
         train_groups_orig = []
@@ -458,9 +460,9 @@ def build_dataset(
                 t    = np.linspace(0, 5, 500)
                 freq = 1.0 + label_idx * 0.5
                 r    = (np.outer(np.sin(2*np.pi*freq*t), np.ones(128))
-                        + np.random.randn(500, 128) * 0.3)
+                        + sim_rng.standard_normal((500, 128)) * 0.3)
                 im   = (np.outer(np.cos(2*np.pi*freq*t), np.ones(128))
-                        + np.random.randn(500, 128) * 0.3)
+                        + sim_rng.standard_normal((500, 128)) * 0.3)
                 cm   = (r + 1j*im).astype(np.complex64)
                 cm[:, :6]  = 0
                 cm[:, -6:] = 0
@@ -486,7 +488,7 @@ def build_dataset(
                     amp = pp.apply_temporal_diff(amp)
                 raw_pre_pca = amp  # shape: (N_frames, n_active_subcarriers)
             else:
-                raw_pre_pca = np.random.randn(499, 114).astype(np.float32)
+                raw_pre_pca = sim_rng.standard_normal((499, 114)).astype(np.float32)
 
             for w_raw in extract_windows(raw_pre_pca, window_size, step):
                 if is_test:
@@ -559,7 +561,6 @@ def build_dataset(
             continue
         # Shuffle: recordings are independent sessions, not time-dependent.
         # Seeded shuffle ensures reproducibility while removing ordering bias.
-        import random
         random.Random(random_seed).shuffle(files)
         n_test = max(1, int(len(files) * test_recording_ratio))
         train_files_all[cls] = files[:-n_test]
@@ -699,14 +700,16 @@ def build_dataset(
 def tune_hyperparameters(X_train_orig: np.ndarray,
                          y_train_orig: np.ndarray,
                          train_groups_orig: np.ndarray,
-                         cv_folds: int = 5) -> dict:
+                         cv_folds: int = 5,
+                         random_seed: int = 42) -> dict:
     """
     GridSearchCV on non-augmented train data.
     Returns best params for SVM and RF.
     """
     print(f"\n{'═'*60}")
     cv, actual_folds, splitter_name = _make_group_cv(
-        y_train_orig, train_groups_orig, requested_folds=cv_folds
+        y_train_orig, train_groups_orig, requested_folds=cv_folds,
+        random_seed=random_seed
     )
     n_recordings = len(np.unique(train_groups_orig))
     print(f" HYPERPARAMETER TUNING ({splitter_name}, {actual_folds}-fold)")
@@ -837,6 +840,7 @@ def train_and_evaluate(
     le: LabelEncoder,
     cv_folds: int = 5,
     best_params: dict = None,
+    random_seed: int = 42,
 ) -> dict:
     """
     Train SVM, RF, K-NN, Logistic Regression, Extra Trees, Naive Bayes.
@@ -916,7 +920,8 @@ def train_and_evaluate(
     }
 
     cv, actual_folds, splitter_name = _make_group_cv(
-        y_train_orig, train_groups_orig, requested_folds=cv_folds
+        y_train_orig, train_groups_orig, requested_folds=cv_folds,
+        random_seed=random_seed
     )
     n_pca = X_train.shape[1] // N_STATS
 
@@ -1145,13 +1150,15 @@ def main():
     best_params = None
     if args.tune:
         best_params = tune_hyperparameters(
-            X_train_orig, y_train_orig, train_groups_orig
+            X_train_orig, y_train_orig, train_groups_orig,
+            random_seed=args.seed
         )
 
     results = train_and_evaluate(
         X_train, X_train_orig, X_test,
         y_train, y_train_orig, y_test,
-        train_groups_orig, le, best_params=best_params
+        train_groups_orig, le, best_params=best_params,
+        random_seed=args.seed
     )
 
     if args.save_model:
