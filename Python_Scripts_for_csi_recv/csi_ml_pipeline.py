@@ -741,7 +741,7 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     print("\n🔍 Tuning Random Forest...")
     rf_search = GridSearchCV(
         RandomForestClassifier(class_weight='balanced',
-                               n_jobs=-1, random_state=42),
+                               n_jobs=-1, random_state=random_seed),
         rf_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
     rf_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
@@ -755,7 +755,7 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     }
     print("\n🔍 Tuning Extra Trees...")
     et_search = GridSearchCV(
-        ExtraTreesClassifier(class_weight='balanced', n_jobs=-1, random_state=42),
+        ExtraTreesClassifier(class_weight='balanced', n_jobs=-1, random_state=random_seed),
         et_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
     et_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
@@ -784,7 +784,7 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     print("\n🔍 Tuning Logistic Regression...")
     lr_search = GridSearchCV(
         LogisticRegression(penalty='l2', solver='lbfgs', max_iter=1000,
-                           class_weight='balanced', random_state=42),
+                           class_weight='balanced', random_state=random_seed),
         lr_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
     lr_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
@@ -799,7 +799,7 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     }
     print("\n🔍 Tuning Gradient Boosting...")
     gb_search = GridSearchCV(
-        GradientBoostingClassifier(random_state=42),
+        GradientBoostingClassifier(random_state=random_seed),
         gb_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
     gb_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
@@ -814,7 +814,7 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     }
     print("\n🔍 Tuning MLP (Neural Network)...")
     mlp_search = GridSearchCV(
-        MLPClassifier(max_iter=500, random_state=42),
+        MLPClassifier(max_iter=500, random_state=random_seed),
         mlp_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
     mlp_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
@@ -879,7 +879,7 @@ def train_and_evaluate(
             min_samples_leaf=rf_params.get('min_samples_leaf', 2),
             class_weight='balanced',
             n_jobs=-1,
-            random_state=42,
+            random_state=random_seed,
         ),
         'Extra Trees': ExtraTreesClassifier(
             n_estimators=et_params.get('n_estimators', 200),
@@ -887,7 +887,7 @@ def train_and_evaluate(
             min_samples_leaf=et_params.get('min_samples_leaf', 1),
             class_weight='balanced',
             n_jobs=-1,
-            random_state=42,
+            random_state=random_seed,
         ),
         'K-NN (k=5)': KNeighborsClassifier(
             n_neighbors=knn_params.get('n_neighbors', 5),
@@ -901,20 +901,20 @@ def train_and_evaluate(
             solver='lbfgs',
             max_iter=1000,
             class_weight='balanced',
-            random_state=42,
+            random_state=random_seed,
         ),
         'Gradient Boosting': GradientBoostingClassifier(
             n_estimators=gb_params.get('n_estimators', 100),
             learning_rate=gb_params.get('learning_rate', 0.1),
             max_depth=gb_params.get('max_depth', 3),
-            random_state=42,
+            random_state=random_seed,
         ),
         'MLP (Neural Network)': MLPClassifier(
             hidden_layer_sizes=mlp_params.get('hidden_layer_sizes', (100,)),
             alpha=mlp_params.get('alpha', 0.0001),
             learning_rate=mlp_params.get('learning_rate', 'constant'),
             max_iter=500,
-            random_state=42,
+            random_state=random_seed,
         ),
         'Naive Bayes': GaussianNB(),
     }
