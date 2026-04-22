@@ -111,7 +111,7 @@ export default function App() {
               flex: 1, gap: 24, overflow: 'hidden'
             }}>
               {/* Core AI Inference & Pipeline */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, flex: 1, maxHeight: '600px' }}>
+              <div className="responsive-grid" style={{ flex: 1, maxHeight: '600px' }}>
                 <PredictionCard data={data} />
                 <Pipeline />
               </div>

@@ -139,6 +139,18 @@ body,
   }
 }
 
+.responsive-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+
+@media (max-width: 768px) {
+  .responsive-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Section: Two-column overview ────────────── */
 .section-row {
   display: grid;

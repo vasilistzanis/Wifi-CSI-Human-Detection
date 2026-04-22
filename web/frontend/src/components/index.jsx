@@ -834,7 +834,7 @@ export function SystemInfoPage({ data }) {
       </div>
 
       {/* Main Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gridTemplateRows: 'repeat(2, 1fr)', gap: 20, flex: 1 }}>
+      <div className="responsive-grid" style={{ flex: 1 }}>
         {sections.map(s => (
           <div key={s.title} className="card" style={{ padding: '32px 36px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 }}>
