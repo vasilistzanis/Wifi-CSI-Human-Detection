@@ -133,9 +133,9 @@ const STEPS = [
   { n: '05', t: 'ML\nInference', icon: '🧠' },
 ]
 
-export function Pipeline() {
+export function Pipeline({ style = {} }) {
   return (
-    <div className="card" style={{ animation: 'fadeIn 0.6s ease' }}>
+    <div className="card" style={{ animation: 'fadeIn 0.6s ease', ...style }}>
       <span className="label">DSP Pipeline</span>
       <div style={{ display: 'flex', gap: 6 }}>
         {STEPS.map((s, i) => (
@@ -492,6 +492,155 @@ function ActivityBadge({ activity }) {
     }}>
       {activity}
     </span>
+  )
+}
+
+// ── Mini Signal Card (for Monitor) ─────────────
+export function MiniSignalCard({ data, style = {} }) {
+  const { waveform = [], subcarrier_map = [] } = data
+  const isConnected = data.connected || false
+
+  const points = useMemo(() => {
+    if (!waveform || waveform.length < 2) return '0,100 100,100'
+    const max = Math.max(...waveform, 0.0001)
+    return waveform.map((v, i) => `${(i / (waveform.length - 1)) * 100},${100 - (v / max) * 85}`).join(' ')
+  }, [waveform])
+
+  const heatColor = (v) => {
+    if (v < 0.25) return `rgba(99, 102, 241, ${0.15 + v * 2})`
+    if (v < 0.5) return `rgba(56, 189, 248, ${0.2 + v})`
+    if (v < 0.75) return `rgba(52, 211, 153, ${0.3 + v * 0.7})`
+    return `rgba(251, 191, 36, ${0.4 + v * 0.6})`
+  }
+
+  const hasSignal = waveform.some(v => v > 0)
+  const avg = hasSignal ? (waveform.reduce((a, b) => a + b, 0) / waveform.length) : 0
+  const variance = hasSignal ? (waveform.reduce((a, b) => a + Math.pow(b - avg, 2), 0) / waveform.length) : 0
+
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', ...style }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <span className="label" style={{ marginBottom: 0 }}>Live Signal</span>
+        <div style={{ display: 'flex', gap: 14 }}>
+          <span className="mono" style={{ fontSize: 9, color: 'var(--muted)' }}>
+            Var: <span style={{ color: isConnected ? 'var(--success)' : 'var(--muted)' }}>{isConnected ? variance.toFixed(4) : '-'}</span>
+          </span>
+          <span className="mono" style={{ fontSize: 9, color: 'var(--muted)' }}>
+            RSSI: <span style={{ color: isConnected ? 'var(--text-secondary)' : 'var(--muted)' }}>{isConnected ? `${(data.rssi || -55).toFixed(0)}dBm` : '-'}</span>
+          </span>
+        </div>
+      </div>
+
+      {/* Waveform SVG */}
+      <div style={{
+        flex: 1, minHeight: 0, position: 'relative',
+        background: 'linear-gradient(180deg, rgba(99,102,241,0.03) 0%, rgba(0,0,0,0.15) 100%)',
+        borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)', overflow: 'hidden'
+      }}>
+        {!isConnected && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--muted)', opacity: 0.4 }}>No Signal</span>
+          </div>
+        )}
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
+          {[25, 50, 75].map(y => <line key={y} x1="0" y1={y} x2="100" y2={y} stroke="white" strokeWidth="0.15" opacity="0.08" strokeDasharray="1.5,3" />)}
+          <defs>
+            <linearGradient id="waveGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#818cf8" stopOpacity="0.3" />
+              <stop offset="100%" stopColor="#818cf8" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <polygon points={`0,100 ${points} 100,100`} fill="url(#waveGrad)" />
+          <polyline points={points} fill="none" stroke="#818cf8" strokeWidth="1.2" strokeLinejoin="round" />
+        </svg>
+      </div>
+
+      {/* Subcarrier Heatmap Strip */}
+      <div style={{ marginTop: 8 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+          <span className="mono" style={{ fontSize: 7, color: 'var(--muted)' }}>Subcarrier Power</span>
+          <span className="mono" style={{ fontSize: 7, color: 'var(--muted)' }}>{subcarrier_map.length} ch</span>
+        </div>
+        <div style={{ display: 'flex', gap: 1, height: 10, borderRadius: 3, overflow: 'hidden', background: 'rgba(0,0,0,0.2)' }}>
+          {(subcarrier_map.length > 0 ? subcarrier_map : Array(57).fill(0)).slice(0, 57).map((v, i) => (
+            <div key={i} style={{ flex: 1, background: isConnected ? heatColor(v) : 'rgba(255,255,255,0.02)', transition: 'background 0.15s ease' }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Signal Health Card ─────────────────────────
+export function SignalHealthCard({ data }) {
+  const isConnected = data.connected || false
+  const quality = isConnected ? Math.max(0, 100 - (data.latency || 0)) : 0
+  const color = isConnected
+    ? (quality > 80 ? 'var(--success)' : quality > 50 ? 'var(--warning)' : 'var(--danger)')
+    : 'var(--muted)'
+
+  return (
+    <div className="card" style={{ padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div>
+        <span className="label" style={{ marginBottom: 4 }}>Link Quality</span>
+        <div className="mono" style={{ fontSize: 28, fontWeight: 800, color, lineHeight: 1 }}>
+          {isConnected ? quality.toFixed(0) : '—'}<span style={{ fontSize: 14, fontWeight: 600 }}>%</span>
+        </div>
+        <span className="mono" style={{ fontSize: 9, color: 'var(--muted)', marginTop: 4, display: 'block' }}>
+          {isConnected ? 'Buffer Stable' : 'No Signal'}
+        </span>
+      </div>
+      <div style={{ position: 'relative', width: 52, height: 52 }}>
+        <svg viewBox="0 0 36 36" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
+          <circle cx="18" cy="18" r="15.5" fill="none" stroke={color} strokeWidth="2.5" opacity="0.15" />
+          <circle cx="18" cy="18" r="15.5" fill="none" stroke={color} strokeWidth="2.5"
+            strokeDasharray={`${quality * 0.975} 100`}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dasharray 0.6s ease' }}
+          />
+        </svg>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <span style={{ fontSize: 14 }}>{isConnected ? '⚡' : '⏸️'}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Mini Activity Feed ─────────────────────────
+export function MiniActivityFeed({ log = [], style = {} }) {
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden', ...style }}>
+      <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+        <span className="label" style={{ marginBottom: 0 }}>Recent Activity</span>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+        {log.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', fontSize: 11, opacity: 0.5 }}>
+            <div style={{ fontSize: 20, marginBottom: 6 }}>📋</div>
+            No activity yet
+          </div>
+        ) : (
+          log.slice(0, 6).map((entry, i) => (
+            <div key={i} style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '7px 20px',
+              borderBottom: '1px solid rgba(255,255,255,0.025)',
+              animation: i === 0 ? 'fadeSlideIn 0.3s ease' : 'none'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <ActivityBadge activity={entry.activity} />
+                <span className="mono" style={{ fontSize: 9, color: 'var(--muted)' }}>{entry.time}</span>
+              </div>
+              <span className="mono" style={{ fontSize: 10, fontWeight: 600, color: 'var(--text)' }}>
+                {(entry.confidence * 100).toFixed(0)}%
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
   )
 }
 
