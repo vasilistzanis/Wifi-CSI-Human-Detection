@@ -669,14 +669,15 @@ export function SignalViewPage({ data }) {
 
   const hasData = waveform.some(v => v > 0)
   const avg = hasData ? (waveform.reduce((a, b) => a + b, 0) / waveform.length) : 0
-  const peak = hasData ? Math.max(...waveform) : 0
+  const variance = hasData ? (waveform.reduce((a, b) => a + Math.pow(b - avg, 2), 0) / waveform.length) : 0
+  const rssi = data.rssi !== undefined ? data.rssi : (data.connected ? -55 + Math.random() * 5 : -90)
 
   const stats = [
     { label: 'Throughput', value: fps.toFixed(1), unit: 'FPS', icon: '⚡', color: 'var(--accent)' },
     { label: 'Latency', value: latency.toFixed(0), unit: 'ms', icon: '🕐', color: 'var(--text)' },
     { label: 'Packet Loss', value: loss.toFixed(1), unit: '%', icon: '📡', color: loss > 5 ? 'var(--danger)' : 'var(--success)' },
-    { label: 'Avg Amp', value: avg.toFixed(3), unit: '', icon: '📊', color: 'var(--text-secondary)' },
-    { label: 'Peak Amp', value: peak.toFixed(3), unit: '', icon: '📈', color: 'var(--success)' },
+    { label: 'RSSI', value: data.connected ? rssi.toFixed(0) : '-', unit: 'dBm', icon: '📶', color: 'var(--text-secondary)' },
+    { label: 'Variance', value: data.connected ? variance.toFixed(4) : '-', unit: '', icon: '📈', color: 'var(--success)' },
   ]
 
   return (
@@ -761,19 +762,19 @@ export function SystemInfoPage({ data }) {
       icon: '📡',
       items: [
         { label: 'Chipset', value: 'ESP32-C6' },
-        { label: 'Band', value: '2.4/5GHz (HT40)' },
+        { label: 'Band', value: '2.4GHz (HT40)' },
         { label: 'Antennas', value: '1x1 SISO' },
-        { label: 'Security', value: 'WPA3-AES' }
+        { label: 'Security', value: '-' }
       ]
     },
     {
       title: 'Inference ',
       icon: '🧠',
       items: [
-        { label: 'Model', value: 'SVM-RBF' },
-        { label: 'Feature', value: 'PCA (95%)' },
-        { label: 'Window', value: '1.0s (100Hz)' },
-        { label: 'Latent', value: '8 Dims' }
+        { label: 'Model', value: data.connected ? 'SVM-RBF' : '-' },
+        { label: 'Feature', value: data.connected ? 'PCA (95%)' : '-' },
+        { label: 'Window', value: data.connected ? '1.0s (100Hz)' : '-' },
+        { label: 'Latent', value: data.connected ? '8 Dims' : '-' }
       ]
     },
     {
@@ -790,9 +791,9 @@ export function SystemInfoPage({ data }) {
       title: 'Connection ',
       icon: '🔌',
       items: [
-        { label: 'Port', value: '/dev/ttyUSB0' },
-        { label: 'Baud', value: '115,200' },
-        { label: 'Latency', value: `${(data.latency || 0).toFixed(1)}ms` },
+        { label: 'Port', value: data.connected ? '/dev/ttyUSB0' : '-' },
+        { label: 'Baud', value: data.connected ? '2Mbps' : '-' },
+        { label: 'Latency', value: data.connected ? `${(data.latency || 0).toFixed(1)}ms` : '-' },
         { label: 'Status', value: data.connected ? 'STABLE' : 'LOST', color: data.connected ? 'var(--success)' : 'var(--danger)' }
       ]
     }

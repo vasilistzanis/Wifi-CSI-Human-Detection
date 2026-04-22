@@ -126,7 +126,7 @@ export default function App() {
       <Nav wsStatus={wsStatus} data={data} />
 
       <div className="dashboard-layout">
-        <Sidebar activePage={activePage} onNavigate={setActivePage} />
+        <Sidebar activePage={activePage} onNavigate={setActivePage} data={data} />
 
         <main className="main-content">
           {renderPage()}
