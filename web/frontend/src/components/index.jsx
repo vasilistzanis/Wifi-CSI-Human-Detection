@@ -680,46 +680,46 @@ export function SignalViewPage({ data }) {
   ]
 
   return (
-    <div style={{ animation: 'fadeIn 0.4s ease', flex: 1, display: 'flex', flexDirection: 'column', gap: 14, overflow: 'hidden' }}>
+    <div style={{ animation: 'fadeIn 0.4s ease', flex: 1, display: 'flex', flexDirection: 'column', gap: 20, overflow: 'hidden' }}>
       {/* Metrics Bar */}
-      <div style={{ display: 'flex', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 14 }}>
         {stats.map(s => (
-          <div key={s.label} className="card" style={{ flex: 1, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-              <span style={{ fontSize: 10 }}>{s.icon}</span>
-              <span className="label" style={{ fontSize: 8, marginBottom: 0 }}>{s.label}</span>
+          <div key={s.label} className="card" style={{ flex: 1, padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{ fontSize: 12 }}>{s.icon}</span>
+              <span className="label" style={{ fontSize: 9, marginBottom: 0 }}>{s.label}</span>
             </div>
-            <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: s.color }}>
-              {s.value}<span style={{ fontSize: 9, marginLeft: 2, color: 'var(--muted)', fontWeight: 400 }}>{s.unit}</span>
+            <div className="mono" style={{ fontSize: 18, fontWeight: 800, color: s.color }}>
+              {s.value}<span style={{ fontSize: 10, marginLeft: 4, color: 'var(--muted)', fontWeight: 400 }}>{s.unit}</span>
             </div>
           </div>
         ))}
       </div>
 
       {/* Heatmap Section */}
-      <div className="card" style={{ padding: '14px 18px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <span className="label" style={{ marginBottom: 0 }}>Subcarrier Power Distribution</span>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <span className="mono" style={{ fontSize: 8, color: 'var(--muted)' }}>CH 114 (5.57GHz)</span>
-            <span className="mono" style={{ fontSize: 8, color: 'var(--accent)' }}>HT40 Mode</span>
+      <div className="card" style={{ padding: '24px 28px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <span className="label" style={{ marginBottom: 0, fontSize: 10 }}>Subcarrier Power Distribution</span>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <span className="mono" style={{ fontSize: 9, color: 'var(--muted)' }}>CH 114 (5.57GHz)</span>
+            <span className="mono" style={{ fontSize: 9, color: 'var(--accent)' }}>HT40 Mode</span>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 1, height: 28, background: 'rgba(0,0,0,0.2)', borderRadius: 4, overflow: 'hidden', padding: 2 }}>
+        <div style={{ display: 'flex', gap: 2, height: 40, background: 'rgba(0,0,0,0.2)', borderRadius: 6, overflow: 'hidden', padding: 3 }}>
           {subcarrier_map.slice(0, 57).map((v, i) => (
-            <div key={i} style={{ flex: 1, background: heatColor(v), transition: 'background 0.15s ease', borderRadius: 1 }} />
+            <div key={i} style={{ flex: 1, background: heatColor(v), transition: 'background 0.15s ease', borderRadius: 1.5 }} />
           ))}
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-          <span className="mono" style={{ fontSize: 8, color: 'var(--muted)' }}>-20MHz</span>
-          <span className="mono" style={{ fontSize: 8, color: 'var(--muted)' }}>CENTER</span>
-          <span className="mono" style={{ fontSize: 8, color: 'var(--muted)' }}>+20MHz</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+          <span className="mono" style={{ fontSize: 9, color: 'var(--muted)' }}>-20MHz</span>
+          <span className="mono" style={{ fontSize: 9, color: 'var(--muted)' }}>CENTER</span>
+          <span className="mono" style={{ fontSize: 9, color: 'var(--muted)' }}>+20MHz</span>
         </div>
       </div>
 
       {/* Waveform Section */}
-      <div className="card" style={{ padding: '14px 18px', flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <span className="label" style={{ marginBottom: 8 }}>Live Signal Waveform (Amplitude)</span>
+      <div className="card" style={{ padding: '20px 24px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <span className="label" style={{ marginBottom: 12, fontSize: 10 }}>Live Signal Waveform (Amplitude)</span>
         <div style={{ flex: 1, position: 'relative', background: 'rgba(0,0,0,0.15)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.03)', overflow: 'hidden' }}>
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, opacity: 0.1 }}>
             {[25, 50, 75].map(y => <line key={y} x1="0" y1={y} x2="100" y2={y} stroke="white" strokeWidth="0.1" strokeDasharray="2,2" />)}
@@ -757,7 +757,7 @@ export function SystemInfoPage({ data }) {
 
   const sections = [
     {
-      title: 'WiFi Radar Engine',
+      title: 'WiFi Radar ',
       icon: '📡',
       items: [
         { label: 'Chipset', value: 'ESP32-C6' },
@@ -767,7 +767,7 @@ export function SystemInfoPage({ data }) {
       ]
     },
     {
-      title: 'Inference Engine',
+      title: 'Inference ',
       icon: '🧠',
       items: [
         { label: 'Model', value: 'SVM-RBF' },
@@ -777,7 +777,7 @@ export function SystemInfoPage({ data }) {
       ]
     },
     {
-      title: 'Software Stack',
+      title: 'Software ',
       icon: '💻',
       items: [
         { label: 'Frontend', value: 'React/Vite' },
@@ -787,7 +787,7 @@ export function SystemInfoPage({ data }) {
       ]
     },
     {
-      title: 'Connection Meta',
+      title: 'Connection ',
       icon: '🔌',
       items: [
         { label: 'Port', value: '/dev/ttyUSB0' },
@@ -834,18 +834,18 @@ export function SystemInfoPage({ data }) {
       </div>
 
       {/* Main Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gridTemplateRows: 'repeat(2, 1fr)', gap: 16, flex: 1 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gridTemplateRows: 'repeat(2, 1fr)', gap: 20, flex: 1 }}>
         {sections.map(s => (
-          <div key={s.title} className="card" style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-              <span style={{ fontSize: 18 }}>{s.icon}</span>
-              <h3 style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{s.title}</h3>
+          <div key={s.title} className="card" style={{ padding: '32px 36px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 }}>
+              <span style={{ fontSize: 24, background: 'rgba(255,255,255,0.03)', width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12 }}>{s.icon}</span>
+              <h3 style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', letterSpacing: '0.02em' }}>{s.title}</h3>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 20px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px 30px' }}>
               {s.items.map(item => (
                 <div key={item.label}>
-                  <div style={{ fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>{item.label}</div>
-                  <div className="mono" style={{ fontSize: 12, color: item.color || 'var(--text-secondary)', fontWeight: 600 }}>{item.value}</div>
+                  <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>{item.label}</div>
+                  <div className="mono" style={{ fontSize: 14, color: item.color || 'var(--text-secondary)', fontWeight: 700 }}>{item.value}</div>
                 </div>
               ))}
             </div>
