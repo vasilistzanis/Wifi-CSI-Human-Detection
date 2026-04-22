@@ -90,7 +90,7 @@ export function PredictionCard({ data, style = {} }) {
       {!hasModel && data.connected && (
         <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: 8, border: '1px solid var(--border)' }}>
           <span className="mono" style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.6, display: 'block' }}>
-            💡 Place trained models in <span style={{ color: 'var(--accent)' }}>web/backend/models/</span>
+            💡 Place trained models in <span style={{ color: 'var(--accent)' }}>Python_Scripts_for_csi_recv/models/</span>
           </span>
         </div>
       )}
@@ -669,11 +669,12 @@ export function ActivityLogPage({ log, onClear }) {
       gridTemplateColumns: window.innerWidth > 1024 ? '280px 1fr' : '1fr',
       gap: 20,
       flex: 1,
+      minHeight: 0,
       overflow: 'hidden'
     }}>
 
       {/* Left Sidebar: Stats & Summary */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0, overflowY: 'auto' }}>
         <div className="card" style={{ padding: 20 }}>
           <span className="label" style={{ marginBottom: 12 }}>Session Summary</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -722,7 +723,7 @@ export function ActivityLogPage({ log, onClear }) {
       </div>
 
       {/* Right Column: Table */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {/* Filters */}
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => setFilter('all')} style={{

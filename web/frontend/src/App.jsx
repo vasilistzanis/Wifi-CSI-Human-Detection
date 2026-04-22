@@ -25,12 +25,16 @@ const INITIAL_STATE = {
 
 export default function App() {
   const [data, setData] = useState(INITIAL_STATE)
+  const [displayData, setDisplayData] = useState(INITIAL_STATE)  // 1s throttled snapshot
   const [wsStatus, setWsStatus] = useState('connecting')
   const [activePage, setActivePage] = useState('monitor')
   const [activityLog, setActivityLog] = useState([])
   const wsRef = useRef(null)
   const timerRef = useRef(null)
+  const displayTimerRef = useRef(null)
   const lastLabel = useRef(null)
+  const lastLogTime = useRef(0)
+  const liveDataRef = useRef(INITIAL_STATE)  // always-fresh ref for the interval
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
@@ -48,22 +52,27 @@ export default function App() {
       try {
         const payload = JSON.parse(e.data)
         if (payload.heartbeat) return
-        setData(prev => ({ ...prev, ...payload }))
 
-        // Log activity changes (or every ~2s even if unchanged)
+        // Always update the live ref at full speed (waveform, signal)
+        const merged = { ...liveDataRef.current, ...payload }
+        liveDataRef.current = merged
+        setData(merged)
+
+        // Activity log: max 1 entry per second
         if (payload.smoothed && payload.confidence) {
-          const now = new Date()
-          const entry = {
-            time: now.toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            timestamp: now.getTime(),
-            activity: payload.smoothed,
-            raw: payload.label || payload.smoothed,
-            confidence: payload.confidence,
-            fps: payload.fps || 0,
-            frame: payload.frame_count || 0,
-          }
-          // Only log if activity changed or every 30th frame
-          if (payload.smoothed !== lastLabel.current || (payload.frame_count % 30 === 0)) {
+          const now = Date.now()
+          if (now - lastLogTime.current >= 1000) {
+            lastLogTime.current = now
+            const t = new Date(now)
+            const entry = {
+              time: t.toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+              timestamp: now,
+              activity: payload.smoothed,
+              raw: payload.label || payload.smoothed,
+              confidence: payload.confidence,
+              fps: payload.fps || 0,
+              frame: payload.frame_count || 0,
+            }
             lastLabel.current = payload.smoothed
             setActivityLog(prev => [entry, ...prev].slice(0, MAX_LOG_ENTRIES))
           }
@@ -84,8 +93,13 @@ export default function App() {
 
   useEffect(() => {
     connect()
+    // Snapshot displayData from the live ref every 1 second
+    displayTimerRef.current = setInterval(() => {
+      setDisplayData({ ...liveDataRef.current })
+    }, 1000)
     return () => {
       clearTimeout(timerRef.current)
+      clearInterval(displayTimerRef.current)
       wsRef.current?.close()
     }
   }, [connect])
@@ -101,8 +115,8 @@ export default function App() {
       case 'settings':
         return <SettingsPage />
       default: {
-        const uptime = data.connected ? (() => {
-          const s = Math.floor((Date.now() - (data.start_time || Date.now())) / 1000)
+        const uptime = displayData.connected ? (() => {
+          const s = Math.floor((Date.now() - (displayData.start_time || Date.now())) / 1000)
           const m = Math.floor(s / 60)
           const h = Math.floor(m / 60)
           return h > 0 ? `${h}h ${m % 60}m` : `${m}m ${s % 60}s`
@@ -110,7 +124,7 @@ export default function App() {
 
         return (
           <div style={{ animation: 'fadeIn 0.4s ease', display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-            <StatusBanner data={data} />
+            <StatusBanner data={displayData} />
 
             <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 340px', gap: 12, overflow: 'hidden', minHeight: 0 }}>
 
@@ -119,10 +133,10 @@ export default function App() {
                 <MiniSignalCard data={data} style={{ flex: 1, minHeight: 0 }} />
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                   {[
-                    { label: 'Frames', value: data.connected ? (data.frame_count || 0).toLocaleString() : '-', icon: '🔢' },
+                    { label: 'Frames', value: displayData.connected ? (displayData.frame_count || 0).toLocaleString() : '-', icon: '🔢' },
                     { label: 'Uptime', value: uptime, icon: '⏱️' },
-                    { label: 'Model', value: data.connected ? (data.model_name || 'None') : '-', icon: '🧠' },
-                    { label: 'Interface', value: data.connected ? (data.port || 'Auto') : '-', icon: '🔌' },
+                    { label: 'Model', value: displayData.connected ? (displayData.model_name || 'None') : '-', icon: '🧠' },
+                    { label: 'Interface', value: displayData.connected ? (displayData.port || 'Auto') : '-', icon: '🔌' },
                   ].map(t => (
                     <div key={t.label} className="card" style={{ flex: 1, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 10 }}>{t.icon}</span>
@@ -138,15 +152,15 @@ export default function App() {
               {/* RIGHT COLUMN: Everything stacked */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, overflow: 'hidden' }}>
                 {/* Prediction */}
-                <PredictionCard data={data} style={{ flexShrink: 0 }} />
+                <PredictionCard data={displayData} style={{ flexShrink: 0 }} />
 
                 {/* Health + Metrics row */}
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                  <SignalHealthCard data={data} />
+                  <SignalHealthCard data={displayData} />
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
                     {[
-                      { l: '⚡ FPS', v: data.connected ? data.fps.toFixed(0) : '-', c: data.connected ? 'var(--accent)' : 'var(--muted)' },
-                      { l: '📡 Loss', v: data.connected ? `${(data.loss||0).toFixed(1)}%` : '-', c: data.connected ? ((data.loss||0) > 5 ? 'var(--danger)' : 'var(--success)') : 'var(--muted)' },
+                      { l: '⚡ FPS', v: displayData.connected ? displayData.fps.toFixed(0) : '-', c: displayData.connected ? 'var(--accent)' : 'var(--muted)' },
+                      { l: '📡 Loss', v: displayData.connected ? `${(displayData.loss||0).toFixed(1)}%` : '-', c: displayData.connected ? ((displayData.loss||0) > 5 ? 'var(--danger)' : 'var(--success)') : 'var(--muted)' },
                     ].map(m => (
                       <div key={m.l} className="card" style={{ flex: 1, padding: '8px 12px', textAlign: 'center', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                         <div className="label" style={{ fontSize: 7, marginBottom: 2 }}>{m.l}</div>

@@ -60,7 +60,7 @@ except ImportError:
 
 DEFAULT_PORT      = "COM6" if os.name == "nt" else "/dev/ttyUSB0"
 DEFAULT_BAUD      = 2000000
-DEFAULT_MODELS    = "./models"
+DEFAULT_MODELS    = r"C:\Diplomatiki_2026\WIFI CSI PROJECT\Python_Scripts_for_csi_recv\models"
 DEFAULT_MODEL     = "svm"
 WINDOW_SIZE       = 50
 FILTER_WARMUP     = 20

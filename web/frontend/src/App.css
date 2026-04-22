@@ -125,6 +125,7 @@ body,
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 @media (max-width: 1024px) {
