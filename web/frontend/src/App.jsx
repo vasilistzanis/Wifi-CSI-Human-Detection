@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import Nav from './components/Nav'
 import Sidebar from './components/Sidebar'
-import { StatusBanner, MetricsRow, PredictionCard, Pipeline, Footer, ActivityLogPage, SignalViewPage, SystemInfoPage, SettingsPage } from './components/index.jsx'
+import { StatusBanner, MetricsRow, PredictionCard, Pipeline, Footer, MiniFooter, ActivityLogPage, SignalViewPage, SystemInfoPage, SettingsPage } from './components/index.jsx'
 import './App.css'
 
 const WS_URL = 'ws://localhost:8000/ws'
@@ -130,7 +130,7 @@ export default function App() {
 
         <main className="main-content">
           {renderPage()}
-          <Footer />
+          <MiniFooter />
         </main>
       </div>
     </div>

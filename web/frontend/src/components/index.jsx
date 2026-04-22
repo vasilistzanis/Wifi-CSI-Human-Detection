@@ -673,11 +673,11 @@ export function SignalViewPage({ data }) {
   const rssi = data.rssi !== undefined ? data.rssi : (data.connected ? -55 + Math.random() * 5 : -90)
 
   const stats = [
-    { label: 'Throughput', value: fps.toFixed(1), unit: 'FPS', icon: '⚡', color: 'var(--accent)' },
-    { label: 'Latency', value: latency.toFixed(0), unit: 'ms', icon: '🕐', color: 'var(--text)' },
-    { label: 'Packet Loss', value: loss.toFixed(1), unit: '%', icon: '📡', color: loss > 5 ? 'var(--danger)' : 'var(--success)' },
-    { label: 'RSSI', value: data.connected ? rssi.toFixed(0) : '-', unit: 'dBm', icon: '📶', color: 'var(--text-secondary)' },
-    { label: 'Variance', value: data.connected ? variance.toFixed(4) : '-', unit: '', icon: '📈', color: 'var(--success)' },
+    { label: 'Throughput', value: data.connected ? fps.toFixed(1) : '-', unit: 'FPS', icon: '⚡', color: data.connected ? 'var(--accent)' : 'var(--muted)' },
+    { label: 'Latency', value: data.connected ? latency.toFixed(0) : '-', unit: 'ms', icon: '🕐', color: data.connected ? 'var(--text)' : 'var(--muted)' },
+    { label: 'Packet Loss', value: data.connected ? loss.toFixed(1) : '-', unit: '%', icon: '📡', color: data.connected ? (loss > 5 ? 'var(--danger)' : 'var(--success)') : 'var(--muted)' },
+    { label: 'RSSI', value: data.connected ? rssi.toFixed(0) : '-', unit: 'dBm', icon: '📶', color: data.connected ? 'var(--text-secondary)' : 'var(--muted)' },
+    { label: 'Variance', value: data.connected ? variance.toFixed(4) : '-', unit: '', icon: '📈', color: data.connected ? 'var(--success)' : 'var(--muted)' },
   ]
 
   return (
@@ -771,10 +771,10 @@ export function SystemInfoPage({ data }) {
       title: 'Inference ',
       icon: '🧠',
       items: [
-        { label: 'Model', value: data.connected ? 'SVM-RBF' : '-' },
-        { label: 'Feature', value: data.connected ? 'PCA (95%)' : '-' },
-        { label: 'Window', value: data.connected ? '1.0s (100Hz)' : '-' },
-        { label: 'Latent', value: data.connected ? '8 Dims' : '-' }
+        { label: 'Model', value: data.connected ? (data.model_name || 'Loading...') : '-' },
+        { label: 'Feature', value: data.connected ? (data.pca_dims ? `PCA (${data.pca_dims}D)` : 'Raw Vector') : '-' },
+        { label: 'Window', value: data.connected ? `${(data.window_size || 50) / 100}s (100Hz)` : '-' },
+        { label: 'Latent', value: data.connected ? (data.pca_dims ? `${data.pca_dims} Dims` : 'N/A') : '-' }
       ]
     },
     {
@@ -791,13 +791,20 @@ export function SystemInfoPage({ data }) {
       title: 'Connection ',
       icon: '🔌',
       items: [
-        { label: 'Port', value: data.connected ? '/dev/ttyUSB0' : '-' },
-        { label: 'Baud', value: data.connected ? '2Mbps' : '-' },
+        { label: 'Interface', value: data.connected ? (data.port || 'Auto') : '-' },
+        { label: 'Link Speed', value: data.connected ? (data.baud ? (data.baud >= 1000000 ? `${data.baud / 1000000}Mbps` : `${data.baud}bps`) : 'Network/UDP') : '-' },
         { label: 'Latency', value: data.connected ? `${(data.latency || 0).toFixed(1)}ms` : '-' },
         { label: 'Status', value: data.connected ? 'STABLE' : 'LOST', color: data.connected ? 'var(--success)' : 'var(--danger)' }
       ]
     }
   ]
+
+  const isConnected = data.connected || false
+  const statusColor = isConnected ? 'var(--success)' : 'var(--danger)'
+  const statusText = isConnected ? 'SYSTEM ONLINE' : 'SYSTEM OFFLINE'
+  const cpuUsage = isConnected ? Math.min(100, (data.fps / 150) * 100).toFixed(1) + '%' : '-'
+  const bufferHealth = isConnected ? Math.max(0, 100 - (data.loss || 0)).toFixed(0) + '%' : '-'
+  const bufferColor = isConnected ? ((100 - (data.loss || 0)) > 90 ? 'var(--success)' : 'var(--warning)') : 'var(--muted)'
 
   return (
     <div style={{ animation: 'fadeIn 0.5s ease', flex: 1, display: 'flex', flexDirection: 'column', gap: 16, overflow: 'hidden' }}>
@@ -805,31 +812,35 @@ export function SystemInfoPage({ data }) {
       <div className="card" style={{ padding: '20px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(90deg, rgba(99,102,241,0.04) 0%, transparent 100%)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <div style={{ position: 'relative' }}>
-            <div style={{ width: 12, height: 12, borderRadius: '50%', background: 'var(--success)' }} />
+            <div style={{
+              width: 12, height: 12, borderRadius: '50%', background: statusColor,
+              boxShadow: `0 0 10px ${statusColor}`
+            }} />
             <div style={{
               position: 'absolute', top: -3, left: -3, width: 18, height: 18,
-              borderRadius: '50%', border: '2px solid var(--success)',
-              animation: 'ping 2s cubic-bezier(0, 0, 0.2, 1) infinite'
+              borderRadius: '50%', border: `2px solid ${statusColor}`,
+              animation: isConnected ? 'ping 2s cubic-bezier(0, 0, 0.2, 1) infinite' : 'ping 3s cubic-bezier(0, 0, 0.2, 1) infinite',
+              opacity: isConnected ? 1 : 0.6
             }} />
           </div>
           <div>
             <span className="label" style={{ fontSize: 9, marginBottom: 2 }}>System Health</span>
-            <div style={{ fontSize: 16, fontWeight: 800 }}>NOMINAL STATUS</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: statusColor }}>{statusText}</div>
           </div>
         </div>
 
         <div style={{ display: 'flex', gap: 40 }}>
           <div>
             <span className="label" style={{ fontSize: 8, marginBottom: 4 }}>Live Uptime</span>
-            <div className="mono" style={{ fontSize: 16, fontWeight: 700 }}>{formatUptime(uptime)}</div>
+            <div className="mono" style={{ fontSize: 16, fontWeight: 700, color: isConnected ? 'var(--text)' : 'var(--muted)' }}>{isConnected ? formatUptime(uptime) : '-'}</div>
           </div>
           <div>
             <span className="label" style={{ fontSize: 8, marginBottom: 4 }}>CPU Usage</span>
-            <div className="mono" style={{ fontSize: 16, fontWeight: 700, color: 'var(--accent)' }}>12.4%</div>
+            <div className="mono" style={{ fontSize: 16, fontWeight: 700, color: isConnected ? 'var(--accent)' : 'var(--muted)' }}>{cpuUsage}</div>
           </div>
           <div>
             <span className="label" style={{ fontSize: 8, marginBottom: 4 }}>Buffer Health</span>
-            <div className="mono" style={{ fontSize: 16, fontWeight: 700, color: 'var(--success)' }}>98%</div>
+            <div className="mono" style={{ fontSize: 16, fontWeight: 700, color: bufferColor }}>{bufferHealth}</div>
           </div>
         </div>
       </div>
@@ -864,6 +875,16 @@ export function SystemInfoPage({ data }) {
 }
 
 
+export function MiniFooter() {
+  return (
+    <footer style={{
+      marginTop: 'auto', paddingTop: 16, paddingBottom: 8,
+      textAlign: 'center', opacity: 0.4,
+    }}>
+      <div className="mono" style={{ fontSize: 10 }}>WIFI CSI PROJECT © 2026 ·  v2.4.0</div>
+    </footer>
+  )
+}
 
 export function SettingsPage() {
   return (

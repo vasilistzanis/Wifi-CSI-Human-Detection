@@ -103,6 +103,11 @@ class SharedState:
             "subcarrier_map": [0.0] * 57,
             "connected":     False,
             "error":         "",
+            "port":          "",
+            "baud":          0,
+            "model_name":    "",
+            "pca_dims":      0,
+            "window_size":   50,
             "timestamp":     time.time(),
         }
         self.new_event = asyncio.Event()
@@ -217,8 +222,16 @@ class CSIReaderThread(threading.Thread):
                 continue
 
             print(f"Serial hardware detected: {target_port} @ {self.baud}")
+            m_name = MODEL_FILES.get(self.model_key, "Unknown").replace(".joblib", "").replace("_", " ")
+            p_dims = pipeline.pca.n_components_ if pipeline and hasattr(pipeline, "pca") and pipeline.pca else 0
             self.loop.call_soon_threadsafe(
-                lambda: state.update({"connected": True, "error": ""})
+                lambda: state.update({
+                    "connected": True, "error": "", 
+                    "port": target_port, "baud": self.baud,
+                    "model_name": m_name,
+                    "pca_dims": p_dims,
+                    "window_size": WINDOW_SIZE
+                })
             )
 
             buf_size        = WINDOW_SIZE + FILTER_WARMUP
