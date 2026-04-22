@@ -712,7 +712,7 @@ export function ActivityLogPage({ log, onClear }) {
 // PAGE: Signal View (Expanded)
 // ═══════════════════════════════════════════════
 export function SignalViewPage({ data }) {
-  const { waveform = [], subcarrier_map = [] } = data
+  const { waveform = [], subcarrier_map = [], fps = 0, latency = 0, loss = 0 } = data
 
   const points = useMemo(() => {
     if (!waveform || waveform.length < 2) return '0,100 100,100'
@@ -723,136 +723,80 @@ export function SignalViewPage({ data }) {
   }, [waveform])
 
   const heatColor = (v) => {
+    if (v < 0.01) return 'rgba(255,255,255,0.02)'
     if (v < 0.25) return `rgba(99, 102, 241, ${0.15 + v * 2})`
     if (v < 0.5) return `rgba(56, 189, 248, ${0.2 + v})`
     if (v < 0.75) return `rgba(52, 211, 153, ${0.3 + v * 0.7})`
     return `rgba(251, 191, 36, ${0.4 + v * 0.6})`
   }
 
-  // Stats
-  const avg = waveform.length > 0 ? (waveform.reduce((a, b) => a + b, 0) / waveform.length) : 0
-  const peak = waveform.length > 0 ? Math.max(...waveform) : 0
-  const min = waveform.length > 0 ? Math.min(...waveform) : 0
+  const hasData = waveform.some(v => v > 0)
+  const avg = hasData ? (waveform.reduce((a, b) => a + b, 0) / waveform.length) : 0
+  const peak = hasData ? Math.max(...waveform) : 0
+
+  const stats = [
+    { label: 'Throughput', value: fps.toFixed(1), unit: 'FPS', icon: '⚡', color: 'var(--accent)' },
+    { label: 'Latency', value: latency.toFixed(0), unit: 'ms', icon: '🕐', color: 'var(--text)' },
+    { label: 'Packet Loss', value: loss.toFixed(1), unit: '%', icon: '📡', color: loss > 5 ? 'var(--danger)' : 'var(--success)' },
+    { label: 'Avg Amp', value: avg.toFixed(3), unit: '', icon: '📊', color: 'var(--text-secondary)' },
+    { label: 'Peak Amp', value: peak.toFixed(3), unit: '', icon: '📈', color: 'var(--success)' },
+  ]
 
   return (
-    <div style={{ animation: 'fadeIn 0.4s ease' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <div>
-          <span className="label" style={{ marginBottom: 4 }}>Signal View</span>
-          <h2 style={{ fontSize: 22, fontWeight: 700 }}>Expanded CSI Analysis</h2>
-        </div>
-        <div style={{ display: 'flex', gap: 12 }}>
-          <div className="mono" style={{ fontSize: 10, color: 'var(--accent)' }}>HT40 · 5GHz</div>
-          <div className="mono" style={{ fontSize: 10, color: 'var(--muted)' }}>114 Subcarriers</div>
-        </div>
-      </div>
-
-      {/* Stats row */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
-        {[
-          { label: 'AVG Amplitude', value: avg.toFixed(3), color: 'var(--accent)' },
-          { label: 'Peak', value: peak.toFixed(3), color: 'var(--success)' },
-          { label: 'Min', value: min.toFixed(3), color: 'var(--warning)' },
-          { label: 'Range', value: (peak - min).toFixed(3), color: 'var(--text)' },
-        ].map(s => (
-          <div key={s.label} className="card" style={{ flex: 1, padding: '14px 16px' }}>
-            <span className="label" style={{ fontSize: 9, marginBottom: 6 }}>{s.label}</span>
-            <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: s.color }}>{s.value}</div>
+    <div style={{ animation: 'fadeIn 0.4s ease', height: 'calc(100vh - 230px)', display: 'flex', flexDirection: 'column', gap: 14, overflow: 'hidden' }}>
+      {/* Metrics Bar */}
+      <div style={{ display: 'flex', gap: 10 }}>
+        {stats.map(s => (
+          <div key={s.label} className="card" style={{ flex: 1, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+              <span style={{ fontSize: 10 }}>{s.icon}</span>
+              <span className="label" style={{ fontSize: 8, marginBottom: 0 }}>{s.label}</span>
+            </div>
+            <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: s.color }}>
+              {s.value}<span style={{ fontSize: 9, marginLeft: 2, color: 'var(--muted)', fontWeight: 400 }}>{s.unit}</span>
+            </div>
           </div>
         ))}
       </div>
 
-      {/* Full heatmap with legend */}
-      <div className="card" style={{ padding: 24, marginBottom: 20 }}>
-        <span className="label" style={{ marginBottom: 10 }}>Subcarrier Power Distribution</span>
-        <div style={{ display: 'flex', gap: 20, alignItems: 'stretch' }}>
-          {/* Heatmap */}
-          <div style={{ flex: 1 }}>
-            <div style={{ display: 'flex', gap: 1, height: 64, background: 'rgba(0,0,0,0.25)', borderRadius: 8, overflow: 'hidden', padding: 4 }}>
-              {subcarrier_map.slice(0, 57).map((v, i) => (
-                <div key={i} style={{
-                  flex: 1, background: heatColor(v), transition: 'background 0.15s ease', borderRadius: 2,
-                }} />
-              ))}
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-              <span className="mono" style={{ fontSize: 9, color: 'var(--muted)' }}>-20MHz</span>
-              <span className="mono" style={{ fontSize: 9, color: 'var(--muted)' }}>Center (Ch 114)</span>
-              <span className="mono" style={{ fontSize: 9, color: 'var(--muted)' }}>+20MHz</span>
-            </div>
+      {/* Heatmap Section */}
+      <div className="card" style={{ padding: '14px 18px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <span className="label" style={{ marginBottom: 0 }}>Subcarrier Power Distribution</span>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <span className="mono" style={{ fontSize: 8, color: 'var(--muted)' }}>CH 114 (5.57GHz)</span>
+            <span className="mono" style={{ fontSize: 8, color: 'var(--accent)' }}>HT40 Mode</span>
           </div>
-          {/* Color Legend */}
-          <div style={{ width: 110, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 5 }}>
-            <span className="label" style={{ fontSize: 9, marginBottom: 2 }}>Power Level</span>
-            {[
-              { label: 'High', color: 'rgba(251, 191, 36, 0.9)' },
-              { label: 'Medium', color: 'rgba(52, 211, 153, 0.7)' },
-              { label: 'Low', color: 'rgba(56, 189, 248, 0.5)' },
-              { label: 'Quiet', color: 'rgba(99, 102, 241, 0.3)' },
-            ].map(item => (
-              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ width: 12, height: 12, borderRadius: 3, background: item.color, flexShrink: 0 }} />
-                <span className="mono" style={{ fontSize: 10, color: 'var(--text-secondary)' }}>{item.label}</span>
-              </div>
-            ))}
-          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 1, height: 28, background: 'rgba(0,0,0,0.2)', borderRadius: 4, overflow: 'hidden', padding: 2 }}>
+          {subcarrier_map.slice(0, 57).map((v, i) => (
+            <div key={i} style={{ flex: 1, background: heatColor(v), transition: 'background 0.15s ease', borderRadius: 1 }} />
+          ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+          <span className="mono" style={{ fontSize: 8, color: 'var(--muted)' }}>-20MHz</span>
+          <span className="mono" style={{ fontSize: 8, color: 'var(--muted)' }}>CENTER</span>
+          <span className="mono" style={{ fontSize: 8, color: 'var(--muted)' }}>+20MHz</span>
         </div>
       </div>
 
-      {/* Expanded waveform */}
-      <div className="card" style={{ padding: 24 }}>
-        <span className="label" style={{ marginBottom: 10 }}>Waveform — Amplitude Over Time</span>
-        <div style={{
-          position: 'relative', height: 400,
-          background: 'linear-gradient(180deg, rgba(99,102,241,0.03) 0%, rgba(0,0,0,0.2) 100%)',
-          borderRadius: 14, border: '1px solid rgba(255,255,255,0.04)', overflow: 'hidden'
-        }}>
-          {/* Y-axis */}
-          <div style={{ position: 'absolute', top: 0, left: 0, bottom: 20, width: 36, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '8px 0', zIndex: 2 }}>
-            {['1.0', '.75', '.50', '.25', '0'].map((v, i) => (
-              <span key={i} className="mono" style={{ fontSize: 9, color: 'var(--muted)', textAlign: 'right', paddingRight: 6, opacity: 0.5 }}>{v}</span>
-            ))}
-          </div>
-
-          {/* Grid */}
+      {/* Waveform Section */}
+      <div className="card" style={{ padding: '14px 18px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <span className="label" style={{ marginBottom: 8 }}>Live Signal Waveform (Amplitude)</span>
+        <div style={{ flex: 1, position: 'relative', background: 'rgba(0,0,0,0.15)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.03)', overflow: 'hidden' }}>
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, opacity: 0.1 }}>
-            {[20, 40, 60, 80].map(y => <line key={y} x1="0" y1={y} x2="100" y2={y} stroke="white" strokeWidth="0.15" strokeDasharray="1.5,2.5" />)}
-            {[10, 20, 30, 40, 50, 60, 70, 80, 90].map(x => <line key={`v${x}`} x1={x} y1="0" x2={x} y2="100" stroke="white" strokeWidth="0.06" strokeDasharray="1,4" />)}
+            {[25, 50, 75].map(y => <line key={y} x1="0" y1={y} x2="100" y2={y} stroke="white" strokeWidth="0.1" strokeDasharray="2,2" />)}
           </svg>
-
-          {/* Wave */}
-          <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: '100%', height: '100%', display: 'block', position: 'relative' }}>
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: '100%', height: '100%', display: 'block' }}>
             <defs>
-              <linearGradient id="wgx" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.4" />
-                <stop offset="50%" stopColor="var(--accent-vivid)" stopOpacity="0.1" />
+              <linearGradient id="swg" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.3" />
                 <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
               </linearGradient>
-              <linearGradient id="lgx" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.2" />
-                <stop offset="40%" stopColor="var(--accent)" stopOpacity="1" />
-                <stop offset="100%" stopColor="#34d399" stopOpacity="1" />
-              </linearGradient>
-              <filter id="glowx"><feGaussianBlur stdDeviation="1.5" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
             </defs>
-            <path d={`M 0,100 L ${points} L 100,100 Z`} fill="url(#wgx)" />
-            <polyline fill="none" stroke="url(#lgx)" strokeWidth="0.5" strokeLinejoin="round" points={points} filter="url(#glowx)" />
-            {waveform.length > 1 && (() => {
-              const max = Math.max(...waveform, 0.0001)
-              const lastY = 100 - (waveform[waveform.length - 1] / max) * 100
-              return <circle cx="100" cy={lastY} r="1.2" fill="#34d399" opacity="0.9">
-                <animate attributeName="r" values="0.9;1.6;0.9" dur="1.5s" repeatCount="indefinite" />
-              </circle>
-            })()}
+            <path d={`M 0,100 L ${points} L 100,100 Z`} fill="url(#swg)" />
+            <polyline fill="none" stroke="var(--accent)" strokeWidth="0.6" strokeLinejoin="round" points={points} />
           </svg>
-
-          {/* Time axis */}
-          <div style={{ position: 'absolute', bottom: 4, left: 36, right: 8, display: 'flex', justifyContent: 'space-between' }}>
-            {['-60', '-50', '-40', '-30', '-20', '-10', 'now'].map(t => (
-              <span key={t} className="mono" style={{ fontSize: 8, color: 'var(--muted)', opacity: 0.4 }}>{t}</span>
-            ))}
-          </div>
         </div>
       </div>
     </div>
@@ -861,7 +805,7 @@ export function SignalViewPage({ data }) {
 
 export function SystemInfoPage({ data }) {
   const [uptime, setUptime] = useState(0)
-  
+
   useEffect(() => {
     const start = Date.now()
     const timer = setInterval(() => setUptime(Math.floor((Date.now() - start) / 1000)), 1000)
@@ -990,12 +934,12 @@ export function SettingsPage() {
         <span className="label" style={{ marginBottom: 4 }}>Configuration</span>
         <h2 style={{ fontSize: 22, fontWeight: 700 }}>System Settings</h2>
       </div>
-      
+
       <div className="card" style={{ padding: 60, textAlign: 'center' }}>
         <div style={{ fontSize: 48, marginBottom: 20 }}>⚙️</div>
         <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>Settings are currently locked</h3>
         <p className="mono" style={{ fontSize: 13, color: 'var(--muted)', maxWidth: 400, margin: '0 auto', lineHeight: 1.6 }}>
-          The real-time parameter tuning module is under maintenance. <br/>
+          The real-time parameter tuning module is under maintenance. <br />
           Hardware thresholds are currently managed via the backend configuration.
         </p>
       </div>

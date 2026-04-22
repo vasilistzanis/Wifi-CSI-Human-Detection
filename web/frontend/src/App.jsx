@@ -14,11 +14,11 @@ const INITIAL_STATE = {
   confidence: 0,
   probabilities: { walk: 0, idle: 0 },
   fps: 0,
-  latency_ms: 0,
-  packet_loss: 0,
+  latency: 0,
+  loss: 0,
   frame_count: 0,
-  waveform: Array(60).fill(0.1),
-  subcarrier_map: Array(57).fill(0.1),
+  waveform: Array(60).fill(0),
+  subcarrier_map: Array(57).fill(0),
   connected: false,
   error: '',
 }
@@ -108,18 +108,13 @@ export default function App() {
             <div style={{
               maxWidth: 1000, width: '100%', margin: '0 auto',
               display: 'flex', flexDirection: 'column', justifyContent: 'center',
-              flex: 1, gap: 32
+              flex: 1, gap: 24, overflow: 'hidden'
             }}>
-              {/* Top: System Telemetry */}
-              <MetricsRow data={data} />
-
-              {/* Center: Core AI Inference (Hero) */}
-              <div style={{ transform: 'scale(1.02)', transition: 'transform 0.3s ease' }}>
+              {/* Core AI Inference & Pipeline */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, height: '320px' }}>
                 <PredictionCard data={data} />
+                <Pipeline />
               </div>
-
-              {/* Bottom: Processing Flow */}
-              <Pipeline />
             </div>
           </div>
         )
