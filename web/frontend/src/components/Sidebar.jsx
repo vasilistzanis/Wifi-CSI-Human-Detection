@@ -10,10 +10,10 @@ export default function Sidebar({ activePage, onNavigate, data = {} }) {
   ]
 
   const isConnected = data.connected || false
-  // Το Load υπολογίζεται από το πραγματικό throughput (FPS) που στέλνει το Python backend
-  const loadPct = isConnected ? Math.min(100, (data.fps / 100) * 100).toFixed(0) : 0
-  // Το Buffer  υπολογίζεται από το πραγματικό Network Latency (καθυστέρηση)
-  const bufferPct = isConnected ? Math.min(100, ((data.latency || 0) / 150) * 100).toFixed(0) : 0
+  // Το Load υπολογίζεται από το πραγματικό throughput, με ταβάνι τα 110 FPS (το όριο του ESP32)
+  const loadPct = isConnected ? Math.min(100, (data.fps / 110) * 100).toFixed(0) : 0
+  // Το Buffer Health είναι 100% όταν το latency είναι 0. Όσο αυξάνεται το latency, η υγεία πέφτει.
+  const bufferPct = isConnected ? Math.max(0, 100 - (data.latency || 0)).toFixed(0) : 0
 
   return (
     <aside className="sidebar">

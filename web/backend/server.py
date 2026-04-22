@@ -222,7 +222,11 @@ class CSIReaderThread(threading.Thread):
                 continue
 
             print(f"Serial hardware detected: {target_port} @ {self.baud}")
-            m_name = MODEL_FILES.get(self.model_key, "Unknown").replace(".joblib", "").replace("_", " ")
+            if model is None:
+                m_name = "No Model Loaded"
+            else:
+                m_name = MODEL_FILES.get(self.model_key, "Unknown").replace(".joblib", "").replace("_", " ")
+                
             p_dims = pipeline.pca.n_components_ if pipeline and hasattr(pipeline, "pca") and pipeline.pca else 0
             self.loop.call_soon_threadsafe(
                 lambda: state.update({

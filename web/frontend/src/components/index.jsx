@@ -772,9 +772,9 @@ export function SystemInfoPage({ data }) {
       icon: '🧠',
       items: [
         { label: 'Model', value: data.connected ? (data.model_name || 'Loading...') : '-' },
-        { label: 'Feature', value: data.connected ? (data.pca_dims ? `PCA (${data.pca_dims}D)` : 'Raw Vector') : '-' },
-        { label: 'Window', value: data.connected ? `${(data.window_size || 50) / 100}s (100Hz)` : '-' },
-        { label: 'Latent', value: data.connected ? (data.pca_dims ? `${data.pca_dims} Dims` : 'N/A') : '-' }
+        { label: 'Feature', value: (data.connected && data.model_name && data.model_name !== 'No Model Loaded') ? (data.pca_dims ? `PCA (${data.pca_dims}D)` : 'Raw Vector') : '-' },
+        { label: 'Window', value: (data.connected && data.model_name && data.model_name !== 'No Model Loaded') ? `${(data.window_size || 50) / 100}s (100Hz)` : '-' },
+        { label: 'Latent', value: (data.connected && data.model_name && data.model_name !== 'No Model Loaded') ? (data.pca_dims ? `${data.pca_dims} Dims` : 'N/A') : '-' }
       ]
     },
     {
@@ -802,9 +802,9 @@ export function SystemInfoPage({ data }) {
   const isConnected = data.connected || false
   const statusColor = isConnected ? 'var(--success)' : 'var(--danger)'
   const statusText = isConnected ? 'SYSTEM ONLINE' : 'SYSTEM OFFLINE'
-  const cpuUsage = isConnected ? Math.min(100, (data.fps / 150) * 100).toFixed(1) + '%' : '-'
-  const bufferHealth = isConnected ? Math.max(0, 100 - (data.loss || 0)).toFixed(0) + '%' : '-'
-  const bufferColor = isConnected ? ((100 - (data.loss || 0)) > 90 ? 'var(--success)' : 'var(--warning)') : 'var(--muted)'
+  const cpuUsage = isConnected ? Math.min(100, (data.fps / 110) * 100).toFixed(1) + '%' : '-'
+  const bufferHealth = isConnected ? Math.max(0, 100 - (data.latency || 0)).toFixed(0) + '%' : '-'
+  const bufferColor = isConnected ? (Math.max(0, 100 - (data.latency || 0)) > 90 ? 'var(--success)' : 'var(--warning)') : 'var(--muted)'
 
   return (
     <div style={{ animation: 'fadeIn 0.5s ease', flex: 1, display: 'flex', flexDirection: 'column', gap: 16, overflow: 'hidden' }}>
