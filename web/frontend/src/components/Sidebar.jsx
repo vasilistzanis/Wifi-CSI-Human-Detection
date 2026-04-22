@@ -1,12 +1,12 @@
 import './Sidebar.css'
 
-export default function Sidebar({ wsStatus }) {
+export default function Sidebar({ activePage, onNavigate }) {
   const menuItems = [
-    { id: 'dash', label: 'Monitor', icon: '📊', active: true },
-    { id: 'logs', label: 'Raw Data', icon: '📝' },
-    { id: 'calc', label: 'Calibration', icon: '⚙️' },
-    { id: 'stat', label: 'Spectrogram', icon: '📈' },
-    { id: 'docs', label: 'Architecture', icon: '📖' },
+    { id: 'monitor',  label: 'Monitor',      icon: '📊' },
+    { id: 'signal',   label: 'Signal View',   icon: '📡' },
+    { id: 'activity', label: 'Activity Log',  icon: '📋' },
+    { id: 'system',   label: 'System Info',   icon: '🖥️' },
+    { id: 'settings', label: 'Settings',      icon: '⚙️' },
   ]
 
   return (
@@ -15,7 +15,11 @@ export default function Sidebar({ wsStatus }) {
         <div className="label" style={{ marginBottom: 24, fontSize: 10 }}>Navigation</div>
         <div className="menu-list">
           {menuItems.map(item => (
-            <div key={item.id} className={`menu-item ${item.active ? 'active' : ''}`}>
+            <div 
+              key={item.id} 
+              className={`menu-item ${activePage === item.id ? 'active' : ''}`}
+              onClick={() => onNavigate(item.id)}
+            >
               <span className="menu-icon">{item.icon}</span>
               <span className="menu-label">{item.label}</span>
             </div>
