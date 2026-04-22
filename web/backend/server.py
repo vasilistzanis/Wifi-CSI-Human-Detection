@@ -23,7 +23,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 #  Local imports 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent / "Python_Scripts_for_csi_recv"
 sys.path.insert(0, str(ROOT))
 
 def parse_csi_line(line: str):
@@ -179,138 +179,126 @@ class CSIReaderThread(threading.Thread):
 
     def run(self):
         pipeline, le, model = self._load_models()
-        ser = None
-        try:
-            ser = serial.Serial(self.port, self.baud, timeout=0.5)
-            if os.name == "nt" and hasattr(ser, "set_buffer_size"):
-                ser.set_buffer_size(rx_size=SERIAL_BUF_MB)
-            ser.reset_input_buffer()
-            print(f"Serial hardware detected: {self.port} @ {self.baud}")
-            self.loop.call_soon_threadsafe(
-                lambda: state.update({"connected": True, "error": ""})
-            )
-        except Exception as e:
-            print(f"Hardware not detected on {self.port}: {e}")
-            if pipeline is None:
-                self._run_simulation()
-                return
-            else:
-                err = f"Serial error: {e}"
+        import serial.tools.list_ports
+        target_port = self.port
+
+        def try_connect(p):
+            try:
+                s = serial.Serial(p, self.baud, timeout=0.5)
+                if os.name == "nt" and hasattr(s, "set_buffer_size"):
+                    s.set_buffer_size(rx_size=SERIAL_BUF_MB)
+                s.reset_input_buffer()
+                return s
+            except Exception:
+                return None
+
+        while not self._stop.is_set():
+            ser = try_connect(target_port)
+
+            if ser is None:
+                ports = list(serial.tools.list_ports.comports())
+                for p in ports:
+                    if "Bluetooth" in p.description:
+                        continue
+                    ser = try_connect(p.device)
+                    if ser is not None:
+                        target_port = p.device
+                        break
+
+            if ser is None:
+                err = "Hardware not detected. Waiting for ESP32..."
                 self.loop.call_soon_threadsafe(
                     lambda: state.update({"connected": False, "error": err})
                 )
-                return
+                # Sleep for 3 seconds but check stop event
+                for _ in range(30):
+                    if self._stop.is_set(): return
+                    time.sleep(0.1)
+                continue
 
-        buf_size        = WINDOW_SIZE + FILTER_WARMUP
-        buffer          = deque(maxlen=buf_size)
-        pred_history    = deque(maxlen=HISTORY)
-        fps_times       = deque(maxlen=FPS_WINDOW)
-        frames_since    = 0
-        frame_count     = 0
+            print(f"Serial hardware detected: {target_port} @ {self.baud}")
+            self.loop.call_soon_threadsafe(
+                lambda: state.update({"connected": True, "error": ""})
+            )
 
-        try:
-            while not self._stop.is_set():
-                raw = ser.readline()
-                if not raw: continue
-                line = raw.decode("utf-8", errors="ignore").strip()
-                if "CSI_DATA" not in line: continue
-                frame = parse_csi_line(line)
-                if frame is None: continue
+            buf_size        = WINDOW_SIZE + FILTER_WARMUP
+            buffer          = deque(maxlen=buf_size)
+            pred_history    = deque(maxlen=HISTORY)
+            fps_times       = deque(maxlen=FPS_WINDOW)
+            frames_since    = 0
+            frame_count     = 0
 
-                buffer.append(frame)
-                frame_count   += 1
-                frames_since  += 1
-                fps_times.append(time.monotonic())
+            try:
+                while not self._stop.is_set():
+                    raw = ser.readline()
+                    if not raw: continue
+                    line = raw.decode("utf-8", errors="ignore").strip()
+                    if "CSI_DATA" not in line: continue
+                    frame = parse_csi_line(line)
+                    if frame is None: continue
 
-                label, conf, prob_dict = "Hardware Live", 1.0, {}
-                if pipeline and model and le:
-                    res = self._infer(buffer, pipeline, model, le)
-                    if res:
-                        label, conf, prob_dict = res
-                
-                if frames_since < STEP and frame_count >= buf_size:
-                    continue
-                frames_since = 0
+                    buffer.append(frame)
+                    frame_count   += 1
+                    frames_since  += 1
+                    fps_times.append(time.monotonic())
 
-                pred_history.append(label)
-                smoothed = Counter(pred_history).most_common(1)[0][0]
-                fps = (len(fps_times) - 1) / (fps_times[-1] - fps_times[0]) if len(fps_times) >= 2 else 0.0
+                    label, conf, prob_dict = "Hardware Live", 1.0, {}
+                    if pipeline and model and le:
+                        res = self._infer(buffer, pipeline, model, le)
+                        if res:
+                            label, conf, prob_dict = res
+                    
+                    if frames_since < STEP and frame_count >= buf_size:
+                        continue
+                    frames_since = 0
 
-                # Waveform snapshot (using active subcarriers mean)
-                amp_arr   = np.abs(np.vstack(buffer))
-                # Skip first 6 null subcarriers, take mean of active ones
-                active_amp = amp_arr[:, 6:50] if amp_arr.shape[1] > 50 else amp_arr
-                waveform   = np.mean(active_amp, axis=1).tolist()[-60:]
-                # Heatmap: take a slice of active carriers
-                sc_map     = amp_arr[-1, 6:63].tolist() if amp_arr.shape[1] >= 63 else amp_arr[-1].tolist()
-                
-                # Auto-scale for visualization
-                if waveform:
-                    mx = max(waveform) or 1.0
-                    waveform = [v / mx for v in waveform]
-                if sc_map:
-                    mx = max(sc_map) or 1.0
-                    sc_map = [v / mx for v in sc_map]
+                    pred_history.append(label)
+                    smoothed = Counter(pred_history).most_common(1)[0][0]
+                    fps = (len(fps_times) - 1) / (fps_times[-1] - fps_times[0]) if len(fps_times) >= 2 else 0.0
 
-                payload = {
-                    "label":          label,
-                    "smoothed":       smoothed,
-                    "confidence":     round(conf, 4),
-                    "probabilities":  prob_dict,
-                    "fps":            round(fps, 1),
-                    "latency_ms":     0 if not pipeline else 10,
-                    "packet_loss":    0.0,
-                    "frame_count":    frame_count,
-                    "waveform":       waveform,
-                    "subcarrier_map": sc_map,
-                    "connected":      True,
-                    "error":          "",
-                    "timestamp":      time.monotonic(),
-                }
-                self.loop.call_soon_threadsafe(lambda p=payload: self._post(p))
-        except Exception as e:
-            print(f"Hardware Loop Error: {e}")
-        finally:
-            if ser and ser.is_open:
-                ser.close()
+                    # Waveform snapshot (using active subcarriers mean)
+                    amp_arr   = np.abs(np.vstack(buffer))
+                    # Skip first 6 null subcarriers, take mean of active ones
+                    active_amp = amp_arr[:, 6:50] if amp_arr.shape[1] > 50 else amp_arr
+                    waveform   = np.mean(active_amp, axis=1).tolist()[-60:]
+                    # Heatmap: take a slice of active carriers
+                    sc_map     = amp_arr[-1, 6:63].tolist() if amp_arr.shape[1] >= 63 else amp_arr[-1].tolist()
+                    
+                    # Auto-scale for visualization
+                    if waveform:
+                        mx = max(waveform) or 1.0
+                        waveform = [v / mx for v in waveform]
+                    if sc_map:
+                        mx = max(sc_map) or 1.0
+                        sc_map = [v / mx for v in sc_map]
+
+                    payload = {
+                        "label":          label,
+                        "smoothed":       smoothed,
+                        "confidence":     round(conf, 4),
+                        "probabilities":  prob_dict,
+                        "fps":            round(fps, 1),
+                        "latency_ms":     0 if not pipeline else 10,
+                        "packet_loss":    0.0,
+                        "frame_count":    frame_count,
+                        "waveform":       waveform,
+                        "subcarrier_map": sc_map,
+                        "connected":      True,
+                        "error":          "",
+                        "timestamp":      time.monotonic(),
+                    }
+                    self.loop.call_soon_threadsafe(lambda p=payload: self._post(p))
+            except Exception as e:
+                print(f"Hardware Loop Error (Disconnected?): {e}")
+            finally:
+                if ser and ser.is_open:
+                    ser.close()
+                time.sleep(1)
 
     def _post(self, payload: dict):
         state.update(payload)
         state.new_event.set()
 
-    def _run_simulation(self):
-        import math
-        rng       = np.random.default_rng(42)
-        walk_conf = 0.80
-        frame_c   = 0
-        t0        = time.monotonic()
-        while not self._stop.is_set():
-            time.sleep(1.8)
-            walk_conf += float(rng.uniform(-0.12, 0.12))
-            walk_conf  = float(np.clip(walk_conf, 0.52, 0.99))
-            idle_conf  = 1.0 - walk_conf
-            label      = "walk" if walk_conf > 0.5 else "idle"
-            frame_c   += STEP
-            elapsed   = max(time.monotonic() - t0, 1e-6)
-            fps       = frame_c / elapsed
-            wf  = [float(abs(math.sin(i * 0.3 + time.time()))) * rng.uniform(0.4, 1.0) for i in range(60)]
-            sc  = [float(rng.uniform(0.1, 1.0)) for _ in range(57)]
-            payload = {
-                "label":          label,
-                "smoothed":       label,
-                "confidence":     round(max(walk_conf, idle_conf), 4),
-                "probabilities":  {"walk": round(walk_conf, 4), "idle": round(idle_conf, 4)},
-                "fps":            round(fps, 1),
-                "latency_ms":     int(rng.integers(15, 35)),
-                "packet_loss":    round(float(rng.uniform(0.5, 2.5)), 2),
-                "frame_count":    frame_c,
-                "waveform":       wf,
-                "subcarrier_map": sc,
-                "connected":      True,
-                "error":          "",
-                "timestamp":      time.monotonic(),
-            }
-            self.loop.call_soon_threadsafe(lambda p=payload: self._post(p))
 
     def stop(self):
         self._stop.set()
