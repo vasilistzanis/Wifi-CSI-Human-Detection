@@ -102,7 +102,7 @@ export default function App() {
         return <SettingsPage />
       default:
         return (
-          <div style={{ animation: 'fadeIn 0.4s ease', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 240px)' }}>
+          <div style={{ animation: 'fadeIn 0.4s ease', display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
             <StatusBanner data={data} />
 
             <div style={{
@@ -111,7 +111,7 @@ export default function App() {
               flex: 1, gap: 24, overflow: 'hidden'
             }}>
               {/* Core AI Inference & Pipeline */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, height: '320px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, flex: 1, maxHeight: '600px' }}>
                 <PredictionCard data={data} />
                 <Pipeline />
               </div>

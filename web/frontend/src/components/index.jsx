@@ -454,7 +454,7 @@ export function SessionDistribution({ log }) {
 export function Footer() {
   return (
     <footer style={{
-      marginTop: 32, paddingTop: 20,
+      marginTop: 'auto', paddingTop: 10, paddingBottom: 10,
       borderTop: '1px solid var(--border)',
       display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, opacity: 0.6,
     }}>
@@ -514,193 +514,130 @@ export function ActivityLogPage({ log, onClear }) {
   const icons = { walk: '🚶', idle: '🧍', sit: '🪑', fall: '⚡' }
 
   return (
-    <div style={{ animation: 'fadeIn 0.4s ease' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <div>
-          <span className="label" style={{ marginBottom: 4 }}>Activity Log</span>
-          <h2 style={{ fontSize: 22, fontWeight: 700 }}>Prediction History</h2>
-        </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {totalEntries > 0 && (
-            <button onClick={onClear} style={{
-              padding: '6px 14px', borderRadius: 8, border: '1px solid var(--border)',
-              background: 'rgba(255,255,255,0.03)', color: 'var(--muted)', fontSize: 11,
-              fontWeight: 600, cursor: 'pointer', transition: 'var(--transition)', fontFamily: 'inherit',
-            }}
-              onMouseEnter={e => { e.target.style.borderColor = 'rgba(248,113,113,0.3)'; e.target.style.color = '#f87171' }}
-              onMouseLeave={e => { e.target.style.borderColor = 'var(--border)'; e.target.style.color = 'var(--muted)' }}
-            >
-              🗑️ Clear All
-            </button>
-          )}
-        </div>
-      </div>
+    <div className="activity-log-container" style={{
+      animation: 'fadeIn 0.4s ease',
+      display: 'grid',
+      gridTemplateColumns: window.innerWidth > 1024 ? '280px 1fr' : '1fr',
+      gap: 20,
+      flex: 1,
+      overflow: 'hidden'
+    }}>
 
-      {/* Summary Stats Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginBottom: 20 }}>
-        {/* Total */}
-        <div className="card" style={{ padding: '16px 18px' }}>
-          <span className="label" style={{ fontSize: 9, marginBottom: 6 }}>Total Predictions</span>
-          <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--accent)', lineHeight: 1 }}>{totalEntries}</div>
-          <span className="mono" style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4, display: 'block' }}>
-            {filtered.length !== totalEntries ? `${filtered.length} shown` : 'all shown'}
-          </span>
-        </div>
-        {/* Dominant */}
-        <div className="card" style={{ padding: '16px 18px' }}>
-          <span className="label" style={{ fontSize: 9, marginBottom: 6 }}>Dominant Activity</span>
-          {dominant ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 24 }}>{icons[dominant[0]] || '❓'}</span>
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 700, textTransform: 'uppercase', color: (activityColors[dominant[0]] || activityColors.idle).color }}>
-                  {dominant[0]}
-                </div>
-                <span className="mono" style={{ fontSize: 10, color: 'var(--muted)' }}>
-                  {((dominant[1] / totalEntries) * 100).toFixed(0)}% of all
-                </span>
-              </div>
+      {/* Left Sidebar: Stats & Summary */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="card" style={{ padding: 20 }}>
+          <span className="label" style={{ marginBottom: 12 }}>Session Summary</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <div className="mono" style={{ fontSize: 24, fontWeight: 800, color: 'var(--accent)' }}>{totalEntries}</div>
+              <span className="label" style={{ fontSize: 8, marginBottom: 0 }}>Total Recorded</span>
             </div>
-          ) : (
-            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--muted)' }}>—</div>
-          )}
+            <div>
+              <div className="mono" style={{ fontSize: 20, fontWeight: 800, color: avgConf > 0.8 ? 'var(--success)' : 'var(--warning)' }}>
+                {(avgConf * 100).toFixed(0)}%
+              </div>
+              <span className="label" style={{ fontSize: 8, marginBottom: 0 }}>Avg. Confidence</span>
+            </div>
+          </div>
         </div>
-        {/* Avg Confidence */}
-        <div className="card" style={{ padding: '16px 18px' }}>
-          <span className="label" style={{ fontSize: 9, marginBottom: 6 }}>Avg Confidence</span>
-          <div style={{ fontSize: 28, fontWeight: 800, color: avgConf > 0.8 ? 'var(--success)' : avgConf > 0.5 ? 'var(--warning)' : 'var(--muted)', lineHeight: 1 }}>
-            {totalEntries > 0 ? `${(avgConf * 100).toFixed(0)}%` : '—'}
+
+        <div className="card" style={{ padding: 20, flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <span className="label" style={{ marginBottom: 16 }}>Distribution</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1 }}>
+            {distEntries.length === 0 ? (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontSize: 10 }}>No data</div>
+            ) : (
+              distEntries.map(([act, count]) => {
+                const pct = (count / totalEntries) * 100
+                const color = (activityColors[act] || activityColors.idle).color
+                return (
+                  <div key={act}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <span className="mono" style={{ fontSize: 10, textTransform: 'uppercase' }}>{icons[act]} {act}</span>
+                      <span className="mono" style={{ fontSize: 10 }}>{pct.toFixed(0)}%</span>
+                    </div>
+                    <div style={{ height: 4, background: 'rgba(255,255,255,0.05)', borderRadius: 2, overflow: 'hidden' }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 2 }} />
+                    </div>
+                  </div>
+                )
+              })
+            )}
           </div>
-          <div style={{ height: 4, background: 'rgba(255,255,255,0.04)', borderRadius: 2, marginTop: 8, overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${avgConf * 100}%`, background: avgConf > 0.8 ? 'var(--success)' : 'var(--warning)', borderRadius: 2, transition: 'width 0.5s ease' }} />
-          </div>
+          <button onClick={onClear} className="mono" style={{
+            marginTop: 20, padding: '8px', width: '100%', borderRadius: 6,
+            border: '1px solid var(--border)', background: 'transparent',
+            color: 'var(--muted)', fontSize: 10, cursor: 'pointer'
+          }}>🗑️ Clear Log</button>
         </div>
       </div>
 
-      {/* Activity Distribution */}
-      {distEntries.length > 0 && (
-        <div className="card" style={{ padding: '16px 18px', marginBottom: 20 }}>
-          <span className="label" style={{ fontSize: 9, marginBottom: 10 }}>Activity Distribution</span>
-          <div style={{ display: 'flex', gap: 2, height: 28, borderRadius: 6, overflow: 'hidden' }}>
-            {distEntries.map(([act, count]) => {
-              const t = activityColors[act] || activityColors.idle
-              const pct = (count / totalEntries) * 100
-              return (
-                <div key={act} title={`${act}: ${count} (${pct.toFixed(1)}%)`} style={{
-                  width: `${pct}%`, minWidth: 2,
-                  background: t.color, opacity: 0.8,
-                  transition: 'width 0.5s ease',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }} >
-                  {pct > 12 && <span style={{ fontSize: 9, fontWeight: 700, color: '#000', textTransform: 'uppercase' }}>{act}</span>}
-                </div>
-              )
-            })}
-          </div>
-          {/* Legend */}
-          <div style={{ display: 'flex', gap: 16, marginTop: 10 }}>
-            {distEntries.map(([act, count]) => {
-              const t = activityColors[act] || activityColors.idle
-              return (
-                <div key={act} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: 2, background: t.color }} />
-                  <span className="mono" style={{ fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{act}</span>
-                  <span className="mono" style={{ fontSize: 10, color: 'var(--muted)' }}>({count})</span>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Filter tabs */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-        <button onClick={() => setFilter('all')} style={{
-          padding: '5px 14px', borderRadius: 6, border: '1px solid',
-          borderColor: filter === 'all' ? 'var(--accent)' : 'var(--border)',
-          background: filter === 'all' ? 'var(--accent-soft)' : 'transparent',
-          color: filter === 'all' ? 'var(--accent)' : 'var(--muted)',
-          fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-        }}>
-          All ({totalEntries})
-        </button>
-        {activities.map(act => {
-          const t = activityColors[act] || activityColors.idle
-          const count = dist[act] || 0
-          return (
+      {/* Right Column: Table */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Filters */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => setFilter('all')} style={{
+            padding: '6px 14px', borderRadius: 8, border: '1px solid',
+            borderColor: filter === 'all' ? 'var(--accent)' : 'var(--border)',
+            background: filter === 'all' ? 'var(--accent-soft)' : 'transparent',
+            color: filter === 'all' ? 'var(--accent)' : 'var(--muted)',
+            fontSize: 11, cursor: 'pointer'
+          }}>All</button>
+          {activities.map(act => (
             <button key={act} onClick={() => setFilter(act)} style={{
-              padding: '5px 14px', borderRadius: 6, border: '1px solid',
-              borderColor: filter === act ? t.border : 'var(--border)',
-              background: filter === act ? t.bg : 'transparent',
-              color: filter === act ? t.color : 'var(--muted)',
-              fontSize: 11, fontWeight: 600, cursor: 'pointer', textTransform: 'uppercase', fontFamily: 'inherit',
-            }}>
-              {act} ({count})
-            </button>
-          )
-        })}
-      </div>
-
-      {/* Table */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        {/* Header */}
-        <div style={{
-          display: 'grid', gridTemplateColumns: '80px 95px 1fr 80px 70px',
-          padding: '10px 18px', borderBottom: '1px solid var(--border)',
-          background: 'rgba(255,255,255,0.02)',
-        }}>
-          {['Time', 'Activity', 'Confidence', 'Raw', 'Frame'].map(h => (
-            <span key={h} className="label" style={{ marginBottom: 0, fontSize: 9 }}>{h}</span>
+              padding: '6px 14px', borderRadius: 8, border: '1px solid',
+              borderColor: filter === act ? (activityColors[act] || {}).color : 'var(--border)',
+              background: filter === act ? (activityColors[act] || {}).bg : 'transparent',
+              color: filter === act ? (activityColors[act] || {}).color : 'var(--muted)',
+              fontSize: 11, cursor: 'pointer', textTransform: 'uppercase'
+            }}>{icons[act]} {act}</button>
           ))}
         </div>
 
-        {/* Scrollable body — fixed viewport */}
-        <div style={{ height: 420, overflowY: 'auto' }}>
-          {filtered.length === 0 ? (
-            <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>
-              <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.4 }}>📋</div>
-              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>No activity recorded yet</div>
-              <div className="mono" style={{ fontSize: 11, lineHeight: 1.6 }}>
-                Predictions will stream here in real-time<br />
-                once the ESP32 is connected and the system is running.
-              </div>
-            </div>
-          ) : (
-            filtered.map((entry, i) => {
-              const rowColor = activityColors[entry.activity] || activityColors.idle
-              return (
-                <div key={`${entry.timestamp}-${i}`} style={{
-                  display: 'grid', gridTemplateColumns: '80px 95px 1fr 80px 70px',
-                  padding: '9px 18px', alignItems: 'center',
-                  borderBottom: '1px solid rgba(255,255,255,0.025)',
-                  borderLeft: i === 0 ? `3px solid ${rowColor.color}` : '3px solid transparent',
-                  transition: 'all 0.2s ease',
-                  animation: i === 0 ? 'fadeSlideIn 0.3s ease' : 'none',
-                  background: i === 0 ? 'rgba(255,255,255,0.015)' : 'transparent',
-                }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.025)'}
-                  onMouseLeave={e => e.currentTarget.style.background = i === 0 ? 'rgba(255,255,255,0.015)' : 'transparent'}
-                >
-                  <span className="mono" style={{ fontSize: 11, color: i === 0 ? 'var(--text)' : 'var(--text-secondary)' }}>{entry.time}</span>
-                  <ActivityBadge activity={entry.activity} />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingRight: 12 }}>
-                    <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,0.04)', borderRadius: 2, overflow: 'hidden' }}>
-                      <div style={{
-                        height: '100%', width: `${(entry.confidence * 100)}%`,
-                        background: rowColor.color, borderRadius: 2,
-                      }} />
-                    </div>
-                    <span className="mono" style={{ fontSize: 10, color: i === 0 ? 'var(--text)' : 'var(--text-secondary)', width: 36, textAlign: 'right', fontWeight: i === 0 ? 600 : 400 }}>
-                      {(entry.confidence * 100).toFixed(0)}%
-                    </span>
-                  </div>
-                  <span className="mono" style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' }}>{entry.raw}</span>
-                  <span className="mono" style={{ fontSize: 10, color: 'var(--muted)' }}>#{entry.frame}</span>
+        {/* Table Container */}
+        <div className="card" style={{ padding: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{
+            display: 'grid', gridTemplateColumns: '100px 100px 1fr 80px',
+            padding: '12px 20px', borderBottom: '1px solid var(--border)',
+            background: 'rgba(255,255,255,0.02)'
+          }}>
+            {['Time', 'Activity', 'Confidence', 'Frame'].map(h => (
+              <span key={h} className="label" style={{ marginBottom: 0, fontSize: 9 }}>{h}</span>
+            ))}
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {filtered.length === 0 ? (
+              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.3 }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 32, marginBottom: 12 }}>📋</div>
+                  <div className="mono" style={{ fontSize: 11 }}>No activity recorded</div>
                 </div>
-              )
-            })
-          )}
+              </div>
+            ) : (
+              filtered.map((entry, i) => {
+                const color = (activityColors[entry.activity] || activityColors.idle).color
+                return (
+                  <div key={i} style={{
+                    display: 'grid', gridTemplateColumns: '100px 100px 1fr 80px',
+                    padding: '10px 20px', alignItems: 'center',
+                    borderBottom: '1px solid rgba(255,255,255,0.025)',
+                    animation: i === 0 ? 'fadeSlideIn 0.3s ease' : 'none'
+                  }}>
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>{entry.time}</span>
+                    <ActivityBadge activity={entry.activity} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,0.05)', borderRadius: 2 }}>
+                        <div style={{ width: `${entry.confidence * 100}%`, height: '100%', background: color, borderRadius: 2 }} />
+                      </div>
+                      <span className="mono" style={{ fontSize: 10, width: 30 }}>{(entry.confidence * 100).toFixed(0)}%</span>
+                    </div>
+                    <span className="mono" style={{ fontSize: 10, color: 'var(--muted)' }}>#{entry.frame}</span>
+                  </div>
+                )
+              })
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -743,7 +680,7 @@ export function SignalViewPage({ data }) {
   ]
 
   return (
-    <div style={{ animation: 'fadeIn 0.4s ease', height: 'calc(100vh - 230px)', display: 'flex', flexDirection: 'column', gap: 14, overflow: 'hidden' }}>
+    <div style={{ animation: 'fadeIn 0.4s ease', flex: 1, display: 'flex', flexDirection: 'column', gap: 14, overflow: 'hidden' }}>
       {/* Metrics Bar */}
       <div style={{ display: 'flex', gap: 10 }}>
         {stats.map(s => (
@@ -862,7 +799,7 @@ export function SystemInfoPage({ data }) {
   ]
 
   return (
-    <div style={{ animation: 'fadeIn 0.5s ease', height: 'calc(100vh - 230px)', display: 'flex', flexDirection: 'column', gap: 16, overflow: 'hidden' }}>
+    <div style={{ animation: 'fadeIn 0.5s ease', flex: 1, display: 'flex', flexDirection: 'column', gap: 16, overflow: 'hidden' }}>
       {/* Hero Header & Live Stats */}
       <div className="card" style={{ padding: '20px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(90deg, rgba(99,102,241,0.04) 0%, transparent 100%)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
