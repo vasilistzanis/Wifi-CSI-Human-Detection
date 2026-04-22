@@ -1,0 +1,22 @@
+# --- Backend (Python) ---
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/.venv/
+backend/venv/
+backend/env/
+# Uncomment if you want to ignore trained ML models:
+# backend/models/*.joblib
+
+# --- Frontend (Node/React) ---
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.DS_Store
+frontend/*.local
+
+# --- IDE & System ---
+.vscode/
+.idea/
+.env
+*.log
