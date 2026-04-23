@@ -1055,7 +1055,15 @@ export function SettingsPage() {
     seed: 42
   })
 
-  const [newClass, setNewClass] = useState('')
+  const [error, setError] = useState(null)
+  const AVAILABLE_CLASSES = ['walk', 'idle', 'sit', 'fall']
+
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [error])
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target
@@ -1076,15 +1084,20 @@ export function SettingsPage() {
     })
   }
 
-  const addClass = () => {
-    if (newClass && !settings.classes.includes(newClass)) {
-      setSettings(prev => ({ ...prev, classes: [...prev.classes, newClass] }))
-      setNewClass('')
-    }
-  }
-
-  const removeClass = (cls) => {
-    setSettings(prev => ({ ...prev, classes: prev.classes.filter(c => c !== cls) }))
+  const toggleClass = (cls) => {
+    setSettings(prev => {
+      const current = prev.classes
+      if (current.includes(cls)) {
+        // Enforce at least 2 classes for classification
+        if (current.length <= 2) {
+          setError('At least 2 classes are required for ML training.')
+          return prev
+        }
+        return { ...prev, classes: current.filter(c => c !== cls) }
+      } else {
+        return { ...prev, classes: [...current, cls] }
+      }
+    })
   }
 
   const generateCommand = () => {
@@ -1140,22 +1153,46 @@ export function SettingsPage() {
           </div>
 
           <div className="input-group">
-            <label className="input-label">Target Classes</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, background: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 8, border: '1px solid var(--border)' }}>
-              {settings.classes.map(cls => (
-                <span key={cls} className="mono" style={{
-                  padding: '4px 10px', background: 'var(--accent-soft)', border: '1px solid var(--border)',
-                  borderRadius: 6, fontSize: 11, display: 'flex', alignItems: 'center', gap: 8, color: 'var(--accent)'
-                }}>
-                  {cls}
-                  <button onClick={() => removeClass(cls)} style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 14 }}>×</button>
-                </span>
-              ))}
+            <label className="input-label">Select Target Classes</label>
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: '1fr 1fr', 
+              gap: 10, 
+              marginTop: 8 
+            }}>
+              {AVAILABLE_CLASSES.map(cls => {
+                const isActive = settings.classes.includes(cls)
+                return (
+                  <button
+                    key={cls}
+                    type="button"
+                    onClick={() => toggleClass(cls)}
+                    style={{
+                      padding: '12px',
+                      borderRadius: '8px',
+                      border: '1px solid',
+                      borderColor: isActive ? 'var(--accent)' : 'var(--border)',
+                      background: isActive ? 'var(--accent-soft)' : 'rgba(255,255,255,0.02)',
+                      color: isActive ? 'var(--accent)' : 'var(--muted)',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      textTransform: 'capitalize',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8
+                    }}
+                  >
+                    {isActive ? '✓' : '+'} {cls}
+                  </button>
+                )
+              })}
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input type="text" className="input-field" placeholder="Add class..." value={newClass} onChange={(e) => setNewClass(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && addClass()} />
-              <button onClick={addClass} className="input-field" style={{ width: 50, cursor: 'pointer' }}>+</button>
-            </div>
+            <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 12, fontWeight: 500 }}>
+              Current Selection: <span className="mono" style={{ color: 'var(--accent)', fontWeight: 700 }}>{settings.classes.join(', ')}</span>
+            </p>
           </div>
         </div>
 
@@ -1233,8 +1270,8 @@ export function SettingsPage() {
                 <label key={tech} className="checkbox-item" style={{ padding: '12px 16px' }}>
                   <input type="checkbox" checked={settings.augment.includes(tech)} onChange={() => handleAugmentChange(tech)} />
                   <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span className="checkbox-label" style={{ textTransform: 'capitalize', fontWeight: 600, color: 'var(--text)' }}>{tech}</span>
-                    <span style={{ fontSize: 9, color: 'var(--muted)' }}>Synthetic Variation</span>
+                    <span className="checkbox-label" style={{ textTransform: 'capitalize', fontWeight: 600, color: 'var(--text)', fontSize: 13 }}>{tech}</span>
+                    <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 500 }}>Synthetic Variation</span>
                   </div>
                 </label>
               ))}
@@ -1255,8 +1292,8 @@ export function SettingsPage() {
               { id: 'tune', label: 'Hyper-Tune' },
               { id: 'save_model', label: 'Save Model' },
             ].map(item => (
-              <label key={item.id} className="toggle-group" style={{ padding: '10px 12px', margin: 0, flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 600 }}>{item.label}</span>
+              <label key={item.id} className="toggle-group" style={{ padding: '12px', margin: 0, flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>{item.label}</span>
                 <div className="switch" style={{ transform: 'scale(0.8)' }}>
                   <input type="checkbox" name={item.id} checked={settings[item.id]} onChange={handleInputChange} />
                   <span className="slider"></span>
@@ -1267,10 +1304,10 @@ export function SettingsPage() {
 
           <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 12, padding: 16, border: '1px solid var(--border)', marginBottom: 20 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span className="label" style={{ fontSize: 8, color: 'var(--accent)', margin: 0 }}>Generated CLI Command</span>
-              <span className="mono" style={{ fontSize: 8, color: 'var(--muted)' }}>Auto-updated</span>
+              <span className="label" style={{ fontSize: 10, color: 'var(--accent)', margin: 0 }}>Generated CLI Command</span>
+              <span className="mono" style={{ fontSize: 10, color: 'var(--muted)' }}>Auto-updated</span>
             </div>
-            <div className="mono" style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.5, wordBreak: 'break-all', opacity: 0.8 }}>
+            <div className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, wordBreak: 'break-all', opacity: 0.9 }}>
               {generateCommand()}
             </div>
           </div>
@@ -1281,6 +1318,62 @@ export function SettingsPage() {
         </div>
 
       </div>
+
+      {/* Floating Toast Notification */}
+      {error && (
+        <div style={{
+          position: 'fixed',
+          bottom: 40,
+          right: 40,
+          zIndex: 10000,
+          background: 'rgba(239, 68, 68, 0.15)',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+          border: '1px solid rgba(239, 68, 68, 0.3)',
+          borderRadius: 16,
+          padding: '16px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 16,
+          boxShadow: '0 20px 40px rgba(0,0,0,0.4), 0 0 20px rgba(239, 68, 68, 0.1)',
+          animation: 'toastIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+          color: '#fca5a5'
+        }}>
+          <div style={{ 
+            width: 32, 
+            height: 32, 
+            borderRadius: '50%', 
+            background: 'rgba(239, 68, 68, 0.2)', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            fontSize: 14
+          }}>⚠️</div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>Pipeline Validation</span>
+            <span style={{ fontSize: 12, opacity: 0.9 }}>{error}</span>
+          </div>
+          <button 
+            onClick={() => setError(null)}
+            style={{ 
+              background: 'none', 
+              border: 'none', 
+              color: '#fff', 
+              cursor: 'pointer', 
+              fontSize: 18, 
+              opacity: 0.5,
+              marginLeft: 10
+            }}
+          >×</button>
+
+          <style>{`
+            @keyframes toastIn {
+              from { transform: translateX(100px) scale(0.9); opacity: 0; }
+              to { transform: translateX(0) scale(1); opacity: 1; }
+            }
+          `}</style>
+        </div>
+      )}
     </div>
   )
 }
