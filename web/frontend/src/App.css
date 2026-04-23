@@ -398,6 +398,17 @@ h3 {
   box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
+/* Hide number input spinners */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type=number] {
+  -moz-appearance: textfield;
+}
+
 .checkbox-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

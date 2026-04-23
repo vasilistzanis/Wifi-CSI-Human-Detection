@@ -1122,9 +1122,49 @@ export function SettingsPage() {
     return cmd
   }
 
+  const validateSettings = () => {
+    if (!settings.data_dir.trim()) return 'Dataset directory cannot be empty.'
+    if (settings.classes.length < 2) return 'At least 2 classes are required.'
+    
+    if (isNaN(settings.window_size) || settings.window_size < 10 || settings.window_size > 2000) 
+      return 'Window Size must be between 10 and 2000.'
+    
+    if (isNaN(settings.step) || settings.step < 1 || settings.step > settings.window_size) 
+      return `Step Size must be between 1 and ${settings.window_size} (Window Size).`
+    
+    if (isNaN(settings.pca) || settings.pca < 1 || settings.pca > 100) 
+      return 'PCA Components must be between 1 and 100.'
+    
+    if (isNaN(settings.fs) || settings.fs < 1 || settings.fs > 1000) 
+      return 'Sampling Rate must be between 1 and 1000 Hz.'
+    
+    if (!settings.no_augment) {
+      if (isNaN(settings.n_augments) || settings.n_augments < 1 || settings.n_augments > 50) 
+        return 'Augments per window must be between 1 and 50.'
+    }
+    
+    if (isNaN(settings.test_ratio) || settings.test_ratio < 0.05 || settings.test_ratio > 0.5)
+      return 'Test Split Ratio must be between 0.05 and 0.50.'
+    
+    if (isNaN(settings.seed) || settings.seed < 0 || settings.seed > 2000)
+      return 'Random Seed must be between 0 and 2000.'
+
+    return null
+  }
+
   const handleSubmit = (e) => {
     e.preventDefault()
     if (isRunning) return
+
+    const validationError = validateSettings()
+    if (validationError) {
+      setNotification({
+        type: 'error',
+        title: 'Configuration Error',
+        message: validationError
+      })
+      return
+    }
 
     setIsRunning(true)
     setNotification({
@@ -1132,9 +1172,6 @@ export function SettingsPage() {
       title: 'Execution Started',
       message: 'The ML training pipeline is now running in the background.'
     })
-    
-    // In a real scenario, you'd wait for a backend response here.
-    // For now, we'll keep it running to demonstrate the lock.
   }
 
   const ALL_TECHS = ['noise', 'shift', 'scale', 'time_warp']
