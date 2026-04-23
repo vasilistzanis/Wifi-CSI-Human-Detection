@@ -1049,16 +1049,17 @@ export function SettingsPage() {
     pca: 10,
     test_ratio: 0.2,
     use_diff: true,
-    simulate: false,
-    save_model: true,
-    tune: false,
     seed: 42,
-    model: 'all'
+    model: 'all',
+    liveModel: 'svm'
   })
 
   const [notification, setNotification] = useState(null)
   const [isRunning, setIsRunning] = useState(false)
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+  const [activeMenu, setActiveMenu] = useState('training') 
+  const [modalOrigin, setModalOrigin] = useState({ x: '50%', y: '50%' })
+  const [deployedModel, setDeployedModel] = useState(null)
   const AVAILABLE_CLASSES = ['walk', 'idle', 'sit', 'fall']
 
   useEffect(() => {
@@ -1356,8 +1357,8 @@ export function SettingsPage() {
         </div>
 
         {/* Card 4: Execution Panel */}
-        <div className="card" style={{ 
-          padding: 28, 
+        <div className="card" style={{
+          padding: 28,
           background: 'linear-gradient(180deg, var(--surface-gl) 0%, rgba(99,102,241,0.04) 100%)',
           overflow: 'visible'
         }}>
@@ -1366,15 +1367,13 @@ export function SettingsPage() {
             <h3 style={{ fontSize: 17, fontWeight: 700 }}>Execution & Results</h3>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginBottom: 20 }}>
             {[
-              { id: 'simulate', label: 'Simulate' },
-              { id: 'tune', label: 'Hyper-Tune' },
-              { id: 'save_model', label: 'Save Model' },
+              { id: 'tune', label: 'Hyper-Tune Optimization' },
             ].map(item => (
-              <label key={item.id} className="toggle-group" style={{ padding: '12px', margin: 0, flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+              <label key={item.id} className="toggle-group" style={{ padding: '16px 20px' }}>
                 <span style={{ fontSize: 13, fontWeight: 700 }}>{item.label}</span>
-                <div className="switch" style={{ transform: 'scale(0.8)' }}>
+                <div className="switch">
                   <input type="checkbox" name={item.id} checked={settings[item.id]} onChange={handleInputChange} />
                   <span className="slider"></span>
                 </div>
@@ -1382,53 +1381,99 @@ export function SettingsPage() {
             ))}
           </div>
 
-          <div style={{ position: 'relative', marginBottom: 20 }}>
-            <label className="input-label" style={{ color: 'var(--accent)', marginBottom: 12, display: 'block' }}>Target ML Architecture</label>
+          <div style={{ display: 'grid', gap: 24 }}>
             
-            <div 
-              onClick={() => setIsDropdownOpen(true)}
-              className="input-field"
-              style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center', 
-                cursor: 'pointer',
-                background: 'rgba(255,255,255,0.05)',
-                position: 'relative'
-              }}
-            >
-              <span style={{ fontSize: 13, fontWeight: 600 }}>{ALL_MODELS.find(m => m.id === settings.model)?.name}</span>
-              <span style={{ opacity: 0.5, fontSize: 12 }}>⚙️</span>
+            {/* TRAINING BLOCK */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <label className="input-label" style={{ color: 'var(--accent)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Target ML Architecture for Training</label>
+              <div 
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setModalOrigin({ x: `${rect.left + rect.width/2}px`, y: `${rect.top + rect.height/2}px` });
+                  setActiveMenu('training');
+                  setIsDropdownOpen(true);
+                }}
+                className="input-field"
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', background: 'rgba(255,255,255,0.05)', height: 44 }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{ALL_MODELS.find(m => m.id === settings.model)?.name}</span>
+                <span style={{ opacity: 0.5, fontSize: 11 }}>⚙️</span>
+              </div>
+              <button
+                onClick={handleSubmit}
+                className="btn-primary"
+                disabled={isRunning}
+                style={{
+                  width: '100%',
+                  height: 44,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  opacity: isRunning ? 0.7 : 1,
+                  background: isRunning ? 'var(--surface-gl)' : 'var(--accent)',
+                  position: 'relative',
+                  overflow: 'hidden'
+                }}
+              >
+                {isRunning && (
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    height: '100%',
+                    width: '30%',
+                    background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)',
+                    animation: 'progressMove 1.5s infinite linear'
+                  }}></div>
+                )}
+                <span>{isRunning ? '⚙️ Training...' : '⚡ Start ML Training'}</span>
+              </button>
             </div>
-          </div>
 
-          <button
-            onClick={handleSubmit}
-            className="btn-primary"
-            disabled={isRunning}
-            style={{
-              width: '100%',
-              height: 56,
-              opacity: isRunning ? 0.7 : 1,
-              cursor: isRunning ? 'not-allowed' : 'pointer',
-              background: isRunning ? 'var(--surface-gl)' : 'var(--accent)',
-              position: 'relative',
-              overflow: 'hidden'
-            }}
-          >
-            {isRunning && (
-              <div style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                height: '100%',
-                width: '30%',
-                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)',
-                animation: 'progressMove 1.5s infinite linear'
-              }}></div>
-            )}
-            <span>{isRunning ? '⚙️ Training Pipeline...' : '⚡ Start ML Pipeline Execution'}</span>
-          </button>
+            {/* LIVE BLOCK */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <label className="input-label" style={{ color: 'var(--accent)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Selected Model for Live</label>
+              <div 
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setModalOrigin({ x: `${rect.left + rect.width/2}px`, y: `${rect.top + rect.height/2}px` });
+                  setActiveMenu('live');
+                  setIsDropdownOpen(true);
+                }}
+                className="input-field"
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', background: 'rgba(255,255,255,0.05)', height: 44 }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{ALL_MODELS.find(m => m.id === settings.liveModel)?.name}</span>
+                <span style={{ opacity: 0.5, fontSize: 11 }}>📡</span>
+              </div>
+              <button 
+                className="btn-primary" 
+                disabled={settings.liveModel === deployedModel}
+                style={{ 
+                  width: '100%', 
+                  height: 44, 
+                  background: settings.liveModel === deployedModel ? 'rgba(255,255,255,0.05)' : 'var(--success)', 
+                  color: settings.liveModel === deployedModel ? 'rgba(255,255,255,0.3)' : '#fff',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: settings.liveModel === deployedModel ? 'default' : 'pointer',
+                  border: settings.liveModel === deployedModel ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                  opacity: settings.liveModel === deployedModel ? 0.6 : 1,
+                  transition: 'all 0.3s ease'
+                }}
+                onClick={() => {
+                  setDeployedModel(settings.liveModel);
+                  setNotification({ 
+                    type: 'success', 
+                    title: 'Deployment Successful', 
+                    message: `Model ${settings.liveModel.toUpperCase()} is now live on the server.` 
+                  });
+                }}
+              >
+                {settings.liveModel === deployedModel ? '✓ Already Active' : '✅ Deploy to Live Server'}
+              </button>
+            </div>
+
+          </div>
 
           <style>{`
             @keyframes progressMove {
@@ -1504,7 +1549,7 @@ export function SettingsPage() {
       )}
       {/* GLOBAL CENTERED MODAL SELECTION */}
       {isDropdownOpen && (
-        <div 
+        <div
           onClick={() => setIsDropdownOpen(false)}
           style={{
             position: 'fixed',
@@ -1549,15 +1594,15 @@ export function SettingsPage() {
             <h2 style={{ fontSize: 20, fontWeight: 800, color: '#fff', margin: 0, letterSpacing: -0.5 }}>Select Model</h2>
             <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 4, fontWeight: 500 }}>Target Architecture</div>
           </div>
-          <button 
+          <button
             onClick={() => setIsDropdownOpen(false)}
-            style={{ 
-              background: 'rgba(255,255,255,0.08)', 
-              border: 'none', 
-              color: '#fff', 
-              width: 36, 
-              height: 36, 
-              borderRadius: '50%', 
+            style={{
+              background: 'rgba(255,255,255,0.08)',
+              border: 'none',
+              color: '#fff',
+              width: 36,
+              height: 36,
+              borderRadius: '50%',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -1570,13 +1615,19 @@ export function SettingsPage() {
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', display: 'grid', gap: 10, paddingRight: 4 }}>
-          {ALL_MODELS.map(m => {
-            const isActive = settings.model === m.id
+          {ALL_MODELS
+            .filter(m => activeMenu === 'training' || m.id !== 'all')
+            .map(m => {
+            const currentVal = activeMenu === 'training' ? settings.model : settings.liveModel;
+            const isActive = currentVal === m.id;
             return (
               <div
                 key={m.id}
                 onClick={() => {
-                  setSettings(prev => ({ ...prev, model: m.id }))
+                  setSettings(prev => ({ 
+                    ...prev, 
+                    [activeMenu === 'training' ? 'model' : 'liveModel']: m.id 
+                  }))
                   setIsDropdownOpen(false)
                 }}
                 style={{
@@ -1609,12 +1660,12 @@ export function SettingsPage() {
               >
                 <span>{m.name}</span>
                 {isActive && (
-                  <div style={{ 
-                    width: 10, 
-                    height: 10, 
-                    borderRadius: '50%', 
-                    background: 'var(--accent)', 
-                    boxShadow: '0 0 15px var(--accent)' 
+                  <div style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: '50%',
+                    background: 'var(--accent)',
+                    boxShadow: '0 0 15px var(--accent)'
                   }}></div>
                 )}
               </div>
