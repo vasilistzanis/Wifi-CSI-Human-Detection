@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 
 // ── Status Banner ──────────────────────────────
 export function StatusBanner({ data }) {
@@ -1036,9 +1036,9 @@ export function MiniFooter() {
   )
 }
 
-export function SettingsPage() {
+export function SettingsPage({ trainedModels = [], onRefreshModels, activeModelName }) {
   const [settings, setSettings] = useState({
-    data_dir: './datasets',
+    data_dir: 'C:\\Diplomatiki_2026\\WIFI CSI PROJECT\\Python_Scripts_for_csi_recv\\datasets',
     classes: ['walk', 'idle', 'sit', 'fall'],
     window_size: 50,
     step: 25,
@@ -1057,6 +1057,7 @@ export function SettingsPage() {
   const [notification, setNotification] = useState(null)
   const [isRunning, setIsRunning] = useState(false)
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+  const pollIntervalRef = useRef(null) // Added ref for polling
   const [activeMenu, setActiveMenu] = useState('training')
   const [modalOrigin, setModalOrigin] = useState({ x: '50%', y: '50%' })
   const [deployedModel, setDeployedModel] = useState(null)
@@ -1178,37 +1179,103 @@ export function SettingsPage() {
     return null
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    if (isRunning) return
+    if (isRunning) {
+      handleStop()
+      return
+    }
 
     const validationError = validateSettings()
     if (validationError) {
-      setNotification({
-        type: 'error',
-        title: 'Configuration Error',
-        message: validationError
-      })
+      setNotification({ type: 'error', title: 'Configuration Error', message: validationError })
       return
     }
 
     setIsRunning(true)
-    setNotification({
-      type: 'success',
-      title: 'Execution Started',
-      message: 'The ML training pipeline is now running in the background.'
-    })
+    setNotification({ type: 'success', title: 'Execution Started', message: 'The ML training pipeline is now running.' })
 
-    // Simulate training completion for demo
-    setTimeout(() => {
-      setIsRunning(false)
-      setNotification({
-        type: 'success',
-        title: 'Execution Complete',
-        message: 'Training finished successfully.'
+    try {
+      const res = await fetch('http://localhost:8000/api/train', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
       })
-    }, 4000)
+      const data = await res.json()
+      if (data.success) {
+        // Start polling for status
+        pollIntervalRef.current = setInterval(async () => {
+          try {
+            const statusRes = await fetch('http://localhost:8000/api/train/status')
+            const statusData = await statusRes.json()
+            
+            if (!statusData.running) {
+              clearInterval(pollIntervalRef.current)
+              setIsRunning(false)
+              
+              if (statusData.log.includes('ValueError') || statusData.log.includes('Error')) {
+                setNotification({
+                  type: 'error',
+                  title: 'Training Failed',
+                  message: statusData.log.split('\n').filter(l => l.includes('Error') || l.includes('ValueError')).pop() || 'Check training.log for details.'
+                })
+              } else {
+                setNotification({ type: 'success', title: 'Execution Complete', message: 'Training finished successfully.' })
+                if (onRefreshModels) onRefreshModels()
+              }
+            }
+          } catch (err) {
+            clearInterval(pollIntervalRef.current)
+            setIsRunning(false)
+          }
+        }, 2000)
+      } else {
+        throw new Error(data.error)
+      }
+    } catch (err) {
+      setIsRunning(false)
+      setNotification({ type: 'error', title: 'Training Failed', message: err.message })
+    }
   }
+
+  const handleStop = async () => {
+    // Immediate UI reset to prevent lag
+    setIsRunning(false)
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current)
+      pollIntervalRef.current = null
+    }
+    
+    try {
+      setNotification({ type: 'warning', title: 'Stopping...', message: 'Requesting training termination.' })
+      await fetch('http://localhost:8000/api/train/stop', { method: 'POST' })
+    } catch (err) {
+      console.error('Failed to stop training:', err)
+    }
+  }
+
+  const handleDeploy = async () => {
+    if (isDeployed) return
+    
+    try {
+      const res = await fetch('http://localhost:8000/api/deploy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: settings.liveModel })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setNotification({ type: 'success', title: 'Model Deployed', message: `Model ${settings.liveModel.toUpperCase()} is now live.` })
+      } else {
+        throw new Error(data.error)
+      }
+    } catch (err) {
+      setNotification({ type: 'error', title: 'Deployment Failed', message: err.message })
+    }
+  }
+
+  const isModelTrained = trainedModels.includes(settings.liveModel)
+  const isDeployed = activeModelName && activeModelName.toLowerCase().includes(settings.liveModel.toLowerCase())
 
   const ALL_TECHS = ['noise', 'shift', 'scale', 'time_warp']
 
@@ -1434,17 +1501,18 @@ export function SettingsPage() {
               </div>
               <button
                 onClick={handleSubmit}
-                className="btn-primary"
-                disabled={isRunning}
+                className={`btn-primary ${isRunning ? 'stop-mode' : ''}`}
                 style={{
                   width: '100%',
                   height: 44,
                   fontSize: 13,
                   fontWeight: 600,
-                  opacity: isRunning ? 0.7 : 1,
-                  background: isRunning ? 'var(--surface-gl)' : 'var(--accent)',
+                  background: isRunning ? 'rgba(239, 68, 68, 0.2)' : 'var(--accent)',
+                  color: isRunning ? '#fca5a5' : 'white',
+                  border: isRunning ? '1px solid rgba(239, 68, 68, 0.3)' : 'none',
                   position: 'relative',
-                  overflow: 'hidden'
+                  overflow: 'hidden',
+                  transition: 'all 0.3s ease'
                 }}
               >
                 {isRunning && (
@@ -1458,7 +1526,7 @@ export function SettingsPage() {
                     animation: 'progressMove 1.5s infinite linear'
                   }}></div>
                 )}
-                <span>{isRunning ? '⚙️ Training...' : '⚡ Start ML Training'}</span>
+                <span>{isRunning ? '🛑 Stop Training' : '⚡ Start ML Training'}</span>
               </button>
             </div>
 
@@ -1479,18 +1547,32 @@ export function SettingsPage() {
                 <span style={{ opacity: 0.5, fontSize: 11 }}>📡</span>
               </div>
               <button
-                className={`btn-deploy ${settings.liveModel === deployedModel ? 'active' : 'not-active'}`}
-                disabled={settings.liveModel === deployedModel}
-                onClick={() => {
-                  setDeployedModel(settings.liveModel);
-                  setNotification({
-                    type: 'success',
-                    title: 'Deployment Successful',
-                    message: `Model ${settings.liveModel.toUpperCase()} is now live on the server.`
-                  });
+                onClick={handleDeploy}
+                disabled={!isModelTrained || isDeployed || isRunning}
+                className={`btn-deploy ${(!isModelTrained || isRunning) && !isDeployed ? 'disabled' : ''}`}
+                style={{
+                  width: '100%',
+                  padding: '16px',
+                  borderRadius: '16px',
+                  border: 'none',
+                  background: isDeployed ? 'var(--success)' : (isModelTrained && !isRunning ? 'linear-gradient(135deg, var(--accent) 0%, #6366f1 100%)' : 'var(--surface-gl)'),
+                  color: (isModelTrained && !isRunning) || isDeployed ? 'white' : 'var(--muted)',
+                  fontWeight: 700,
+                  fontSize: 15,
+                  cursor: isModelTrained && !isDeployed && !isRunning ? 'pointer' : 'not-allowed',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 12,
+                  boxShadow: isModelTrained && !isDeployed && !isRunning ? '0 8px 24px rgba(79, 70, 229, 0.25)' : 'none',
+                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                  opacity: (isModelTrained && !isRunning) || isDeployed ? 1 : 0.6
                 }}
               >
-                {settings.liveModel === deployedModel ? '✓ Already Active' : '✅ Deploy to Live Server'}
+                <span style={{ fontSize: 20 }}>
+                  {isDeployed ? '✅' : (isRunning ? '⚙️' : (isModelTrained ? '💠' : '⚠️'))}
+                </span>
+                {isDeployed ? 'Currently Active' : (isRunning ? 'Training in Progress...' : (isModelTrained ? 'Deploy to Live Server' : 'Not Trained Yet'))}
               </button>
             </div>
 

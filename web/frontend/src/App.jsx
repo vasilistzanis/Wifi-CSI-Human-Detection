@@ -25,16 +25,28 @@ const INITIAL_STATE = {
 
 export default function App() {
   const [data, setData] = useState(INITIAL_STATE)
-  const [displayData, setDisplayData] = useState(INITIAL_STATE)  // 1s throttled snapshot
+  const [displayData, setDisplayData] = useState(INITIAL_STATE)
   const [wsStatus, setWsStatus] = useState('connecting')
   const [activePage, setActivePage] = useState('monitor')
   const [activityLog, setActivityLog] = useState([])
+  const [trainedModels, setTrainedModels] = useState([])
+  
   const wsRef = useRef(null)
   const timerRef = useRef(null)
   const displayTimerRef = useRef(null)
   const lastLabel = useRef(null)
   const lastLogTime = useRef(0)
-  const liveDataRef = useRef(INITIAL_STATE)  // always-fresh ref for the interval
+  const liveDataRef = useRef(INITIAL_STATE)
+
+  const fetchTrainedModels = useCallback(async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/models')
+      const data = await res.json()
+      setTrainedModels(data.trained_models || [])
+    } catch (err) {
+      console.error('Failed to fetch trained models:', err)
+    }
+  }, [])
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
@@ -45,20 +57,24 @@ export default function App() {
 
     ws.onopen = () => {
       setWsStatus('live')
-      console.log('✅ WebSocket connected')
+      fetchTrainedModels()
     }
 
     ws.onmessage = (e) => {
       try {
         const payload = JSON.parse(e.data)
+        
+        if (payload.event === 'model_deployed') {
+          setData(prev => ({ ...prev, model_name: payload.model }))
+          return
+        }
+
         if (payload.heartbeat) return
 
-        // Always update the live ref at full speed (waveform, signal)
         const merged = { ...liveDataRef.current, ...payload }
         liveDataRef.current = merged
         setData(merged)
 
-        // Activity log: max 1 entry per second
         if (payload.smoothed && payload.confidence) {
           const now = Date.now()
           if (now - lastLogTime.current >= 1000) {
@@ -77,23 +93,19 @@ export default function App() {
             setActivityLog(prev => [entry, ...prev].slice(0, MAX_LOG_ENTRIES))
           }
         }
-      } catch {
-        // malformed JSON
-      }
+      } catch {}
     }
 
     ws.onerror = () => setWsStatus('error')
-
     ws.onclose = () => {
       setWsStatus('error')
-      console.warn('⚠️ WebSocket closed — reconnecting in 3s…')
       timerRef.current = setTimeout(connect, RECONNECT_DELAY_MS)
     }
-  }, [])
+  }, [fetchTrainedModels])
 
   useEffect(() => {
     connect()
-    // Snapshot displayData from the live ref every 1 second
+    fetchTrainedModels()
     displayTimerRef.current = setInterval(() => {
       setDisplayData({ ...liveDataRef.current })
     }, 1000)
@@ -102,18 +114,14 @@ export default function App() {
       clearInterval(displayTimerRef.current)
       wsRef.current?.close()
     }
-  }, [connect])
+  }, [connect, fetchTrainedModels])
 
   const renderPage = () => {
     switch (activePage) {
-      case 'signal':
-        return <SignalViewPage data={data} />
-      case 'activity':
-        return <ActivityLogPage log={activityLog} onClear={() => setActivityLog([])} />
-      case 'system':
-        return <SystemInfoPage data={data} />
-      case 'settings':
-        return <SettingsPage />
+      case 'signal': return <SignalViewPage data={data} />
+      case 'activity': return <ActivityLogPage log={activityLog} onClear={() => setActivityLog([])} />
+      case 'system': return <SystemInfoPage data={data} />
+      case 'settings': return <SettingsPage trainedModels={trainedModels} onRefreshModels={fetchTrainedModels} activeModelName={data.model_name} />
       default: {
         const uptime = displayData.connected ? (() => {
           const s = Math.floor((Date.now() - (displayData.start_time || Date.now())) / 1000)
@@ -125,10 +133,7 @@ export default function App() {
         return (
           <div style={{ animation: 'fadeIn 0.4s ease', display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
             <StatusBanner data={displayData} />
-
             <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 340px', gap: 12, overflow: 'hidden', minHeight: 0 }}>
-
-              {/* LEFT COLUMN: Signal on top (fills), Telemetry strip bottom */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, overflow: 'hidden' }}>
                 <MiniSignalCard data={data} style={{ flex: 1, minHeight: 0 }} />
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
@@ -148,13 +153,8 @@ export default function App() {
                   ))}
                 </div>
               </div>
-
-              {/* RIGHT COLUMN: Everything stacked */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, overflow: 'hidden' }}>
-                {/* Prediction */}
                 <PredictionCard data={displayData} style={{ flexShrink: 0 }} />
-
-                {/* Health + Metrics row */}
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                   <SignalHealthCard data={displayData} />
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
@@ -169,8 +169,6 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-
-                {/* Activity Feed fills remaining */}
                 <MiniActivityFeed log={activityLog} style={{ flex: 1, minHeight: 0 }} />
               </div>
             </div>
@@ -183,10 +181,8 @@ export default function App() {
   return (
     <div className="app">
       <Nav wsStatus={wsStatus} data={data} />
-
       <div className="dashboard-layout">
         <Sidebar activePage={activePage} onNavigate={setActivePage} data={data} />
-
         <main className="main-content">
           {renderPage()}
           <MiniFooter />

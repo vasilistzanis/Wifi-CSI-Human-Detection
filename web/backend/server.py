@@ -108,6 +108,7 @@ class SharedState:
             "model_name":    "",
             "pca_dims":      0,
             "window_size":   50,
+            "start_time":    time.time(),
             "timestamp":     time.time(),
         }
         self.new_event = asyncio.Event()
@@ -137,6 +138,16 @@ class CSIReaderThread(threading.Thread):
         self.model_key  = model_key
         self.loop       = loop
         self._stop      = threading.Event()
+        self._reload    = threading.Event()
+        self.new_model_key = model_key
+        self.pipeline   = None
+        self.le         = None
+        self.model      = None
+
+    def update_model(self, model_key: str):
+        with state.lock:
+            self.new_model_key = model_key
+            self._reload.set()
 
     def _load_models(self):
         if not _IMPORTS_OK:
@@ -183,7 +194,6 @@ class CSIReaderThread(threading.Thread):
             return None
 
     def run(self):
-        pipeline, le, model = self._load_models()
         import serial.tools.list_ports
         target_port = self.port
 
@@ -194,17 +204,14 @@ class CSIReaderThread(threading.Thread):
                     s.set_buffer_size(rx_size=SERIAL_BUF_MB)
                 s.reset_input_buffer()
                 return s
-            except Exception:
-                return None
+            except Exception: return None
 
         while not self._stop.is_set():
             ser = try_connect(target_port)
-
             if ser is None:
                 ports = list(serial.tools.list_ports.comports())
                 for p in ports:
-                    if "Bluetooth" in p.description:
-                        continue
+                    if "Bluetooth" in p.description: continue
                     ser = try_connect(p.device)
                     if ser is not None:
                         target_port = p.device
@@ -212,105 +219,98 @@ class CSIReaderThread(threading.Thread):
 
             if ser is None:
                 err = "Hardware not detected. Waiting for ESP32..."
-                self.loop.call_soon_threadsafe(
-                    lambda: state.update({"connected": False, "error": err})
-                )
-                # Sleep for 3 seconds but check stop event
+                self.loop.call_soon_threadsafe(lambda: state.update({"connected": False, "error": err}))
                 for _ in range(30):
                     if self._stop.is_set(): return
                     time.sleep(0.1)
                 continue
 
             print(f"Serial hardware detected: {target_port} @ {self.baud}")
-            if model is None:
-                m_name = "No Model Loaded"
-            else:
-                m_name = MODEL_FILES.get(self.model_key, "Unknown").replace(".joblib", "").replace("_", " ")
+            
+            # Inner loop for reloading model without losing serial connection
+            while not self._stop.is_set() and not self._reload.is_set():
+                self._reload.clear()
+                pipeline, le, model = self._load_models()
+                self.pipeline, self.le, self.model = pipeline, le, model
                 
-            p_dims = pipeline.pca.n_components_ if pipeline and hasattr(pipeline, "pca") and pipeline.pca else 0
-            self.loop.call_soon_threadsafe(
-                lambda: state.update({
-                    "connected": True, "error": "", 
-                    "port": target_port, "baud": self.baud,
-                    "model_name": m_name,
-                    "pca_dims": p_dims,
-                    "window_size": WINDOW_SIZE
-                })
-            )
+                m_name = MODEL_FILES.get(self.model_key, "Unknown").replace(".joblib", "").replace("_", " ")
+                p_dims = pipeline.pca.n_components_ if pipeline and hasattr(pipeline, "pca") and pipeline.pca else 0
+                self.loop.call_soon_threadsafe(
+                    lambda: state.update({
+                        "connected": True, "error": "", 
+                        "port": target_port, "baud": self.baud,
+                        "model_name": m_name, "pca_dims": p_dims,
+                        "window_size": WINDOW_SIZE
+                    })
+                )
 
-            buf_size        = WINDOW_SIZE + FILTER_WARMUP
-            buffer          = deque(maxlen=buf_size)
-            pred_history    = deque(maxlen=HISTORY)
-            fps_times       = deque(maxlen=FPS_WINDOW)
-            frames_since    = 0
-            frame_count     = 0
+                buf_size, buffer = WINDOW_SIZE + FILTER_WARMUP, deque(maxlen=WINDOW_SIZE + FILTER_WARMUP)
+                pred_history, fps_times = deque(maxlen=HISTORY), deque(maxlen=FPS_WINDOW)
+                frame_count, frames_since = 0, 0
 
-            try:
-                while not self._stop.is_set():
-                    raw = ser.readline()
-                    if not raw: continue
-                    line = raw.decode("utf-8", errors="ignore").strip()
-                    if "CSI_DATA" not in line: continue
-                    frame = parse_csi_line(line)
-                    if frame is None: continue
+                try:
+                    while not self._stop.is_set() and not self._reload.is_set():
+                        raw = ser.readline()
+                        if not raw: continue
+                        line = raw.decode("utf-8", errors="ignore").strip()
+                        if "CSI_DATA" not in line: continue
+                        frame = parse_csi_line(line)
+                        if frame is None: continue
 
-                    buffer.append(frame)
-                    frame_count   += 1
-                    frames_since  += 1
-                    fps_times.append(time.monotonic())
+                        buffer.append(frame)
+                        frame_count += 1
+                        frames_since += 1
+                        fps_times.append(time.monotonic())
 
-                    label, conf, prob_dict = "Hardware Live", 1.0, {}
-                    if pipeline and model and le:
-                        res = self._infer(buffer, pipeline, model, le)
-                        if res:
-                            label, conf, prob_dict = res
-                    
-                    if frames_since < STEP and frame_count >= buf_size:
-                        continue
-                    frames_since = 0
+                        label, conf, prob_dict = "Hardware Live", 1.0, {}
+                        if self.pipeline and self.model and self.le:
+                            res = self._infer(buffer, self.pipeline, self.model, self.le)
+                            if res: label, conf, prob_dict = res
+                        
+                        if frames_since < STEP and frame_count >= buf_size: continue
+                        frames_since = 0
 
-                    pred_history.append(label)
-                    smoothed = Counter(pred_history).most_common(1)[0][0]
-                    fps = (len(fps_times) - 1) / (fps_times[-1] - fps_times[0]) if len(fps_times) >= 2 else 0.0
+                        pred_history.append(label)
+                        smoothed = Counter(pred_history).most_common(1)[0][0]
+                        fps = (len(fps_times) - 1) / (fps_times[-1] - fps_times[0]) if len(fps_times) >= 2 else 0.0
 
-                    # Waveform snapshot (using active subcarriers mean)
-                    amp_arr   = np.abs(np.vstack(buffer))
-                    # Skip first 6 null subcarriers, take mean of active ones
-                    active_amp = amp_arr[:, 6:50] if amp_arr.shape[1] > 50 else amp_arr
-                    waveform   = np.mean(active_amp, axis=1).tolist()[-60:]
-                    # Heatmap: take a slice of active carriers
-                    sc_map     = amp_arr[-1, 6:63].tolist() if amp_arr.shape[1] >= 63 else amp_arr[-1].tolist()
-                    
-                    # Auto-scale for visualization
-                    if waveform:
-                        mx = max(waveform) or 1.0
-                        waveform = [v / mx for v in waveform]
-                    if sc_map:
-                        mx = max(sc_map) or 1.0
-                        sc_map = [v / mx for v in sc_map]
+                        # Waveform & SC Map logic
+                        amp_arr = np.abs(np.vstack(buffer))
+                        active_amp = amp_arr[:, 6:50] if amp_arr.shape[1] > 50 else amp_arr
+                        waveform = np.mean(active_amp, axis=1).tolist()[-60:]
+                        sc_map = amp_arr[-1, 6:63].tolist() if amp_arr.shape[1] >= 63 else amp_arr[-1].tolist()
+                        
+                        if waveform: waveform = [v / (max(waveform) or 1.0) for v in waveform]
+                        if sc_map: sc_map = [v / (max(sc_map) or 1.0) for v in sc_map]
 
-                    payload = {
-                        "label":          label,
-                        "smoothed":       smoothed,
-                        "confidence":     round(conf, 4),
-                        "probabilities":  prob_dict,
-                        "fps":            round(fps, 1),
-                        "latency_ms":     0 if not pipeline else 10,
-                        "packet_loss":    0.0,
-                        "frame_count":    frame_count,
-                        "waveform":       waveform,
-                        "subcarrier_map": sc_map,
-                        "connected":      True,
-                        "error":          "",
-                        "timestamp":      time.monotonic(),
-                    }
-                    self.loop.call_soon_threadsafe(lambda p=payload: self._post(p))
-            except Exception as e:
-                print(f"Hardware Loop Error (Disconnected?): {e}")
-            finally:
-                if ser and ser.is_open:
-                    ser.close()
-                time.sleep(1)
+                        payload = {
+                            "label":          label,
+                            "smoothed":       smoothed,
+                            "confidence":     round(conf, 4),
+                            "probabilities":  prob_dict,
+                            "fps":            round(fps, 1),
+                            "latency":        0 if not self.pipeline else 10,
+                            "loss":           0.0,
+                            "frame_count":    frame_count,
+                            "waveform":       waveform,
+                            "subcarrier_map": sc_map,
+                            "connected":      True,
+                            "error":          "",
+                            "timestamp":      time.monotonic(),
+                        }
+                        self.loop.call_soon_threadsafe(lambda p=payload: self._post(p))
+
+                    if self._reload.is_set():
+                        print(f"🔄 Reloading model to: {self.new_model_key}")
+                        self.model_key = self.new_model_key
+                        self._reload.clear()
+                except Exception as e:
+                    print(f"Hardware Loop Error: {e}")
+                    break
+            
+            if ser and ser.is_open:
+                ser.close()
+            time.sleep(1)
 
     def _post(self, payload: dict):
         state.update(payload)
@@ -325,6 +325,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 _connections = []
 _conn_lock = asyncio.Lock()
 _reader_thread = None
+_training_process = None # Global handle for the training process
 
 @app.on_event("startup")
 async def startup():
@@ -343,6 +344,151 @@ async def shutdown():
 @app.get("/api/status")
 async def get_status():
     return state.snapshot()
+
+@app.get("/api/models")
+async def list_models():
+    args = _parse_args()
+    models_dir = Path(args.models_dir)
+    trained = []
+    for key, filename in MODEL_FILES.items():
+        if (models_dir / filename).exists():
+            trained.append(key)
+    return {"trained_models": trained, "all_models": list(MODEL_FILES.keys())}
+
+@app.post("/api/deploy")
+async def deploy_model(data: dict):
+    model_key = data.get("model")
+    if model_key not in MODEL_FILES:
+        return {"success": False, "error": "Invalid model key"}
+    if _reader_thread:
+        _reader_thread.update_model(model_key)
+        async with _conn_lock:
+            for ws in _connections:
+                try: await ws.send_text(json.dumps({"event": "model_deployed", "model": model_key}))
+                except: pass
+        return {"success": True}
+    return {"success": False, "error": "Inference thread not running"}
+
+@app.post("/api/train")
+async def train_model(params: dict):
+    """Execute the ML training pipeline script with full parameters."""
+    import subprocess
+    import os
+    
+    # Ensure data_dir is absolute relative to ROOT if it's not already absolute
+    data_dir = params.get("data_dir", "datasets")
+    if not os.path.isabs(data_dir):
+        data_dir = str(ROOT / data_dir)
+    
+    cmd = [sys.executable, str(ROOT / "csi_ml_pipeline.py")]
+    cmd += ["--data_dir", data_dir]
+    
+    # Map other settings
+    if params.get("classes"): cmd += ["--classes"] + params["classes"]
+    if params.get("model"): cmd += ["--model", params["model"]]
+    if params.get("window_size"): cmd += ["--window_size", str(params["window_size"])]
+    if params.get("step"): cmd += ["--step", str(params["step"])]
+    if params.get("fs"): cmd += ["--fs", str(params["fs"])]
+    if params.get("pca"): cmd += ["--pca", str(params["pca"])]
+    if params.get("test_ratio"): cmd += ["--test_ratio", str(params["test_ratio"])]
+    if params.get("seed"): cmd += ["--seed", str(params["seed"])]
+    
+    if params.get("no_augment"):
+        cmd += ["--no_augment"]
+    elif params.get("augment"):
+        cmd += ["--augment"] + params["augment"]
+        if params.get("n_augments"): cmd += ["--n_augments", str(params["n_augments"])]
+    
+    if not params.get("use_diff"): cmd += ["--no_diff"]
+    
+    printable_cmd = ' '.join(['"' + c + '"' if ' ' in c else c for c in cmd])
+    print(f"🚀 Starting Training: {printable_cmd}")
+    
+    try:
+        # Clear existing log if any
+        log_path = ROOT / "training.log"
+        if log_path.exists():
+            try: os.remove(log_path)
+            except: pass
+            
+        # Redirect output to a fresh log file
+        log_file = open(log_path, "w", encoding="utf-8")
+        
+        global _training_process
+        # Use shell=True for Windows to handle spaces correctly in command line
+        _training_process = subprocess.Popen(
+            cmd, 
+            stdout=log_file, 
+            stderr=subprocess.STDOUT,
+            cwd=str(ROOT),
+            bufsize=1, # Line buffered
+            universal_newlines=True,
+            shell=True
+        )
+        return {
+            "success": True, 
+            "message": f"Training started. Monitoring log...",
+            "command": " ".join(cmd)
+        }
+    except Exception as e:
+        print(f"❌ Training Failed to Start: {e}")
+        return {"success": False, "error": f"Failed to start training script: {str(e)}"}
+
+@app.get("/api/train/status")
+async def train_status():
+    """Check the status of the latest training run and return the log tail."""
+    log_path = ROOT / "training.log"
+    
+    # If log doesn't exist yet, it's still starting
+    if not log_path.exists():
+        return {"running": True, "log": "Initializing training..."}
+    
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            log_content = f.read()
+            log_tail = log_content[-2000:] # Get last 2k chars
+        
+        # Detection logic
+        has_error = "Error" in log_tail or "ValueError" in log_tail or "Traceback" in log_tail
+        is_complete = "Execution Complete" in log_tail or "manually stopped" in log_tail
+        
+        # If the log is very short and doesn't have much content, it's definitely still running
+        if len(log_content) < 100 and not has_error:
+            return {"running": True, "log": log_tail}
+
+        return {
+            "running": not (has_error or is_complete),
+            "log": log_tail
+        }
+    except Exception as e:
+        return {"running": False, "log": f"Error reading log: {str(e)}"}
+
+@app.post("/api/train/stop")
+async def stop_training():
+    """Terminate the currently running training process."""
+    global _training_process
+    print("🛑 Stop request received...")
+    if _training_process:
+        try:
+            # On Windows with shell=True, we must kill the child processes tree
+            if os.name == 'nt':
+                subprocess.run(['taskkill', '/F', '/T', '/PID', str(_training_process.pid)], capture_output=True)
+            
+            try: _training_process.kill()
+            except: pass
+            
+            _training_process = None
+            # Append a note to the log
+            log_path = ROOT / "training.log"
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write("\n\n Training manually stopped by user.\n")
+            
+            return {"success": True, "message": "Training killed."}
+        except Exception as e:
+            print(f"Error killing process: {e}")
+            _training_process = None 
+            return {"success": True, "message": "Attempted to kill process."}
+    return {"success": False, "error": "No process found."}
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
