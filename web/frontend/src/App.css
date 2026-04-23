@@ -554,3 +554,91 @@ input:checked+.slider:before {
   cursor: not-allowed;
   transform: none;
 }
+
+/* ── Custom Component Styles ─────────────────── */
+
+.aug-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.aug-tag {
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+}
+
+.aug-tag:hover {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.aug-tag.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: #fff;
+}
+
+.aug-tag-box {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.aug-tag.active .aug-tag-box {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.btn-deploy {
+  width: 100%;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  transition: all 0.2s ease;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-deploy.active {
+  background: var(--surface-gl);
+  color: rgba(255, 255, 255, 0.3);
+  cursor: default;
+  opacity: 0.7;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.btn-deploy.not-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-deploy.not-active:hover {
+  background: var(--accent-vivid);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px -2px var(--accent-glow);
+}

@@ -1057,7 +1057,7 @@ export function SettingsPage() {
   const [notification, setNotification] = useState(null)
   const [isRunning, setIsRunning] = useState(false)
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
-  const [activeMenu, setActiveMenu] = useState('training') 
+  const [activeMenu, setActiveMenu] = useState('training')
   const [modalOrigin, setModalOrigin] = useState({ x: '50%', y: '50%' })
   const [deployedModel, setDeployedModel] = useState(null)
   const AVAILABLE_CLASSES = ['walk', 'idle', 'sit', 'fall']
@@ -1079,12 +1079,23 @@ export function SettingsPage() {
 
   const handleAugmentChange = (tech) => {
     setSettings(prev => {
-      const current = prev.augment
+      const current = prev.augment;
+      let newAugment;
+      
       if (current.includes(tech)) {
-        return { ...prev, augment: current.filter(t => t !== tech) }
+        newAugment = current.filter(t => t !== tech);
       } else {
-        return { ...prev, augment: [...current, tech] }
+        newAugment = [...current, tech];
       }
+
+      // Auto-toggle main switch based on selections
+      const isNowEmpty = newAugment.length === 0;
+      
+      return { 
+        ...prev, 
+        augment: newAugment,
+        no_augment: isNowEmpty ? true : false
+      };
     })
   }
 
@@ -1325,7 +1336,19 @@ export function SettingsPage() {
               <h3 style={{ fontSize: 17, fontWeight: 700 }}>Data Augmentation</h3>
             </div>
             <label className="switch">
-              <input type="checkbox" checked={!settings.no_augment} onChange={(e) => setSettings(prev => ({ ...prev, no_augment: !e.target.checked }))} />
+              <input 
+                type="checkbox" 
+                checked={!settings.no_augment} 
+                onChange={(e) => {
+                  const isChecked = e.target.checked;
+                  setSettings(prev => ({ 
+                    ...prev, 
+                    no_augment: !isChecked,
+                    // If turning ON, select all. If OFF, clear all.
+                    augment: isChecked ? ['noise', 'shift', 'scale', 'time_warp'] : [] 
+                  }));
+                }} 
+              />
               <span className="slider"></span>
             </label>
           </div>
@@ -1342,16 +1365,26 @@ export function SettingsPage() {
               </div>
             </div>
 
-            <div className="checkbox-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              {ALL_TECHS.map(tech => (
-                <label key={tech} className="checkbox-item" style={{ padding: '12px 16px' }}>
-                  <input type="checkbox" checked={settings.augment.includes(tech)} onChange={() => handleAugmentChange(tech)} />
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span className="checkbox-label" style={{ textTransform: 'capitalize', fontWeight: 600, color: 'var(--text)', fontSize: 13 }}>{tech}</span>
-                    <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 500 }}>Synthetic Variation</span>
-                  </div>
-                </label>
-              ))}
+            <div className="aug-grid">
+              {[
+                { id: 'noise', label: 'Noise Injection' },
+                { id: 'shift', label: 'Phase Shifting' },
+                { id: 'scale', label: 'Amplitude Scaling' },
+                { id: 'time_warp', label: 'Time Warping' }
+              ].map(tech => {
+                const isActive = settings.augment.includes(tech.id)
+                return (
+                  <button
+                    key={tech.id}
+                    type="button"
+                    onClick={() => handleAugmentChange(tech.id)}
+                    className={`aug-tag ${isActive ? 'active' : ''}`}
+                  >
+                    <div className="aug-tag-box"></div>
+                    {tech.label}
+                  </button>
+                )
+              })}
             </div>
           </div>
         </div>
@@ -1382,14 +1415,14 @@ export function SettingsPage() {
           </div>
 
           <div style={{ display: 'grid', gap: 24 }}>
-            
+
             {/* TRAINING BLOCK */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <label className="input-label" style={{ color: 'var(--accent)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Target ML Architecture for Training</label>
-              <div 
+              <div
                 onClick={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
-                  setModalOrigin({ x: `${rect.left + rect.width/2}px`, y: `${rect.top + rect.height/2}px` });
+                  setModalOrigin({ x: `${rect.left + rect.width / 2}px`, y: `${rect.top + rect.height / 2}px` });
                   setActiveMenu('training');
                   setIsDropdownOpen(true);
                 }}
@@ -1432,10 +1465,10 @@ export function SettingsPage() {
             {/* LIVE BLOCK */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <label className="input-label" style={{ color: 'var(--accent)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>Selected Model for Live</label>
-              <div 
+              <div
                 onClick={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
-                  setModalOrigin({ x: `${rect.left + rect.width/2}px`, y: `${rect.top + rect.height/2}px` });
+                  setModalOrigin({ x: `${rect.left + rect.width / 2}px`, y: `${rect.top + rect.height / 2}px` });
                   setActiveMenu('live');
                   setIsDropdownOpen(true);
                 }}
@@ -1445,27 +1478,15 @@ export function SettingsPage() {
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{ALL_MODELS.find(m => m.id === settings.liveModel)?.name}</span>
                 <span style={{ opacity: 0.5, fontSize: 11 }}>📡</span>
               </div>
-              <button 
-                className="btn-primary" 
+              <button
+                className={`btn-deploy ${settings.liveModel === deployedModel ? 'active' : 'not-active'}`}
                 disabled={settings.liveModel === deployedModel}
-                style={{ 
-                  width: '100%', 
-                  height: 44, 
-                  background: settings.liveModel === deployedModel ? 'rgba(255,255,255,0.05)' : 'var(--success)', 
-                  color: settings.liveModel === deployedModel ? 'rgba(255,255,255,0.3)' : '#fff',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: settings.liveModel === deployedModel ? 'default' : 'pointer',
-                  border: settings.liveModel === deployedModel ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                  opacity: settings.liveModel === deployedModel ? 0.6 : 1,
-                  transition: 'all 0.3s ease'
-                }}
                 onClick={() => {
                   setDeployedModel(settings.liveModel);
-                  setNotification({ 
-                    type: 'success', 
-                    title: 'Deployment Successful', 
-                    message: `Model ${settings.liveModel.toUpperCase()} is now live on the server.` 
+                  setNotification({
+                    type: 'success',
+                    title: 'Deployment Successful',
+                    message: `Model ${settings.liveModel.toUpperCase()} is now live on the server.`
                   });
                 }}
               >
@@ -1618,59 +1639,59 @@ export function SettingsPage() {
           {ALL_MODELS
             .filter(m => activeMenu === 'training' || m.id !== 'all')
             .map(m => {
-            const currentVal = activeMenu === 'training' ? settings.model : settings.liveModel;
-            const isActive = currentVal === m.id;
-            return (
-              <div
-                key={m.id}
-                onClick={() => {
-                  setSettings(prev => ({ 
-                    ...prev, 
-                    [activeMenu === 'training' ? 'model' : 'liveModel']: m.id 
-                  }))
-                  setIsDropdownOpen(false)
-                }}
-                style={{
-                  padding: '16px 20px',
-                  borderRadius: 16,
-                  cursor: 'pointer',
-                  fontSize: 14,
-                  fontWeight: isActive ? 700 : 500,
-                  color: isActive ? 'var(--accent)' : '#eee',
-                  background: isActive ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255,255,255,0.03)',
-                  border: '1px solid',
-                  borderColor: isActive ? 'var(--accent)' : 'rgba(255,255,255,0.05)',
-                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between'
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.07)'
-                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
-                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)'
-                  }
-                }}
-              >
-                <span>{m.name}</span>
-                {isActive && (
-                  <div style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: '50%',
-                    background: 'var(--accent)',
-                    boxShadow: '0 0 15px var(--accent)'
-                  }}></div>
-                )}
-              </div>
-            )
-          })}
+              const currentVal = activeMenu === 'training' ? settings.model : settings.liveModel;
+              const isActive = currentVal === m.id;
+              return (
+                <div
+                  key={m.id}
+                  onClick={() => {
+                    setSettings(prev => ({
+                      ...prev,
+                      [activeMenu === 'training' ? 'model' : 'liveModel']: m.id
+                    }))
+                    setIsDropdownOpen(false)
+                  }}
+                  style={{
+                    padding: '16px 20px',
+                    borderRadius: 16,
+                    cursor: 'pointer',
+                    fontSize: 14,
+                    fontWeight: isActive ? 700 : 500,
+                    color: isActive ? 'var(--accent)' : '#eee',
+                    background: isActive ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255,255,255,0.03)',
+                    border: '1px solid',
+                    borderColor: isActive ? 'var(--accent)' : 'rgba(255,255,255,0.05)',
+                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isActive) {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.07)'
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isActive) {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)'
+                    }
+                  }}
+                >
+                  <span>{m.name}</span>
+                  {isActive && (
+                    <div style={{
+                      width: 10,
+                      height: 10,
+                      borderRadius: '50%',
+                      background: 'var(--accent)',
+                      boxShadow: '0 0 15px var(--accent)'
+                    }}></div>
+                  )}
+                </div>
+              )
+            })}
         </div>
       </div>
 
