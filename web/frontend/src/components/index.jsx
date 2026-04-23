@@ -1055,15 +1055,16 @@ export function SettingsPage() {
     seed: 42
   })
 
-  const [error, setError] = useState(null)
+  const [notification, setNotification] = useState(null)
+  const [isRunning, setIsRunning] = useState(false)
   const AVAILABLE_CLASSES = ['walk', 'idle', 'sit', 'fall']
 
   useEffect(() => {
-    if (error) {
-      const timer = setTimeout(() => setError(null), 3000)
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 4000)
       return () => clearTimeout(timer)
     }
-  }, [error])
+  }, [notification])
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target
@@ -1090,7 +1091,11 @@ export function SettingsPage() {
       if (current.includes(cls)) {
         // Enforce at least 2 classes for classification
         if (current.length <= 2) {
-          setError('At least 2 classes are required for ML training.')
+          setNotification({
+            type: 'error',
+            title: 'Validation Error',
+            message: 'At least 2 classes are required for training.'
+          })
           return prev
         }
         return { ...prev, classes: current.filter(c => c !== cls) }
@@ -1119,7 +1124,17 @@ export function SettingsPage() {
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    alert('Pipeline execution started!')
+    if (isRunning) return
+
+    setIsRunning(true)
+    setNotification({
+      type: 'success',
+      title: 'Execution Started',
+      message: 'The ML training pipeline is now running in the background.'
+    })
+    
+    // In a real scenario, you'd wait for a backend response here.
+    // For now, we'll keep it running to demonstrate the lock.
   }
 
   const ALL_TECHS = ['noise', 'shift', 'scale', 'time_warp']
@@ -1312,49 +1327,62 @@ export function SettingsPage() {
             </div>
           </div>
 
-          <button onClick={handleSubmit} className="btn-primary">
-            <span>⚡ Start ML Pipeline Execution</span>
+          <button 
+            onClick={handleSubmit} 
+            className="btn-primary" 
+            disabled={isRunning}
+            style={{
+              opacity: isRunning ? 0.6 : 1,
+              cursor: isRunning ? 'not-allowed' : 'pointer',
+              background: isRunning ? 'var(--surface-gl)' : 'var(--accent)',
+              border: isRunning ? '1px solid var(--border)' : 'none'
+            }}
+          >
+            <span>{isRunning ? '⚙️ Pipeline is Processing...' : '⚡ Start ML Pipeline Execution'}</span>
           </button>
         </div>
 
       </div>
 
       {/* Floating Toast Notification */}
-      {error && (
+      {notification && (
         <div style={{
           position: 'fixed',
           bottom: 40,
           right: 40,
           zIndex: 10000,
-          background: 'rgba(239, 68, 68, 0.15)',
+          background: notification.type === 'error' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
           backdropFilter: 'blur(16px)',
           WebkitBackdropFilter: 'blur(16px)',
-          border: '1px solid rgba(239, 68, 68, 0.3)',
+          border: `1px solid ${notification.type === 'error' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(16, 185, 129, 0.3)'}`,
           borderRadius: 16,
           padding: '16px 24px',
           display: 'flex',
           alignItems: 'center',
           gap: 16,
-          boxShadow: '0 20px 40px rgba(0,0,0,0.4), 0 0 20px rgba(239, 68, 68, 0.1)',
+          boxShadow: `0 20px 40px rgba(0,0,0,0.4), 0 0 20px ${notification.type === 'error' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)'}`,
           animation: 'toastIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards',
-          color: '#fca5a5'
+          color: notification.type === 'error' ? '#fca5a5' : '#a7f3d0'
         }}>
           <div style={{ 
             width: 32, 
             height: 32, 
             borderRadius: '50%', 
-            background: 'rgba(239, 68, 68, 0.2)', 
+            background: notification.type === 'error' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)', 
             display: 'flex', 
             alignItems: 'center', 
             justifyContent: 'center',
-            fontSize: 14
-          }}>⚠️</div>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>Pipeline Validation</span>
-            <span style={{ fontSize: 12, opacity: 0.9 }}>{error}</span>
+            fontSize: 14,
+            color: '#fff'
+          }}>
+            {notification.type === 'error' ? '⚠️' : '🚀'}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', minWidth: 200 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{notification.title}</span>
+            <span style={{ fontSize: 12, opacity: 0.9 }}>{notification.message}</span>
           </div>
           <button 
-            onClick={() => setError(null)}
+            onClick={() => setNotification(null)}
             style={{ 
               background: 'none', 
               border: 'none', 
