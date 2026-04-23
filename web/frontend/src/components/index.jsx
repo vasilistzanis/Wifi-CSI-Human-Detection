@@ -1037,22 +1037,253 @@ export function MiniFooter() {
 }
 
 export function SettingsPage() {
+  const [settings, setSettings] = useState({
+    data_dir: './datasets',
+    classes: ['walk', 'idle', 'sit', 'fall'],
+    window_size: 50,
+    step: 25,
+    fs: 100.0,
+    augment: ['noise', 'shift', 'scale', 'time_warp'],
+    no_augment: false,
+    n_augments: 4,
+    pca: 10,
+    test_ratio: 0.2,
+    use_diff: true,
+    simulate: false,
+    save_model: true,
+    tune: false,
+    seed: 42
+  })
+
+  const [newClass, setNewClass] = useState('')
+
+  const handleInputChange = (e) => {
+    const { name, value, type, checked } = e.target
+    setSettings(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : (type === 'number' ? parseFloat(value) : value)
+    }))
+  }
+
+  const handleAugmentChange = (tech) => {
+    setSettings(prev => {
+      const current = prev.augment
+      if (current.includes(tech)) {
+        return { ...prev, augment: current.filter(t => t !== tech) }
+      } else {
+        return { ...prev, augment: [...current, tech] }
+      }
+    })
+  }
+
+  const addClass = () => {
+    if (newClass && !settings.classes.includes(newClass)) {
+      setSettings(prev => ({ ...prev, classes: [...prev.classes, newClass] }))
+      setNewClass('')
+    }
+  }
+
+  const removeClass = (cls) => {
+    setSettings(prev => ({ ...prev, classes: prev.classes.filter(c => c !== cls) }))
+  }
+
+  const generateCommand = () => {
+    let cmd = `python csi_ml_pipeline.py --data_dir "${settings.data_dir}"`
+    cmd += ` --classes ${settings.classes.join(' ')}`
+    cmd += ` --window_size ${settings.window_size} --step ${settings.step} --fs ${settings.fs}`
+    if (settings.no_augment) {
+      cmd += ` --no_augment`
+    } else {
+      cmd += ` --augment ${settings.augment.join(' ')} --n_augments ${settings.n_augments}`
+    }
+    cmd += ` --pca ${settings.pca} --test_ratio ${settings.test_ratio} --seed ${settings.seed}`
+    if (!settings.use_diff) cmd += ` --no_diff`
+    if (settings.simulate) cmd += ` --simulate`
+    if (settings.save_model) cmd += ` --save_model`
+    if (settings.tune) cmd += ` --tune`
+    return cmd
+  }
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    alert('Pipeline execution started!')
+  }
+
+  const ALL_TECHS = ['noise', 'shift', 'scale', 'time_warp']
+
   return (
-    <div style={{ animation: 'fadeIn 0.4s ease' }}>
-      <div style={{ marginBottom: 24 }}>
-        <span className="label" style={{ marginBottom: 4 }}>Configuration</span>
-        <h2 style={{ fontSize: 22, fontWeight: 700 }}>System Settings</h2>
+    <div style={{ animation: 'fadeIn 0.4s ease', paddingBottom: 60 }}>
+      <div style={{ marginBottom: 32 }}>
+        <span className="label" style={{ marginBottom: 4 }}>ML Pipeline Configuration</span>
+        <h2 style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.02em' }}>Advanced Settings</h2>
+        <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
+          Manage all <span className="mono" style={{ color: 'var(--accent)' }}>csi_ml_pipeline.py</span> arguments in a high-density dashboard.
+        </p>
       </div>
 
-      <div className="card" style={{ padding: 60, textAlign: 'center' }}>
-        <div style={{ fontSize: 48, marginBottom: 20 }}>⚙️</div>
-        <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>Settings are currently locked</h3>
-        <p className="mono" style={{ fontSize: 13, color: 'var(--muted)', maxWidth: 400, margin: '0 auto', lineHeight: 1.6 }}>
-          The real-time parameter tuning module is under maintenance. <br />
-          Hardware thresholds are currently managed via the backend configuration.
-        </p>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(480px, 1fr))',
+        gap: 24
+      }}>
+
+        {/* Card 1: Data & Dataset */}
+        <div className="card" style={{ padding: 28 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--accent-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>📂</div>
+            <h3 style={{ fontSize: 17, fontWeight: 700 }}>Data Strategy</h3>
+          </div>
+
+          <div className="input-group">
+            <label className="input-label">Datasets Directory</label>
+            <input type="text" name="data_dir" className="input-field" value={settings.data_dir} onChange={handleInputChange} />
+          </div>
+
+          <div className="input-group">
+            <label className="input-label">Target Classes</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, background: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 8, border: '1px solid var(--border)' }}>
+              {settings.classes.map(cls => (
+                <span key={cls} className="mono" style={{
+                  padding: '4px 10px', background: 'var(--accent-soft)', border: '1px solid var(--border)',
+                  borderRadius: 6, fontSize: 11, display: 'flex', alignItems: 'center', gap: 8, color: 'var(--accent)'
+                }}>
+                  {cls}
+                  <button onClick={() => removeClass(cls)} style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 14 }}>×</button>
+                </span>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input type="text" className="input-field" placeholder="Add class..." value={newClass} onChange={(e) => setNewClass(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && addClass()} />
+              <button onClick={addClass} className="input-field" style={{ width: 50, cursor: 'pointer' }}>+</button>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 2: Signal Processing */}
+        <div className="card" style={{ padding: 28 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--success-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🧠</div>
+            <h3 style={{ fontSize: 17, fontWeight: 700 }}>Signal Processing</h3>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+            <div className="input-group">
+              <label className="input-label">Window Size</label>
+              <input type="number" name="window_size" className="input-field" value={settings.window_size} onChange={handleInputChange} />
+            </div>
+            <div className="input-group">
+              <label className="input-label">Step Size</label>
+              <input type="number" name="step" className="input-field" value={settings.step} onChange={handleInputChange} />
+            </div>
+            <div className="input-group">
+              <label className="input-label">PCA Components</label>
+              <input type="number" name="pca" className="input-field" value={settings.pca} onChange={handleInputChange} />
+            </div>
+            <div className="input-group">
+              <label className="input-label">Sampling Rate (Hz)</label>
+              <input type="number" name="fs" className="input-field" value={settings.fs} onChange={handleInputChange} />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 20, marginTop: 10 }}>
+            <div className="input-group">
+              <label className="input-label">Test Split Ratio</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <input type="range" min="0.1" max="0.4" step="0.05" name="test_ratio" value={settings.test_ratio} onChange={handleInputChange} style={{ flex: 1, accentColor: 'var(--accent)' }} />
+                <span className="mono" style={{ fontSize: 12 }}>{settings.test_ratio}</span>
+              </div>
+            </div>
+            <label className="toggle-group" style={{ margin: 0, padding: '10px 14px' }}>
+              <div className="toggle-info"><h4>Temporal Diff</h4></div>
+              <div className="switch" style={{ transform: 'scale(0.8)' }}>
+                <input type="checkbox" name="use_diff" checked={settings.use_diff} onChange={handleInputChange} />
+                <span className="slider"></span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        {/* Card 3: Augmentation */}
+        <div className="card" style={{ padding: 28 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--warning-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🧪</div>
+              <h3 style={{ fontSize: 17, fontWeight: 700 }}>Data Augmentation</h3>
+            </div>
+            <label className="switch">
+              <input type="checkbox" checked={!settings.no_augment} onChange={(e) => setSettings(prev => ({ ...prev, no_augment: !e.target.checked }))} />
+              <span className="slider"></span>
+            </label>
+          </div>
+
+          <div style={{ opacity: settings.no_augment ? 0.3 : 1, transition: 'opacity 0.3s' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+              <div className="input-group">
+                <label className="input-label">Augments per Window</label>
+                <input type="number" name="n_augments" className="input-field" value={settings.n_augments} onChange={handleInputChange} />
+              </div>
+              <div className="input-group">
+                <label className="input-label">Random Seed</label>
+                <input type="number" name="seed" className="input-field" value={settings.seed} onChange={handleInputChange} />
+              </div>
+            </div>
+
+            <div className="checkbox-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              {ALL_TECHS.map(tech => (
+                <label key={tech} className="checkbox-item" style={{ padding: '12px 16px' }}>
+                  <input type="checkbox" checked={settings.augment.includes(tech)} onChange={() => handleAugmentChange(tech)} />
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span className="checkbox-label" style={{ textTransform: 'capitalize', fontWeight: 600, color: 'var(--text)' }}>{tech}</span>
+                    <span style={{ fontSize: 9, color: 'var(--muted)' }}>Synthetic Variation</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Card 4: Execution Panel */}
+        <div className="card" style={{ padding: 28, background: 'linear-gradient(180deg, var(--surface-gl) 0%, rgba(99,102,241,0.04) 100%)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--accent-vivid)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🚀</div>
+            <h3 style={{ fontSize: 17, fontWeight: 700 }}>Execution & Results</h3>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+            {[
+              { id: 'simulate', label: 'Simulate' },
+              { id: 'tune', label: 'Hyper-Tune' },
+              { id: 'save_model', label: 'Save Model' },
+            ].map(item => (
+              <label key={item.id} className="toggle-group" style={{ padding: '10px 12px', margin: 0, flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 600 }}>{item.label}</span>
+                <div className="switch" style={{ transform: 'scale(0.8)' }}>
+                  <input type="checkbox" name={item.id} checked={settings[item.id]} onChange={handleInputChange} />
+                  <span className="slider"></span>
+                </div>
+              </label>
+            ))}
+          </div>
+
+          <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 12, padding: 16, border: '1px solid var(--border)', marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span className="label" style={{ fontSize: 8, color: 'var(--accent)', margin: 0 }}>Generated CLI Command</span>
+              <span className="mono" style={{ fontSize: 8, color: 'var(--muted)' }}>Auto-updated</span>
+            </div>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.5, wordBreak: 'break-all', opacity: 0.8 }}>
+              {generateCommand()}
+            </div>
+          </div>
+
+          <button onClick={handleSubmit} className="btn-primary">
+            <span>⚡ Start ML Pipeline Execution</span>
+          </button>
+        </div>
+
       </div>
     </div>
   )
 }
+
+
 
