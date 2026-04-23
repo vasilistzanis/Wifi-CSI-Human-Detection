@@ -1052,11 +1052,13 @@ export function SettingsPage() {
     simulate: false,
     save_model: true,
     tune: false,
-    seed: 42
+    seed: 42,
+    model: 'all'
   })
 
   const [notification, setNotification] = useState(null)
   const [isRunning, setIsRunning] = useState(false)
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const AVAILABLE_CLASSES = ['walk', 'idle', 'sit', 'fall']
 
   useEffect(() => {
@@ -1109,6 +1111,7 @@ export function SettingsPage() {
     let cmd = `python csi_ml_pipeline.py --data_dir "${settings.data_dir}"`
     cmd += ` --classes ${settings.classes.join(' ')}`
     cmd += ` --window_size ${settings.window_size} --step ${settings.step} --fs ${settings.fs}`
+    cmd += ` --model ${settings.model}`
     if (settings.no_augment) {
       cmd += ` --no_augment`
     } else {
@@ -1122,30 +1125,41 @@ export function SettingsPage() {
     return cmd
   }
 
+  const ALL_MODELS = [
+    { id: 'all', name: 'All Architectures' },
+    { id: 'svm', name: 'SVM (RBF)' },
+    { id: 'rf', name: 'Random Forest' },
+    { id: 'et', name: 'Extra Trees' },
+    { id: 'knn', name: 'K-Nearest Neighbors' },
+    { id: 'lr', name: 'Logistic Regression' },
+    { id: 'gb', name: 'Gradient Boosting' },
+    { id: 'mlp', name: 'MLP (Neural Network)' },
+  ]
+
   const validateSettings = () => {
     if (!settings.data_dir.trim()) return 'Dataset directory cannot be empty.'
     if (settings.classes.length < 2) return 'At least 2 classes are required.'
-    
-    if (isNaN(settings.window_size) || settings.window_size < 10 || settings.window_size > 2000) 
+
+    if (isNaN(settings.window_size) || settings.window_size < 10 || settings.window_size > 2000)
       return 'Window Size must be between 10 and 2000.'
-    
-    if (isNaN(settings.step) || settings.step < 1 || settings.step > settings.window_size) 
+
+    if (isNaN(settings.step) || settings.step < 1 || settings.step > settings.window_size)
       return `Step Size must be between 1 and ${settings.window_size} (Window Size).`
-    
-    if (isNaN(settings.pca) || settings.pca < 1 || settings.pca > 100) 
+
+    if (isNaN(settings.pca) || settings.pca < 1 || settings.pca > 100)
       return 'PCA Components must be between 1 and 100.'
-    
-    if (isNaN(settings.fs) || settings.fs < 1 || settings.fs > 1000) 
+
+    if (isNaN(settings.fs) || settings.fs < 1 || settings.fs > 1000)
       return 'Sampling Rate must be between 1 and 1000 Hz.'
-    
+
     if (!settings.no_augment) {
-      if (isNaN(settings.n_augments) || settings.n_augments < 1 || settings.n_augments > 50) 
+      if (isNaN(settings.n_augments) || settings.n_augments < 1 || settings.n_augments > 50)
         return 'Augments per window must be between 1 and 50.'
     }
-    
+
     if (isNaN(settings.test_ratio) || settings.test_ratio < 0.05 || settings.test_ratio > 0.5)
       return 'Test Split Ratio must be between 0.05 and 0.50.'
-    
+
     if (isNaN(settings.seed) || settings.seed < 0 || settings.seed > 2000)
       return 'Random Seed must be between 0 and 2000.'
 
@@ -1172,6 +1186,16 @@ export function SettingsPage() {
       title: 'Execution Started',
       message: 'The ML training pipeline is now running in the background.'
     })
+
+    // Simulate training completion for demo
+    setTimeout(() => {
+      setIsRunning(false)
+      setNotification({
+        type: 'success',
+        title: 'Execution Complete',
+        message: 'Training finished successfully.'
+      })
+    }, 4000)
   }
 
   const ALL_TECHS = ['noise', 'shift', 'scale', 'time_warp']
@@ -1206,11 +1230,11 @@ export function SettingsPage() {
 
           <div className="input-group">
             <label className="input-label">Select Target Classes</label>
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: '1fr 1fr', 
-              gap: 10, 
-              marginTop: 8 
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 10,
+              marginTop: 8
             }}>
               {AVAILABLE_CLASSES.map(cls => {
                 const isActive = settings.classes.includes(cls)
@@ -1332,7 +1356,11 @@ export function SettingsPage() {
         </div>
 
         {/* Card 4: Execution Panel */}
-        <div className="card" style={{ padding: 28, background: 'linear-gradient(180deg, var(--surface-gl) 0%, rgba(99,102,241,0.04) 100%)' }}>
+        <div className="card" style={{ 
+          padding: 28, 
+          background: 'linear-gradient(180deg, var(--surface-gl) 0%, rgba(99,102,241,0.04) 100%)',
+          overflow: 'visible'
+        }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
             <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--accent-vivid)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🚀</div>
             <h3 style={{ fontSize: 17, fontWeight: 700 }}>Execution & Results</h3>
@@ -1354,29 +1382,64 @@ export function SettingsPage() {
             ))}
           </div>
 
-          <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 12, padding: 16, border: '1px solid var(--border)', marginBottom: 20 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span className="label" style={{ fontSize: 10, color: 'var(--accent)', margin: 0 }}>Generated CLI Command</span>
-              <span className="mono" style={{ fontSize: 10, color: 'var(--muted)' }}>Auto-updated</span>
-            </div>
-            <div className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, wordBreak: 'break-all', opacity: 0.9 }}>
-              {generateCommand()}
+          <div style={{ position: 'relative', marginBottom: 20 }}>
+            <label className="input-label" style={{ color: 'var(--accent)', marginBottom: 12, display: 'block' }}>Target ML Architecture</label>
+            
+            <div 
+              onClick={() => setIsDropdownOpen(true)}
+              className="input-field"
+              style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center', 
+                cursor: 'pointer',
+                background: 'rgba(255,255,255,0.05)',
+                position: 'relative'
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{ALL_MODELS.find(m => m.id === settings.model)?.name}</span>
+              <span style={{ opacity: 0.5, fontSize: 12 }}>⚙️</span>
             </div>
           </div>
 
-          <button 
-            onClick={handleSubmit} 
-            className="btn-primary" 
+          <button
+            onClick={handleSubmit}
+            className="btn-primary"
             disabled={isRunning}
             style={{
-              opacity: isRunning ? 0.6 : 1,
+              width: '100%',
+              height: 56,
+              opacity: isRunning ? 0.7 : 1,
               cursor: isRunning ? 'not-allowed' : 'pointer',
               background: isRunning ? 'var(--surface-gl)' : 'var(--accent)',
-              border: isRunning ? '1px solid var(--border)' : 'none'
+              position: 'relative',
+              overflow: 'hidden'
             }}
           >
-            <span>{isRunning ? '⚙️ Pipeline is Processing...' : '⚡ Start ML Pipeline Execution'}</span>
+            {isRunning && (
+              <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                height: '100%',
+                width: '30%',
+                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)',
+                animation: 'progressMove 1.5s infinite linear'
+              }}></div>
+            )}
+            <span>{isRunning ? '⚙️ Training Pipeline...' : '⚡ Start ML Pipeline Execution'}</span>
           </button>
+
+          <style>{`
+            @keyframes progressMove {
+              from { transform: translateX(-100%); }
+              to { transform: translateX(400%); }
+            }
+            @keyframes fadeIn {
+              from { opacity: 0; }
+              to { opacity: 1; }
+            }
+          `}</style>
         </div>
 
       </div>
@@ -1401,13 +1464,13 @@ export function SettingsPage() {
           animation: 'toastIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards',
           color: notification.type === 'error' ? '#fca5a5' : '#a7f3d0'
         }}>
-          <div style={{ 
-            width: 32, 
-            height: 32, 
-            borderRadius: '50%', 
-            background: notification.type === 'error' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)', 
-            display: 'flex', 
-            alignItems: 'center', 
+          <div style={{
+            width: 32,
+            height: 32,
+            borderRadius: '50%',
+            background: notification.type === 'error' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+            display: 'flex',
+            alignItems: 'center',
             justifyContent: 'center',
             fontSize: 14,
             color: '#fff'
@@ -1418,14 +1481,14 @@ export function SettingsPage() {
             <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{notification.title}</span>
             <span style={{ fontSize: 12, opacity: 0.9 }}>{notification.message}</span>
           </div>
-          <button 
+          <button
             onClick={() => setNotification(null)}
-            style={{ 
-              background: 'none', 
-              border: 'none', 
-              color: '#fff', 
-              cursor: 'pointer', 
-              fontSize: 18, 
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#fff',
+              cursor: 'pointer',
+              fontSize: 18,
               opacity: 0.5,
               marginLeft: 10
             }}
@@ -1439,6 +1502,133 @@ export function SettingsPage() {
           `}</style>
         </div>
       )}
+      {/* GLOBAL CENTERED MODAL SELECTION */}
+      {isDropdownOpen && (
+        <div 
+          onClick={() => setIsDropdownOpen(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.6)',
+            backdropFilter: 'blur(8px)',
+            zIndex: 9998,
+            animation: 'fadeIn 0.3s ease'
+          }}
+        />
+      )}
+
+      <div style={{
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        width: '90%',
+        maxWidth: 420,
+        maxHeight: '80vh',
+        background: 'rgba(15, 15, 25, 0.98)',
+        backdropFilter: 'blur(50px)',
+        WebkitBackdropFilter: 'blur(50px)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        zIndex: 9999,
+        padding: 32,
+        borderRadius: 28,
+        boxShadow: isDropdownOpen ? '0 40px 120px rgba(0,0,0,0.9)' : 'none',
+        transform: isDropdownOpen ? 'translate(-50%, -50%) scale(1)' : 'translate(-50%, -45%) scale(0.95)',
+        visibility: isDropdownOpen ? 'visible' : 'hidden',
+        opacity: isDropdownOpen ? '1' : '0',
+        pointerEvents: isDropdownOpen ? 'auto' : 'none',
+        transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+          <div>
+            <h2 style={{ fontSize: 20, fontWeight: 800, color: '#fff', margin: 0, letterSpacing: -0.5 }}>Select Model</h2>
+            <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 4, fontWeight: 500 }}>Target Architecture</div>
+          </div>
+          <button 
+            onClick={() => setIsDropdownOpen(false)}
+            style={{ 
+              background: 'rgba(255,255,255,0.08)', 
+              border: 'none', 
+              color: '#fff', 
+              width: 36, 
+              height: 36, 
+              borderRadius: '50%', 
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'background 0.2s ease'
+            }}
+            onMouseEnter={(e) => e.target.style.background = 'rgba(255,255,255,0.15)'}
+            onMouseLeave={(e) => e.target.style.background = 'rgba(255,255,255,0.08)'}
+          >✕</button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', display: 'grid', gap: 10, paddingRight: 4 }}>
+          {ALL_MODELS.map(m => {
+            const isActive = settings.model === m.id
+            return (
+              <div
+                key={m.id}
+                onClick={() => {
+                  setSettings(prev => ({ ...prev, model: m.id }))
+                  setIsDropdownOpen(false)
+                }}
+                style={{
+                  padding: '16px 20px',
+                  borderRadius: 16,
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  fontWeight: isActive ? 700 : 500,
+                  color: isActive ? 'var(--accent)' : '#eee',
+                  background: isActive ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255,255,255,0.03)',
+                  border: '1px solid',
+                  borderColor: isActive ? 'var(--accent)' : 'rgba(255,255,255,0.05)',
+                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.07)'
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)'
+                  }
+                }}
+              >
+                <span>{m.name}</span>
+                {isActive && (
+                  <div style={{ 
+                    width: 10, 
+                    height: 10, 
+                    borderRadius: '50%', 
+                    background: 'var(--accent)', 
+                    boxShadow: '0 0 15px var(--accent)' 
+                  }}></div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+      `}</style>
     </div>
   )
 }

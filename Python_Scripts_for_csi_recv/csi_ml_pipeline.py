@@ -841,6 +841,7 @@ def train_and_evaluate(
     cv_folds: int = 5,
     best_params: dict = None,
     random_seed: int = 42,
+    target_model: str = "all"
 ) -> dict:
     """
     Train SVM, RF, K-NN, Logistic Regression, Extra Trees, Naive Bayes.
@@ -865,15 +866,15 @@ def train_and_evaluate(
     gb_params  = best_params.get('Gradient Boosting', {})  if best_params else {}
     mlp_params = best_params.get('MLP', {})                if best_params else {}
 
-    models = {
-        'SVM (RBF)': SVC(
+    all_models = {
+        'svm': SVC(
             kernel='rbf',
             C=svm_params.get('C', 10),
             gamma=svm_params.get('gamma', 'scale'),
             class_weight='balanced',
             probability=True,
         ),
-        'Random Forest': RandomForestClassifier(
+        'rf': RandomForestClassifier(
             n_estimators=rf_params.get('n_estimators', 200),
             max_depth=rf_params.get('max_depth', 15),
             min_samples_leaf=rf_params.get('min_samples_leaf', 2),
@@ -881,7 +882,7 @@ def train_and_evaluate(
             n_jobs=-1,
             random_state=random_seed,
         ),
-        'Extra Trees': ExtraTreesClassifier(
+        'et': ExtraTreesClassifier(
             n_estimators=et_params.get('n_estimators', 200),
             max_depth=et_params.get('max_depth', None),
             min_samples_leaf=et_params.get('min_samples_leaf', 1),
@@ -889,35 +890,43 @@ def train_and_evaluate(
             n_jobs=-1,
             random_state=random_seed,
         ),
-        'K-NN (k=5)': KNeighborsClassifier(
+        'knn': KNeighborsClassifier(
             n_neighbors=knn_params.get('n_neighbors', 5),
             weights=knn_params.get('weights', 'distance'),
             metric=knn_params.get('metric', 'euclidean'),
             n_jobs=-1,
         ),
-        'Logistic Regression': LogisticRegression(
+        'lr': LogisticRegression(
             C=lr_params.get('C', 1.0),
             penalty='l2',
-            solver='lbfgs',
+            solver='liblinear',
             max_iter=1000,
             class_weight='balanced',
             random_state=random_seed,
         ),
-        'Gradient Boosting': GradientBoostingClassifier(
+        'gb': GradientBoostingClassifier(
             n_estimators=gb_params.get('n_estimators', 100),
             learning_rate=gb_params.get('learning_rate', 0.1),
             max_depth=gb_params.get('max_depth', 3),
             random_state=random_seed,
         ),
-        'MLP (Neural Network)': MLPClassifier(
+        'mlp': MLPClassifier(
             hidden_layer_sizes=mlp_params.get('hidden_layer_sizes', (100,)),
             alpha=mlp_params.get('alpha', 0.0001),
-            learning_rate=mlp_params.get('learning_rate', 'constant'),
             max_iter=500,
             random_state=random_seed,
         ),
-        'Naive Bayes': GaussianNB(),
+        'nb': GaussianNB(),
     }
+
+    # Map full names if needed or filter by ID
+    if target_model.lower() == 'all':
+        models = all_models
+    elif target_model.lower() in all_models:
+        models = {target_model.lower(): all_models[target_model.lower()]}
+    else:
+        print(f"⚠️ Warning: Model '{target_model}' not recognized. Training all.")
+        models = all_models
 
     cv, actual_folds, splitter_name = _make_group_cv(
         y_train_orig, train_groups_orig, requested_folds=cv_folds,
@@ -1099,6 +1108,8 @@ def main():
     parser.add_argument("--save_model",  action="store_true")
     parser.add_argument("--tune",        action="store_true",
                         help="Run GridSearchCV hyperparameter tuning")
+    parser.add_argument("--model",       type=str,   default="all",
+                        help="Specific model to train (svm, rf, et, knn, lr, gb, mlp, nb) or 'all'")
     parser.add_argument("--seed",        type=int,   default=42)
     args = parser.parse_args()
 
@@ -1158,7 +1169,8 @@ def main():
         X_train, X_train_orig, X_test,
         y_train, y_train_orig, y_test,
         train_groups_orig, le, best_params=best_params,
-        random_seed=args.seed
+        random_seed=args.seed,
+        target_model=args.model
     )
 
     if args.save_model:

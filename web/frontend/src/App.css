@@ -130,10 +130,13 @@ body,
 
 
 @media (max-width: 1024px) {
-  .app, .dashboard-layout {
+
+  .app,
+  .dashboard-layout {
     height: auto;
     overflow: visible;
   }
+
   .main-content {
     padding: 16px;
     height: auto;
@@ -550,4 +553,4 @@ input:checked+.slider:before {
   opacity: 0.5;
   cursor: not-allowed;
   transform: none;
-}
+}
