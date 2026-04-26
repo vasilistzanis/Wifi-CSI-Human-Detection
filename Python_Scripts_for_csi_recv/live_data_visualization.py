@@ -16,16 +16,13 @@ from PyQt5.QtCore import QThread
 from PyQt5.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 from pyqtgraph import PlotWidget, ScatterPlotItem
 
-
-def configure_console_output() -> None:
-    """Avoid UnicodeEncodeError on legacy Windows console encodings."""
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            try:
-                stream.reconfigure(errors="replace")
-            except Exception:
-                pass
-
+# ── Shared parsing from csi_parser ───────────────────────────────────────────
+from csi_parser import (
+    configure_console_output,
+    split_recv_fields,
+    extract_seq,
+    parse_csi_line,
+)
 
 configure_console_output()
 
@@ -35,25 +32,6 @@ DEFAULT_SUBCARRIERS = 128
 DEFAULT_REFRESH_MS = 50
 DEFAULT_SERIAL_TIMEOUT = 0.25
 DEFAULT_SERIAL_BUFFER_SIZE = 2_000_000
-RECV_FIELD_COUNT = 15
-
-
-
-def split_recv_fields(line: str):
-    if not line.startswith("CSI_DATA"):
-        return None
-
-    parts = [part.strip() for part in line.strip().split(",", RECV_FIELD_COUNT - 1)]
-    if len(parts) != RECV_FIELD_COUNT:
-        return None
-
-    for idx in (1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
-        try:
-            int(parts[idx])
-        except ValueError:
-            return None
-
-    return parts
 
 
 def parse_args():
@@ -102,43 +80,6 @@ def safe_set_buffer_size(ser: serial.Serial, rx_size: int) -> None:
     except Exception:
         pass
 
-
-def extract_seq(line: str):
-    parts = split_recv_fields(line)
-    return int(parts[1]) if parts is not None else None
-
-
-
-def parse_csi_frame(line: str, subcarriers: int):
-    parts = split_recv_fields(line)
-    if parts is None:
-        return None
-
-    payload = parts[14].strip().strip('"')
-    if not payload.startswith("[") or not payload.endswith("]"):
-        return None
-    payload = payload[1:-1].strip()
-    if not payload:
-        return None
-
-    expected_values = subcarriers * 2
-    token_count = payload.count(",") + 1
-    values = np.fromstring(payload, sep=",", dtype=np.float32)
-
-    if token_count != expected_values or values.size != expected_values:
-        return None
-
-    first_word_invalid = int(parts[13]) != 0
-    if first_word_invalid and values.size >= 4:
-        values = values.copy()
-        values[:4] = 0.0
-
-    imag = values[0::2]
-    real = values[1::2]
-
-    # ✅ HT40 Hardware Fix: Null first 2 subcarriers (guard bands/corrupted data)
-    # matching the logic in data_preprocessing.py for 100% consistency.
-    return (real + 1j * imag).astype(np.complex64)
 
 
 @dataclass
@@ -276,7 +217,7 @@ class SerialReader(QThread):
                 if seq is not None:
                     self.state.update_seq(seq)
 
-                frame = parse_csi_frame(line, self.state.subcarriers)
+                frame = parse_csi_line(line, expected_subcarriers=self.state.subcarriers)
                 if frame is None:
                     self.state.mark_drop()
                     continue

@@ -50,10 +50,10 @@ from sklearn.preprocessing import StandardScaler
 
 # ✅ IMPROVED: Better import error handling
 try:
-    from csi_plotter_heatmap import load_csi_matrix, resolve_path, get_latest_dataset
+    from csi_parser import load_csi_matrix, resolve_path, get_latest_dataset
 except ImportError as e:
     print(f"❌ Missing dependency: {e}")
-    print("   Make sure csi_plotter_heatmap.py is in the same directory")
+    print("   Make sure csi_parser.py is in the same directory")
     sys.exit(1)
 
 try:
@@ -74,7 +74,7 @@ def parse_args():
     )
     parser.add_argument(
         "--save", action="store_true",
-        help="Save output PNG next to the dataset file (Will save 8 files!)"
+        help="Save output PNG next to the dataset file (Will save 7 files!)"
     )
     parser.add_argument(
         "--pca-components", type=int, default=10,

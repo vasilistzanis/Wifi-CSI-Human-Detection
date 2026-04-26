@@ -10,7 +10,7 @@ Design goals:
   • Zero GUI dependencies (no Qt / Tk)
   • Single-threaded read loop — no locking overhead
   • Rolling deque buffer — O(1) frame push / O(1) pop
-  • Reuses parse_csi_line from csi_plotter_heatmap  (no code duplication)
+  • Reuses parse_csi_line from csi_parser  (no code duplication)
   • Reuses extract_features_from_window from csi_ml_pipeline
 
 Usage:
@@ -33,9 +33,9 @@ import serial
 
 # ─── Local imports ────────────────────────────────────────────────────────────
 try:
-    from csi_plotter_heatmap import parse_csi_line
+    from csi_parser import parse_csi_line
 except ImportError:
-    print("❌  csi_plotter_heatmap.py not found in the same directory.")
+    print("❌  csi_parser.py not found in the same directory.")
     sys.exit(1)
 
 try:

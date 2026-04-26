@@ -62,10 +62,10 @@ import matplotlib.pyplot as plt
 plt.ioff()
 
 try:
-    from csi_plotter_heatmap import load_csi_matrix, resolve_path, get_latest_dataset
+    from csi_parser import load_csi_matrix, resolve_path, get_latest_dataset
 except ImportError as e:
     print(f"❌ Missing dependency: {e}")
-    print("   Make sure csi_plotter_heatmap.py is in the same directory")
+    print("   Make sure csi_parser.py is in the same directory")
     sys.exit(1)
 
 try:
