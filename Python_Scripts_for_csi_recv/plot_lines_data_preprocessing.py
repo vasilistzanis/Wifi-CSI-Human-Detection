@@ -93,12 +93,12 @@ def parse_args():
         help="Save figures as PNG next to the dataset file (creates 7 files)"
     )
     p.add_argument(
-        "--n-subcarriers", type=int, default=5,
-        help="Number of subcarriers to overlay (default: 5)"
+        "--n-subcarriers", type=int, default=128,
+        help="Number of subcarriers to overlay (default: 128 (all))"
     )
     p.add_argument(
-        "--pca-components", type=int, default=3,
-        help="Number of PCA components to show (default: 3)"
+        "--pca-components", type=int, default=10,
+        help="Number of PCA components to show (default: 10)"
     )
     p.add_argument(
         "--cutoff", type=float, default=12.0,
@@ -296,7 +296,8 @@ def main():
         f"packet loss {seq_stats.loss_percent:.2f}%"
     )
 
-    SC_COLORS  = get_color_palette(max(len(sc_indices), n_pca))
+    raw_indices = select_subcarriers(n_sub, args.n_subcarriers)
+    SC_COLORS  = get_color_palette(max(len(raw_indices), len(sc_indices), n_pca))
     PCA_COLORS = ['#e63946', '#2a9d8f', '#e9c46a', '#457b9d', '#f4a261']
 
     def create_window():
@@ -323,7 +324,6 @@ def main():
         fig0, ax0 = create_window()
         t_raw = make_time_axis(amp_step0.shape[0], args.fs)
         # For raw, pick same sc_indices mapped to all subcarriers (not just active)
-        raw_indices = select_subcarriers(n_sub, args.n_subcarriers)
         for i, sc in enumerate(raw_indices):
             ax0.plot(t_raw, amp_step0[:, sc],
                      color=SC_COLORS[i], linewidth=1.0, alpha=0.75,
@@ -331,8 +331,9 @@ def main():
         style_ax(ax0,
                  "⓪ Raw Amplitude  (all subcarriers incl. guard/null bands)",
                  "Amplitude (a.u.)")
-        ax0.legend(loc="upper right", fontsize=9, ncol=min(len(raw_indices), 5),
-                   framealpha=0.7)
+        if len(raw_indices) <= 20:
+            ax0.legend(loc="upper right", fontsize=9, ncol=min(len(raw_indices), 5),
+                       framealpha=0.7)
         fig0.tight_layout(rect=[0, 0.05, 1, 0.92])
         save_fig(fig0, 0)
 
@@ -346,8 +347,9 @@ def main():
                  f"① Null Subcarrier Removal  "
                  f"({null_count} nulls removed · {n_active} active subcarriers)",
                  "Amplitude (a.u.)")
-        ax1.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
-                   framealpha=0.7)
+        if len(sc_indices) <= 20:
+            ax1.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
+                       framealpha=0.7)
         fig1.tight_layout(rect=[0, 0.05, 1, 0.92])
         save_fig(fig1, 1)
 
@@ -360,8 +362,9 @@ def main():
         style_ax(ax2,
                  "② Hampel Filter  (spike / outlier removal, window=11, 3σ)",
                  "Amplitude (a.u.)")
-        ax2.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
-                   framealpha=0.7)
+        if len(sc_indices) <= 20:
+            ax2.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
+                       framealpha=0.7)
         fig2.tight_layout(rect=[0, 0.05, 1, 0.92])
         save_fig(fig2, 2)
 
@@ -375,8 +378,9 @@ def main():
                  f"③ Butterworth Low-Pass  ({args.cutoff} Hz, 4th order, zero-phase)"
                  f"  —  noise removed",
                  "Amplitude (a.u.)")
-        ax3.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
-                   framealpha=0.7)
+        if len(sc_indices) <= 20:
+            ax3.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
+                       framealpha=0.7)
         fig3.tight_layout(rect=[0, 0.05, 1, 0.92])
         save_fig(fig3, 3)
 
@@ -392,8 +396,9 @@ def main():
                      f"④ Temporal Difference  [frame(t+1) − frame(t)]  →  "
                      f"motion events visible  ({amp_step4.shape[0]} frames)",
                      "Δ Amplitude / frame")
-            ax4.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
-                       framealpha=0.7)
+            if len(sc_indices) <= 20:
+                ax4.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
+                           framealpha=0.7)
         else:
             ax4.text(0.5, 0.5, "Temporal difference DISABLED (--no-diff)",
                      ha='center', va='center', transform=ax4.transAxes,
