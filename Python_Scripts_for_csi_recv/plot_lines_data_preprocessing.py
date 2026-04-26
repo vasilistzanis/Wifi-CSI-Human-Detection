@@ -334,6 +334,10 @@ def main():
         if len(raw_indices) <= 20:
             ax0.legend(loc="upper right", fontsize=9, ncol=min(len(raw_indices), 5),
                        framealpha=0.7)
+        else:
+            ax0.text(0.99, 0.96, f"All {len(raw_indices)} Subcarriers",
+                     transform=ax0.transAxes, ha='right', va='top', fontsize=10,
+                     bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#cccccc", alpha=0.8))
         fig0.tight_layout(rect=[0, 0.05, 1, 0.92])
         save_fig(fig0, 0)
 
@@ -350,6 +354,10 @@ def main():
         if len(sc_indices) <= 20:
             ax1.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
                        framealpha=0.7)
+        else:
+            ax1.text(0.99, 0.96, f"All {len(sc_indices)} Active Subcarriers",
+                     transform=ax1.transAxes, ha='right', va='top', fontsize=10,
+                     bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#cccccc", alpha=0.8))
         fig1.tight_layout(rect=[0, 0.05, 1, 0.92])
         save_fig(fig1, 1)
 
@@ -365,6 +373,10 @@ def main():
         if len(sc_indices) <= 20:
             ax2.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
                        framealpha=0.7)
+        else:
+            ax2.text(0.99, 0.96, f"All {len(sc_indices)} Active Subcarriers",
+                     transform=ax2.transAxes, ha='right', va='top', fontsize=10,
+                     bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#cccccc", alpha=0.8))
         fig2.tight_layout(rect=[0, 0.05, 1, 0.92])
         save_fig(fig2, 2)
 
@@ -381,6 +393,10 @@ def main():
         if len(sc_indices) <= 20:
             ax3.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
                        framealpha=0.7)
+        else:
+            ax3.text(0.99, 0.96, f"All {len(sc_indices)} Active Subcarriers",
+                     transform=ax3.transAxes, ha='right', va='top', fontsize=10,
+                     bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#cccccc", alpha=0.8))
         fig3.tight_layout(rect=[0, 0.05, 1, 0.92])
         save_fig(fig3, 3)
 
@@ -399,6 +415,10 @@ def main():
             if len(sc_indices) <= 20:
                 ax4.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
                            framealpha=0.7)
+            else:
+                ax4.text(0.99, 0.96, f"All {len(sc_indices)} Active Subcarriers",
+                         transform=ax4.transAxes, ha='right', va='top', fontsize=10,
+                         bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#cccccc", alpha=0.8))
         else:
             ax4.text(0.5, 0.5, "Temporal difference DISABLED (--no-diff)",
                      ha='center', va='center', transform=ax4.transAxes,
