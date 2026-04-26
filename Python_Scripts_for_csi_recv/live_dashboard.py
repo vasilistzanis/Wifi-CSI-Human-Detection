@@ -356,8 +356,7 @@ def _waveform_plot():
     ax_l.setStyle(tickLength=-6, tickTextOffset=4)
     ax_l.setTextPen(pg.mkPen(TEXT_MID))
     ax_l.setPen(pg.mkPen(BORDER))
-    ax_l.setTickFont(QtGui.QFont("Courier New", 8))
-    ax_l.setTicks([[(v, f"{v:.1f}") for v in np.linspace(0, 1, 6)]])
+    ax_l.setTicks([[(v, f"{v:.1f}") for v in np.linspace(0, 1.5, 4)]])
 
     # Bottom axis — frame index
     ax_b = pw.getAxis("bottom")
@@ -366,11 +365,12 @@ def _waveform_plot():
     ax_b.setPen(pg.mkPen(BORDER))
     ax_b.setTickFont(QtGui.QFont("Courier New", 8))
 
-    pw.setYRange(0.0, 1.12, padding=0)
+    # Setting Y-range to 1.5 puts 1.0 comfortably in the upper-middle
+    pw.setYRange(0.0, 1.5, padding=0)
     pw.setXRange(0, WAVEFORM_LEN - 1, padding=0.02)
 
     # Grid
-    for yv in np.linspace(0, 1.0, 6):
+    for yv in np.linspace(0, 1.5, 4):
         pw.addItem(pg.InfiniteLine(pos=yv, angle=0,
                                    pen=pg.mkPen(GRID_CLR, width=1)))
     for xv in np.linspace(0, WAVEFORM_LEN - 1, 9):
@@ -635,6 +635,13 @@ def main():
     reader.start()
 
     win = WaveformMonitor(reader=reader, port=args.port)
+    
+    # Center the window on the computer screen
+    screen_rect = app.primaryScreen().availableGeometry()
+    x = (screen_rect.width() - win.width()) // 2
+    y = (screen_rect.height() - win.height()) // 2
+    win.move(x, y)
+    
     win.show()
 
     code = app.exec_()
