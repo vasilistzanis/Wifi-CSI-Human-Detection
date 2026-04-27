@@ -1113,6 +1113,11 @@ def main():
     parser.add_argument("--seed",        type=int,   default=42)
     args = parser.parse_args()
 
+    # Validation: Step vs Window size
+    if args.step > args.window_size:
+        print(f"\n⚠️  WARNING: step ({args.step}) > window_size ({args.window_size}).")
+        print("   This means some CSI frames will be skipped and not covered by any window.\n")
+
     # --no_augment disables everything; otherwise use the specified (or default) list
     if args.no_augment:
         augment_techniques = []
