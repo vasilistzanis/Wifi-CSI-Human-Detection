@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+
 """
-CSI Thesis Figures — Complete Publication-Ready Plot Set
+CSI Thesis Figures - Complete Publication-Ready Plot Set
 ========================================================
 Generates 6 thesis-grade figures from a single CSI dataset file.
 
-  🔴 CORE (3 plots):
-    1. Amplitude vs Time        — human motion signature
-    2. Heatmap (Time × SC)      — spatial-temporal pattern
-    3. Amplitude vs Subcarriers — channel fingerprint
 
-  🟡 SUPPORT (1 plot):
-    4. Variance / Energy vs Time — motion intensity
+  [CORE] CORE (3 plots):
+    1. Amplitude vs Time        - human motion signature
+    2. Heatmap (Time x SC)      - spatial-temporal pattern
+    3. Amplitude vs Subcarriers - channel fingerprint
 
-  🔵 ADVANCED (2 plots):
-    5. FFT / Spectrogram        — frequency domain analysis
-    6. Phase vs Time            — multipath sensitivity
+
+  [INFO] SUPPORT (1 plot):
+    4. Variance / Energy vs Time - motion intensity
+
+
+  [ADVANCED] ADVANCED (2 plots):
+    5. FFT / Spectrogram        - frequency domain analysis
+    6. Phase vs Time            - multipath sensitivity
+
 
 Usage:
   python plot_thesis_figures.py                              # latest file
@@ -24,13 +29,16 @@ Usage:
   python plot_thesis_figures.py walk_01.txt --save
 """
 
+
 import sys
 import argparse
 from pathlib import Path
 
+
 import numpy as np
 import matplotlib
 from scipy.signal import spectrogram
+
 
 from csi_parser import (
     configure_console_output,
@@ -39,7 +47,9 @@ from csi_parser import (
     load_csi_matrix,
 )
 
+
 configure_console_output()
+
 
 try:
     matplotlib.use("Qt5Agg")
@@ -49,13 +59,17 @@ except Exception:
     except Exception:
         pass
 
+
 import matplotlib.pyplot as plt
 plt.ioff()
 
 
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
 # STYLE
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
+
 
 # Professional light theme for thesis/paper printing
 STYLE = {
@@ -71,8 +85,11 @@ STYLE = {
     "accent6":  "#06b6d4",   # cyan
 }
 
+
 PALETTE = [STYLE["accent1"], STYLE["accent2"], STYLE["accent3"],
            STYLE["accent4"], STYLE["accent5"], STYLE["accent6"]]
+
+
 
 
 def _apply_style():
@@ -95,10 +112,14 @@ def _apply_style():
     })
 
 
+
+
 def _save_fig(fig, save_dir: Path, name: str):
     out = save_dir / f"{name}.png"
     fig.savefig(out, dpi=300, bbox_inches="tight", facecolor=STYLE["bg"])
-    print(f"  💾 {out.name}")
+    print(f"  [SAVE] {out.name}")
+
+
 
 
 def _get_active(complex_matrix):
@@ -108,22 +129,28 @@ def _get_active(complex_matrix):
     return amp[:, mask], np.flatnonzero(mask), mask
 
 
-# ════════════════════════════════════════════════════════════════════════
-# 🔴 PLOT 1 — Amplitude vs Time
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
+# [CORE] PLOT 1 - Amplitude vs Time
+# ========================================================================
+
 
 def plot_amplitude_vs_time(complex_matrix, fs, title_base, save_dir, save):
     amp_active, indices, _ = _get_active(complex_matrix)
     n_frames = amp_active.shape[0]
     t = np.arange(n_frames) / fs
 
+
     mean_amp = amp_active.mean(axis=1)
     std_amp = amp_active.std(axis=1)
+
 
     fig, ax = plt.subplots(figsize=(14, 6))
     ax.plot(t, mean_amp, color=STYLE["accent1"], linewidth=1.2, label="Mean Amplitude")
     ax.fill_between(t, mean_amp - std_amp, mean_amp + std_amp,
-                    alpha=0.2, color=STYLE["accent1"], label="±1 σ")
+                    alpha=0.2, color=STYLE["accent1"], label="+/-1 sigma")
+
 
     # Overlay 3 representative subcarriers
     n_sc = amp_active.shape[1]
@@ -133,9 +160,10 @@ def plot_amplitude_vs_time(complex_matrix, fs, title_base, save_dir, save):
                     color=PALETTE[(i + 1) % len(PALETTE)],
                     label=f"SC {indices[sc_idx]}")
 
+
     ax.set_xlabel("Time (s)", fontweight="bold")
     ax.set_ylabel("CSI Amplitude |H|", fontweight="bold")
-    ax.set_title(f"① CSI Amplitude vs Time\n{title_base}", fontweight="bold", pad=12)
+    ax.set_title(f"1. CSI Amplitude vs Time\n{title_base}", fontweight="bold", pad=12)
     ax.legend(loc="upper right", fontsize=9, framealpha=0.8)
     fig.tight_layout()
     if save:
@@ -143,16 +171,21 @@ def plot_amplitude_vs_time(complex_matrix, fs, title_base, save_dir, save):
     return fig
 
 
-# ════════════════════════════════════════════════════════════════════════
-# 🔴 PLOT 2 — Heatmap (Time × Subcarriers)
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
+# [CORE] PLOT 2 - Heatmap (Time x Subcarriers)
+# ========================================================================
+
 
 def plot_heatmap(complex_matrix, fs, title_base, save_dir, save):
     amp_active, indices, _ = _get_active(complex_matrix)
     n_frames = amp_active.shape[0]
 
+
     vmin = np.percentile(amp_active, 2)
     vmax = np.percentile(amp_active, 98)
+
 
     fig, ax = plt.subplots(figsize=(14, 6))
     extent = [0, n_frames / fs, 0, amp_active.shape[1]]
@@ -161,7 +194,7 @@ def plot_heatmap(complex_matrix, fs, title_base, save_dir, save):
                    vmin=vmin, vmax=vmax, extent=extent)
     ax.set_xlabel("Time (s)", fontweight="bold")
     ax.set_ylabel("Active Subcarrier (sequential)", fontweight="bold")
-    ax.set_title(f"② CSI Amplitude Heatmap (Time × Subcarriers)\n{title_base}",
+    ax.set_title(f"2. CSI Amplitude Heatmap (Time x Subcarriers)\n{title_base}",
                  fontweight="bold", pad=12)
     fig.colorbar(im, ax=ax, label="Amplitude |H|", shrink=0.8)
     fig.tight_layout()
@@ -170,16 +203,21 @@ def plot_heatmap(complex_matrix, fs, title_base, save_dir, save):
     return fig
 
 
-# ════════════════════════════════════════════════════════════════════════
-# 🔴 PLOT 3 — Amplitude vs Subcarriers (Channel Fingerprint)
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
+# [CORE] PLOT 3 - Amplitude vs Subcarriers (Channel Fingerprint)
+# ========================================================================
+
 
 def plot_subcarrier_profile(complex_matrix, title_base, save_dir, save):
     amp_active, indices, _ = _get_active(complex_matrix)
 
+
     mean_amp = amp_active.mean(axis=0)
     std_amp = amp_active.std(axis=0)
     median_amp = np.median(amp_active, axis=0)
+
 
     fig, ax = plt.subplots(figsize=(14, 6))
     ax.plot(indices, mean_amp, color=STYLE["accent2"], linewidth=2.0,
@@ -189,9 +227,10 @@ def plot_subcarrier_profile(complex_matrix, title_base, save_dir, save):
     ax.plot(indices, median_amp, color=STYLE["accent3"], linewidth=1.2,
             linestyle="--", alpha=0.8, label="Median")
 
+
     ax.set_xlabel("Subcarrier Index", fontweight="bold")
     ax.set_ylabel("Amplitude |H|", fontweight="bold")
-    ax.set_title(f"③ Channel Frequency Response (Subcarrier Profile)\n{title_base}",
+    ax.set_title(f"3. Channel Frequency Response (Subcarrier Profile)\n{title_base}",
                  fontweight="bold", pad=12)
     ax.legend(loc="upper right", fontsize=10, framealpha=0.8)
     fig.tight_layout()
@@ -200,9 +239,12 @@ def plot_subcarrier_profile(complex_matrix, title_base, save_dir, save):
     return fig
 
 
-# ════════════════════════════════════════════════════════════════════════
-# 🟡 PLOT 4 — Variance / Signal Energy vs Time
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
+# [INFO] PLOT 4 - Variance / Signal Energy vs Time
+# ========================================================================
+
 
 def plot_variance_energy(complex_matrix, fs, title_base, save_dir, save,
                          rolling_window=50):
@@ -210,27 +252,32 @@ def plot_variance_energy(complex_matrix, fs, title_base, save_dir, save,
     n_frames = amp_active.shape[0]
     t = np.arange(n_frames) / fs
 
+
     # Per-frame energy (sum of squared amplitudes)
     energy = np.sum(amp_active ** 2, axis=1)
     # Per-frame variance across subcarriers
     variance = np.var(amp_active, axis=1)
+
 
     # Rolling smoothing (avoids edge drops via nearest reflection)
     from scipy.ndimage import uniform_filter1d
     energy_smooth = uniform_filter1d(energy, size=rolling_window, mode="nearest")
     variance_smooth = uniform_filter1d(variance, size=rolling_window, mode="nearest")
 
+
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 6), sharex=True,
                                     gridspec_kw={"hspace": 0.12})
+
 
     # Energy
     ax1.plot(t, energy, alpha=0.3, color=STYLE["accent4"], linewidth=0.5)
     ax1.plot(t, energy_smooth, color=STYLE["accent4"], linewidth=2.0,
              label=f"Smoothed (window={rolling_window})")
-    ax1.set_ylabel("Signal Energy  Σ|H|²", fontweight="bold")
-    ax1.set_title(f"④ Signal Energy & Variance vs Time\n{title_base}",
+    ax1.set_ylabel("Signal Energy  sum|H|^2", fontweight="bold")
+    ax1.set_title(f"4. Signal Energy & Variance vs Time\n{title_base}",
                   fontweight="bold", pad=12)
     ax1.legend(loc="upper right", fontsize=9)
+
 
     # Variance
     ax2.plot(t, variance, alpha=0.3, color=STYLE["accent5"], linewidth=0.5)
@@ -240,30 +287,38 @@ def plot_variance_energy(complex_matrix, fs, title_base, save_dir, save,
     ax2.set_xlabel("Time (s)", fontweight="bold")
     ax2.legend(loc="upper right", fontsize=9)
 
+
     fig.tight_layout()
     if save:
         _save_fig(fig, save_dir, "04_variance_energy")
     return fig
 
 
-# ════════════════════════════════════════════════════════════════════════
-# 🔵 PLOT 5 — FFT / Spectrogram
-# ════════════════════════════════════════════════════════════════════════
 
-def plot_fft_spectrogram(complex_matrix, fs, title_base, save_dir, save):
+
+# ========================================================================
+# [ADVANCED] PLOT 5 - FFT / Spectrogram
+# ========================================================================
+
+
+def plot_fft_spectrogram(complex_matrix, fs, title_base, save_dir, save, f_max=25.0):
     amp_active, _, _ = _get_active(complex_matrix)
     mean_amp = amp_active.mean(axis=1)
+
 
     # Remove DC component
     signal = mean_amp - mean_amp.mean()
 
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6),
                                     gridspec_kw={"width_ratios": [1, 1.5]})
+
 
     # Left: FFT magnitude spectrum
     n = len(signal)
     fft_vals = np.abs(np.fft.rfft(signal))
     freqs = np.fft.rfftfreq(n, d=1.0 / fs)
+
 
     # Skip DC (index 0)
     ax1.plot(freqs[1:], fft_vals[1:], color=STYLE["accent1"], linewidth=1.2)
@@ -276,7 +331,8 @@ def plot_fft_spectrogram(complex_matrix, fs, title_base, save_dir, save):
     ax1.set_ylabel("FFT Magnitude", fontweight="bold")
     ax1.set_title("FFT Spectrum", fontweight="bold")
     ax1.legend(fontsize=9)
-    ax1.set_xlim(0, min(fs / 2, 25))
+    ax1.set_xlim(0, min(fs / 2, f_max))
+
 
     # Right: Spectrogram
     nperseg = min(256, len(signal) // 4)
@@ -284,11 +340,13 @@ def plot_fft_spectrogram(complex_matrix, fs, title_base, save_dir, save):
         nperseg = 16
     noverlap = nperseg // 2
 
+
     f, t_spec, Sxx = spectrogram(signal, fs=fs, nperseg=nperseg,
                                   noverlap=noverlap, scaling="spectrum")
 
+
     # Limit frequency range
-    f_mask = f <= min(fs / 2, 25)
+    f_mask = f <= min(fs / 2, f_max)
     im = ax2.pcolormesh(t_spec, f[f_mask], 10 * np.log10(Sxx[f_mask] + 1e-12),
                         shading="gouraud", cmap="inferno")
     ax2.set_xlabel("Time (s)", fontweight="bold")
@@ -296,7 +354,8 @@ def plot_fft_spectrogram(complex_matrix, fs, title_base, save_dir, save):
     ax2.set_title("Spectrogram (dB)", fontweight="bold")
     fig.colorbar(im, ax=ax2, label="Power (dB)", shrink=0.8)
 
-    fig.suptitle(f"⑤ Frequency Domain Analysis\n{title_base}",
+
+    fig.suptitle(f"5. Frequency Domain Analysis\n{title_base}",
                  fontweight="bold")
     fig.tight_layout()
     if save:
@@ -304,9 +363,12 @@ def plot_fft_spectrogram(complex_matrix, fs, title_base, save_dir, save):
     return fig
 
 
-# ════════════════════════════════════════════════════════════════════════
-# 🔵 PLOT 6 — Phase vs Time
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
+# [ADVANCED] PLOT 6 - Phase vs Time
+# ========================================================================
+
 
 def plot_phase_vs_time(complex_matrix, fs, title_base, save_dir, save):
     amp = np.abs(complex_matrix)
@@ -314,8 +376,10 @@ def plot_phase_vs_time(complex_matrix, fs, title_base, save_dir, save):
     phase = np.angle(complex_matrix[:, mask])
     n_frames = phase.shape[0]
 
+
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 6),
                                     gridspec_kw={"hspace": 0.25})
+
 
     # Top: Phase heatmap (wrapped)
     extent = [0, n_frames / fs, 0, phase.shape[1]]
@@ -324,8 +388,9 @@ def plot_phase_vs_time(complex_matrix, fs, title_base, save_dir, save):
                      vmin=-np.pi, vmax=np.pi, extent=extent)
     ax1.set_xlabel("Time (s)", fontweight="bold")
     ax1.set_ylabel("Active Subcarrier", fontweight="bold")
-    ax1.set_title(f"⑥ CSI Phase vs Time\n{title_base}", fontweight="bold", pad=12)
+    ax1.set_title(f"6. CSI Phase vs Time\n{title_base}", fontweight="bold", pad=12)
     fig.colorbar(im1, ax=ax1, label="Phase (rad)", shrink=0.8)
+
 
     # Bottom: Unwrapped phase for 3 representative subcarriers
     phase_unwrap = np.unwrap(phase, axis=0)
@@ -337,10 +402,12 @@ def plot_phase_vs_time(complex_matrix, fs, title_base, save_dir, save):
             ax2.plot(t, phase_unwrap[:, sc_idx], linewidth=1.0, alpha=0.8,
                      color=PALETTE[i % len(PALETTE)], label=f"SC {active_indices[sc_idx]}")
 
+
     ax2.set_xlabel("Time (s)", fontweight="bold")
     ax2.set_ylabel("Unwrapped Phase (rad)", fontweight="bold")
     ax2.set_title("Unwrapped Phase (selected subcarriers)", fontweight="bold")
     ax2.legend(loc="upper right", fontsize=9)
+
 
     fig.tight_layout()
     if save:
@@ -348,13 +415,16 @@ def plot_phase_vs_time(complex_matrix, fs, title_base, save_dir, save):
     return fig
 
 
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
 # MAIN
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
+
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="CSI Thesis Figures — 6 Publication-Ready Plots"
+        description="CSI Thesis Figures - 6 Publication-Ready Plots"
     )
     p.add_argument("file", nargs="?", default=None,
                    help="Dataset .txt or .csv (default: latest in datasets/)")
@@ -362,16 +432,23 @@ def parse_args():
                    help="Save all figures as PNG (300 DPI)")
     p.add_argument("--fs", type=float, default=100.0,
                    help="Sampling frequency in Hz (default: 100)")
+    p.add_argument("--fft-max", type=float, default=25.0,
+                   help="Max frequency (Hz) to show in FFT/Spectrogram (default: 25)")
+    p.add_argument("--rolling-window", type=int, default=50,
+                   help="Window for smoothing variance/energy plots")
     p.add_argument("--out_dir", default=None,
                    help="Output directory for saved figures (default: next to dataset)")
     return p.parse_args()
+
+
 
 
 def main():
     args = parse_args()
     _apply_style()
 
-    # ── File resolution ───────────────────────────────────────────────
+
+    # -- File resolution -----------------------------------------------
     if args.file:
         file_path = Path(args.file)
         if not file_path.exists():
@@ -380,30 +457,36 @@ def main():
         datasets_dir = resolve_path("datasets")
         file_path = get_latest_dataset(datasets_dir)
 
+
     if file_path is None or not file_path.exists():
-        print("❌ No dataset file found.")
+        print("[ERROR] No dataset file found.")
         print("   Use: python plot_thesis_figures.py <file.txt>")
         return 1
 
-    # ── Load ──────────────────────────────────────────────────────────
-    print(f"\n📂 Loading: {file_path.name}")
+
+    # -- Load ----------------------------------------------------------
+    print(f"\n[FILE] Loading: {file_path.name}")
     try:
         complex_matrix, dropped, seq_stats = load_csi_matrix(file_path)
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"[ERROR] Error: {e}")
         return 1
+
 
     n_frames, n_sub = complex_matrix.shape
     duration = n_frames / args.fs
     active_count = int(np.any(np.abs(complex_matrix) > 0, axis=0).sum())
 
-    print(f"   {n_frames} frames × {n_sub} subcarriers ({active_count} active)")
+
+    print(f"   {n_frames} frames x {n_sub} subcarriers ({active_count} active)")
     print(f"   Duration: {duration:.1f}s | Loss: {seq_stats.loss_percent:.2f}%")
 
-    title_base = (f"{file_path.name}  ·  {n_frames} frames × {active_count} SC  ·  "
-                  f"{duration:.1f}s  ·  loss {seq_stats.loss_percent:.1f}%")
 
-    # ── Output directory ──────────────────────────────────────────────
+    title_base = (f"{file_path.name}  -  {n_frames} frames x {active_count} SC  -  "
+                  f"{duration:.1f}s  -  loss {seq_stats.loss_percent:.1f}%")
+
+
+    # -- Output directory ----------------------------------------------
     if args.out_dir:
         save_dir = Path(args.out_dir)
     else:
@@ -412,46 +495,60 @@ def main():
         save_dir.mkdir(parents=True, exist_ok=True)
         print(f"   Output: {save_dir}")
 
-    # ── Generate all plots ────────────────────────────────────────────
-    print(f"\n{'═' * 55}")
-    print(f"  GENERATING 6 THESIS FIGURES")
-    print(f"{'═' * 55}")
 
-    print("\n🔴 CORE PLOTS")
-    print("  ① Amplitude vs Time...")
+    # -- Generate all plots --------------------------------------------
+    print(f"\n{'=' * 55}")
+    print(f"  GENERATING 6 THESIS FIGURES")
+    print(f"{'=' * 55}")
+
+
+    print("\n[CORE] CORE PLOTS")
+    print("  1. Amplitude vs Time...")
     plot_amplitude_vs_time(complex_matrix, args.fs, title_base, save_dir, args.save)
 
-    print("  ② Heatmap (Time × Subcarriers)...")
+
+    print("  2. Heatmap (Time x Subcarriers)...")
     plot_heatmap(complex_matrix, args.fs, title_base, save_dir, args.save)
 
-    print("  ③ Subcarrier Profile...")
+
+    print("  3. Subcarrier Profile...")
     plot_subcarrier_profile(complex_matrix, title_base, save_dir, args.save)
 
-    print("\n🟡 SUPPORT PLOTS")
-    print("  ④ Variance & Energy...")
-    plot_variance_energy(complex_matrix, args.fs, title_base, save_dir, args.save)
 
-    print("\n🔵 ADVANCED PLOTS")
-    print("  ⑤ FFT & Spectrogram...")
-    plot_fft_spectrogram(complex_matrix, args.fs, title_base, save_dir, args.save)
+    print("\n[INFO] SUPPORT PLOTS")
+    print("  4. Variance & Energy...")
+    plot_variance_energy(complex_matrix, args.fs, title_base, save_dir, args.save,
+                         rolling_window=args.rolling_window)
 
-    print("  ⑥ Phase vs Time...")
+
+    print("\n[ADVANCED] ADVANCED PLOTS")
+    print("  5. FFT & Spectrogram...")
+    plot_fft_spectrogram(complex_matrix, args.fs, title_base, save_dir, args.save,
+                         f_max=args.fft_max)
+
+
+    print("  6. Phase vs Time...")
     plot_phase_vs_time(complex_matrix, args.fs, title_base, save_dir, args.save)
 
-    # ── Show ──────────────────────────────────────────────────────────
-    print(f"\n{'═' * 55}")
+
+    # -- Show ----------------------------------------------------------
+    print(f"\n{'=' * 55}")
     if args.save:
-        print(f"  ✅ All figures saved to: {save_dir}")
-    print(f"  ✅ Showing 6 windows (close all to exit)")
-    print(f"{'═' * 55}\n")
+        print(f"  [OK] All figures saved to: {save_dir}")
+    print(f"  [OK] Showing 6 windows (close all to exit)")
+    print(f"{'=' * 55}\n")
+
 
     try:
         plt.show()
     except Exception:
         pass
 
+
     plt.rcParams.update(plt.rcParamsDefault)
     return 0
+
+
 
 
 if __name__ == "__main__":

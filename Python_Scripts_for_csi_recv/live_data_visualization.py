@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+
 import argparse
 import os
 import sys
 import threading
 from dataclasses import dataclass, field
+
+
 
 
 import numpy as np
@@ -16,7 +19,8 @@ from PyQt5.QtCore import QThread
 from PyQt5.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 from pyqtgraph import PlotWidget, ScatterPlotItem
 
-# ── Shared parsing from csi_parser ───────────────────────────────────────────
+
+# -- Shared parsing from csi_parser -------------------------------------------
 from csi_parser import (
     configure_console_output,
     split_recv_fields,
@@ -24,7 +28,9 @@ from csi_parser import (
     parse_csi_line,
 )
 
+
 configure_console_output()
+
 
 DEFAULT_BAUD = 2_000_000
 DEFAULT_BUFFER_SIZE = 200
@@ -32,6 +38,8 @@ DEFAULT_SUBCARRIERS = 128
 DEFAULT_REFRESH_MS = 50
 DEFAULT_SERIAL_TIMEOUT = 0.25
 DEFAULT_SERIAL_BUFFER_SIZE = 2_000_000
+
+
 
 
 def parse_args():
@@ -71,14 +79,20 @@ def parse_args():
     return parser.parse_args()
 
 
+
+
 def safe_set_buffer_size(ser: serial.Serial, rx_size: int) -> None:
     if os.name != "nt" or not hasattr(ser, "set_buffer_size"):
         return
+
 
     try:
         ser.set_buffer_size(rx_size=rx_size)
     except Exception:
         pass
+
+
+
 
 
 
@@ -100,14 +114,17 @@ class CSIState:
     non_monotonic_count: int = 0
     last_gap_size: int = 0
 
+
     def __post_init__(self):
         self.buffer = np.zeros((self.buffer_size, self.subcarriers), dtype=np.complex64)
+
 
     def push_frame(self, frame: np.ndarray) -> None:
         with self.lock:
             self.buffer[self.write_idx % self.buffer_size] = frame
             self.write_idx += 1
             self.frame_count += 1
+
 
     def update_seq(self, seq: int) -> None:
         with self.lock:
@@ -120,20 +137,25 @@ class CSIState:
                 elif seq <= self.last_seq:
                     self.non_monotonic_count += 1
 
+
             self.last_seq = seq
             self.seq_sample_count += 1
+
 
     def mark_drop(self) -> None:
         with self.lock:
             self.dropped_count += 1
 
+
     def set_connected(self, connected: bool) -> None:
         with self.lock:
             self.connected = connected
 
+
     def set_error(self, message: str) -> None:
         with self.lock:
             self.last_error = message
+
 
     def snapshot(self):
         with self.lock:
@@ -141,6 +163,7 @@ class CSIState:
             if self.frame_count > 0:
                 latest_idx = (self.write_idx - 1) % self.buffer_size
                 latest_frame = self.buffer[latest_idx].copy()
+
 
             return {
                 "latest_frame": latest_frame,
@@ -163,6 +186,8 @@ class CSIState:
             }
 
 
+
+
 class SerialReader(QThread):
     def __init__(
         self,
@@ -181,21 +206,26 @@ class SerialReader(QThread):
         self.state = state
         self.stop_event = stop_event
 
+
     def run(self):
         ser = None
+
 
         try:
             ser = serial.Serial(self.port, self.baud, timeout=self.timeout)
             safe_set_buffer_size(ser, self.rx_buffer_size)
+
 
             try:
                 ser.reset_input_buffer()
             except Exception:
                 pass
 
+
             self.state.set_connected(True)
             self.state.set_error("")
             print(f"Connected to {self.port} at {self.baud} baud.")
+
 
             while not self.stop_event.is_set():
                 try:
@@ -206,23 +236,29 @@ class SerialReader(QThread):
                     print(message)
                     break
 
+
                 if not raw:
                     continue
+
 
                 line = raw.decode("utf-8", errors="ignore").strip()
                 if not line.startswith("CSI_DATA"):
                     continue
 
+
                 seq = extract_seq(line)
                 if seq is not None:
                     self.state.update_seq(seq)
+
 
                 frame = parse_csi_line(line, expected_subcarriers=self.state.subcarriers)
                 if frame is None:
                     self.state.mark_drop()
                     continue
 
+
                 self.state.push_frame(frame)
+
 
         except serial.SerialException as exc:
             message = f"Could not open {self.port}: {exc}"
@@ -231,10 +267,14 @@ class SerialReader(QThread):
         finally:
             self.state.set_connected(False)
 
+
             if ser is not None and ser.is_open:
                 ser.close()
 
+
             print("Serial port closed.")
+
+
 
 
 class CSIWindow(QWidget):
@@ -243,18 +283,22 @@ class CSIWindow(QWidget):
         self.state = state
         self.port = port
 
+
         self.resize(1100, 900)
         self.setWindowTitle(f"ESP32-C6 CSI Live Viewer ({port})")
         self.setStyleSheet("background-color: #0f0f1e; color: #e8e8e8;")
 
+
         layout = QVBoxLayout()
         self.setLayout(layout)
+
 
         self.status_label = QLabel(f"Waiting for CSI data on {port}...")
         self.status_label.setStyleSheet(
             "color: #00ff88; font-family: Consolas, monospace; font-size: 13px; padding: 5px;"
         )
         layout.addWidget(self.status_label)
+
 
         self.plot_amp = PlotWidget(self)
         self.plot_amp.setTitle("Live CSI Amplitude", color="#f7b731", size="12pt")
@@ -264,6 +308,7 @@ class CSIWindow(QWidget):
         self.curve_amp = self.plot_amp.plot(pen=pg.mkPen("#f7b731", width=1.5))
         layout.addWidget(self.plot_amp)
 
+
         self.plot_phase = PlotWidget(self)
         self.plot_phase.setTitle("Live CSI Phase", color="#26de81", size="12pt")
         self.plot_phase.setLabel("left", "Phase (rad)")
@@ -272,6 +317,7 @@ class CSIWindow(QWidget):
         self.plot_phase.showGrid(x=True, y=True, alpha=0.3)
         self.curve_phase = self.plot_phase.plot(pen=pg.mkPen("#26de81", width=1.5))
         layout.addWidget(self.plot_phase)
+
 
         self.plot_iq = PlotWidget(self)
         self.plot_iq.setTitle("IQ Constellation", color="#fc5c65", size="12pt")
@@ -287,12 +333,15 @@ class CSIWindow(QWidget):
         self.plot_iq.addItem(self.scatter)
         layout.addWidget(self.plot_iq)
 
+
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.update_plots)
         self.timer.start(refresh_ms)
 
+
     def update_plots(self):
         snapshot = self.state.snapshot()
+
 
         status = (
             f"Port: {self.port} "
@@ -304,46 +353,60 @@ class CSIWindow(QWidget):
             f"Buffer: {snapshot['buffer_fill']}/{snapshot['buffer_size']}"
         )
 
+
         if snapshot["gap_event_count"] > 0:
             status += f" | Gaps: {snapshot['gap_event_count']} (last: {snapshot['last_gap_size']})"
+
 
         if snapshot["non_monotonic_count"] > 0:
             status += f" | Seq resets: {snapshot['non_monotonic_count']}"
 
+
         if snapshot["last_error"]:
             status += f" | {snapshot['last_error']}"
 
+
         self.status_label.setText(status)
+
 
         latest_frame = snapshot["latest_frame"]
         if latest_frame is None:
             return
 
+
         active_indices = np.flatnonzero(np.abs(latest_frame) > 0)
         if active_indices.size == 0:
             return
 
+
         data = latest_frame[active_indices]
         amplitude = np.abs(data)
         phase = np.angle(data)
+
 
         self.curve_amp.setData(active_indices, amplitude)
         self.curve_phase.setData(active_indices, phase)
         self.scatter.setData(x=np.real(data), y=np.imag(data))
 
 
+
+
 def main():
     args = parse_args()
 
+
     pg.setConfigOptions(antialias=True)
+
 
     state = CSIState(
         buffer_size=args.buffer_size,
         subcarriers=args.subcarriers,
     )
 
+
     app = QApplication(sys.argv)
     stop_event = threading.Event()
+
 
     reader = SerialReader(
         port=args.port,
@@ -354,21 +417,28 @@ def main():
         stop_event=stop_event,
     )
 
+
     window = CSIWindow(state=state, port=args.port, refresh_ms=args.refresh_ms)
+
 
     app.aboutToQuit.connect(stop_event.set)
 
+
     reader.start()
     window.show()
+
 
     if hasattr(app, "exec"):
         exit_code = app.exec()
     else:
         exit_code = app.exec_()
 
+
     stop_event.set()
     reader.wait(2000)
     sys.exit(exit_code)
+
+
 
 
 if __name__ == "__main__":

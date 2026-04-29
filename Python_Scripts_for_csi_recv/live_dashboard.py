@@ -5,13 +5,13 @@
 CSI Live Waveform Monitor  v4
 ==============================
 Layout:
-  ┌─────────────────────────────────────┬──────────────────┐
-  │  Waveform  (Y-axis numbers, glow)   │  Subcarrier      │
-  │                                     │  Power Dist.     │
-  │                                     │  (color bars)    │
-  ├──────┬──────┬──────┬──────┬─────────┴──────────────────┤
-  │ RSSI │ LOSS │  VAR │  LAT │  FREQ                      │
-  └──────┴──────┴──────┴──────┴────────────────────────────┘
+  +-------------------------------------+------------------+
+  |  Waveform  (Y-axis numbers, glow)   |  Subcarrier      |
+  |                                     |  Power Dist.     |
+  |                                     |  (color bars)    |
+  |------|------|------|------|---------|------------------|
+  | RSSI | LOSS |  VAR |  LAT |  FREQ                      |
+  +------+------+------+------+----------------------------+
 
 Usage:
   python live_waveform.py --port COM6
@@ -27,6 +27,16 @@ import time
 from collections import deque
 from pathlib import Path
 
+def configure_console_output() -> None:
+    """Avoid UnicodeEncodeError on legacy Windows console encodings."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except Exception:
+                pass
+
+configure_console_output()
 import numpy as np
 import pyqtgraph as pg
 import serial
@@ -37,80 +47,136 @@ from PyQt5.QtWidgets import (
     QLabel, QFrame, QSizePolicy,
 )
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT))
-
+# --- Local imports ------------------------------------------------------------
 try:
     from csi_parser import parse_csi_line
     _PARSER_OK = True
 except ImportError:
     _PARSER_OK = False
 
-# ════════════════════════════════════════════════════════════════════════
-# CONFIG
-# ════════════════════════════════════════════════════════════════════════
+# --- Constants & Aesthetics ---------------------------------------------------
 
-BAUD             = 2_000_000
-WAVEFORM_LEN     = 60          # rolling window — shorter = more responsive
-REFRESH_MS       = 50          # UI timer (20 Hz)
-MOTION_THRESHOLD = 0.15        # lower = more sensitive to subtle motion
-COLOR_SMOOTH     = 0.15        # color inertia (higher = faster response)
-MAX_SC           = 128         # bar chart width (pad/trim subcarrier array)
+# Colors (HSL-tailored for a premium dark feel)
+BG       = "#0d1117"  # GitHub dark
+SURFACE  = "#161b22"
+SURFACE2 = "#21262d"
+BORDER   = "#30363d"
+ACCENT   = "#58a6ff"  # Soft blue
+TEXT_HI  = "#f0f6fc"
+TEXT_MID = "#8b949e"
+TEXT_DIM = "#484f58"
+GRID_CLR = "#30363d66"
 
-# ════════════════════════════════════════════════════════════════════════
-# PALETTE  — lighter navy (easier to read on screen)
-# ════════════════════════════════════════════════════════════════════════
+# Dimensions
+WAVEFORM_LEN = 160
+MAX_SC       = 128
+REFRESH_MS   = 20
+BAUD         = 2_000_000
 
-BG        = "#0d1520"
-SURFACE   = "#111d2b"
-SURFACE2  = "#162030"
-BORDER    = "#1e3045"
-GRID_CLR  = "#192840"
-TEXT_HI   = "#c8ddf0"
-TEXT_MID  = "#6a90aa"
-TEXT_DIM  = "#2e4a60"
-ACCENT    = "#20c8ff"
+# Logic
+MOTION_THRESHOLD = 0.05
+COLOR_SMOOTH     = 0.15
 
-CLR_CALM  = ( 32, 200, 255)   # cyan
-CLR_WARN  = (255, 170,  20)   # amber
-CLR_PEAK  = (255,  45,  70)   # red
+# ========================================================================
+# HELPERS
+# ========================================================================
 
-# Subcarrier power bar colormap stops  (magnitude 0→1)
-SC_COLORS = [
-    (0.00, ( 20, 120, 200)),   # low   — blue
-    (0.35, ( 32, 200, 255)),   # mid   — cyan
-    (0.65, (255, 170,  20)),   # high  — amber
-    (1.00, (255,  45,  70)),   # peak  — red
-]
+def sc_color(mag: float) -> tuple:
+    """Map normalized magnitude [0..1] to a cyan-blue gradient."""
+    # mag 0 -> (10, 20, 40) dark
+    # mag 1 -> (88, 166, 255) accent
+    r = int(10 + mag * 78)
+    g = int(20 + mag * 146)
+    b = int(40 + mag * 215)
+    return (r, g, b)
 
+# ========================================================================
+# UI COMPONENTS
+# ========================================================================
 
-def lerp_color(c1, c2, t):
-    t = max(0.0, min(1.0, t))
-    return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
+def create_stat_panel(key: str, unit: str):
+    """Premium stat box with a key, value, and unit."""
+    frame = QFrame()
+    frame.setObjectName("stat_strip")
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(15, 10, 15, 10)
+    layout.setSpacing(2)
 
+    k_lbl = QLabel(key.upper())
+    k_lbl.setObjectName("stat_key")
+    
+    v_lbl = QLabel("0")
+    v_lbl.setObjectName("stat_val")
+    v_lbl.setAlignment(Qt.AlignCenter)
+    
+    u_lbl = QLabel(unit)
+    u_lbl.setObjectName("stat_unit")
+    u_lbl.setAlignment(Qt.AlignRight)
 
-def tri_lerp(t):
-    """3-stop ramp: calm → warn → peak."""
-    if t <= 0.5:
-        return lerp_color(CLR_CALM, CLR_WARN, t * 2)
-    return lerp_color(CLR_WARN, CLR_PEAK, (t - 0.5) * 2)
+    layout.addWidget(k_lbl)
+    layout.addWidget(v_lbl)
+    layout.addWidget(u_lbl)
+    
+    return frame, v_lbl
 
+def create_waveform_plot():
+    """Main waveform plot with subtle glow effect."""
+    pw = pg.PlotWidget(background=BG)
+    pw.setMenuEnabled(False)
+    pw.setMouseEnabled(x=False, y=False)
+    
+    # Grid
+    pw.showGrid(x=True, y=True, alpha=0.1)
+    
+    # X axis - hidden but defined
+    ax_b = pw.getAxis("bottom")
+    ax_b.setTicks([])
+    ax_b.setPen(pg.mkPen(BORDER))
+    
+    # Y axis
+    ax_l = pw.getAxis("left")
+    ax_l.setPen(pg.mkPen(BORDER))
+    ax_l.setTextPen(pg.mkPen(TEXT_DIM))
+    ax_l.setTickFont(QtGui.QFont("Courier New", 7))
+    
+    pw.setYRange(0, 3.5, padding=0)
+    return pw
 
-def sc_color(v):
-    """Map subcarrier magnitude [0,1] → (R,G,B) using SC_COLORS ramp."""
-    v = max(0.0, min(1.0, v))
-    for i in range(len(SC_COLORS) - 1):
-        t0, c0 = SC_COLORS[i]
-        t1, c1 = SC_COLORS[i + 1]
-        if v <= t1:
-            t = (v - t0) / (t1 - t0 + 1e-9)
-            return lerp_color(c0, c1, t)
-    return SC_COLORS[-1][1]
+def create_sc_plot(max_sc):
+    """PlotWidget for the subcarrier power bar chart."""
+    pw = pg.PlotWidget(background=SURFACE)
+    pw.setMenuEnabled(False)
+    pw.setMouseEnabled(x=False, y=False)
 
+    # Y axis
+    ax_l = pw.getAxis("left")
+    ax_l.setStyle(tickLength=-4, tickTextOffset=3)
+    ax_l.setTextPen(pg.mkPen(TEXT_DIM))
+    ax_l.setPen(pg.mkPen(BORDER))
+    ax_l.setTickFont(QtGui.QFont("Courier New", 7))
+    ax_l.setTicks([[(v, f"{v:.1f}") for v in [0, 0.5, 1.0]]])
 
-# ════════════════════════════════════════════════════════════════════════
+    # X axis - subcarrier index
+    ax_b = pw.getAxis("bottom")
+    ax_b.setStyle(tickLength=-4, tickTextOffset=3)
+    ax_b.setTextPen(pg.mkPen(TEXT_DIM))
+    ax_b.setPen(pg.mkPen(BORDER))
+    ax_b.setTickFont(QtGui.QFont("Courier New", 7))
+    ticks = [(i, str(i)) for i in range(0, max_sc + 1, max_sc // 4)]
+    ax_b.setTicks([ticks])
+
+    pw.setYRange(0.0, 1.05, padding=0)
+    pw.setXRange(-0.5, max_sc - 0.5, padding=0.01)
+
+    # Horizontal reference
+    pw.addItem(pg.InfiniteLine(pos=0.5, angle=0,
+                               pen=pg.mkPen(GRID_CLR, width=1,
+                                            style=Qt.DashLine)))
+    return pw
+
+# ========================================================================
 # QSS
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 
 QSS = f"""
 QWidget   {{ background: {BG};      color: {TEXT_HI}; }}
@@ -142,53 +208,50 @@ QLabel#stat_unit {{
 }}
 """
 
-
-
-
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 # READER THREAD
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 
 class ReaderThread(threading.Thread):
 
-    def __init__(self, port, demo, stop_event):
+    def __init__(self, port, baud, demo, stop_event, window_size=WAVEFORM_LEN, max_sc=MAX_SC, rx_buffer_size=2_000_000, fs=100.0):
         super().__init__(daemon=True)
-        self.port       = port
-        self.demo       = demo
-        self.stop_event = stop_event
-        self._lock      = threading.Lock()
+        self.port        = port
+        self.baud        = baud
+        self.demo        = demo
+        self.stop_event  = stop_event
+        self.window_size = window_size
+        self.max_sc      = max_sc
+        self.rx_buffer_size = rx_buffer_size
+        self.fs          = fs
+        self._lock       = threading.Lock()
 
         # Rolling waveform (mean amplitude per frame)
-        self._raw    = deque([0.0] * WAVEFORM_LEN, maxlen=WAVEFORM_LEN)
+        self._raw    = deque([0.0] * self.window_size, maxlen=self.window_size)
         # Latest full subcarrier magnitude array
-        self._sc_mags = np.zeros(MAX_SC, dtype=np.float32)
+        self._sc_mags = np.zeros(self.max_sc, dtype=np.float32)
 
-        # Stats
-        self._frames      = 0
-        self._rssi        = -100.0
-        self._last_seq    = -1
-        self._pkt_loss    = 0        # cumulative lost packets
-        self._t_last      = time.perf_counter()
-        self._latencies   = deque([0.0] * 20, maxlen=20)
+        # Meta
+        self._frames   = 0
+        self._rssi     = -100
+        self._pkt_loss = 0
+        self._last_seq = -1
+        self._t_last   = time.perf_counter()
+        self._latencies = deque(maxlen=20)
 
-    # ── Public snapshot ──────────────────────────────────────────────
-
-    def snapshot(self):
-        """Return everything the UI needs in one atomic copy."""
+    def get_snapshot(self):
+        """Atomically copy state for UI thread."""
         with self._lock:
             raw      = list(self._raw)
             sc_mags  = self._sc_mags.copy()
             fc       = self._frames
             rssi     = self._rssi
             pkt_loss = self._pkt_loss
-            lat_ms   = float(np.mean(self._latencies)) * 1000
+            lat_ms   = float(np.mean(self._latencies)) * 1000 if self._latencies else 0.0
 
         wf = np.array(raw, dtype=float)
 
-        # ── Short-window normalization (last 20 frames only) ───────────
-        # Full-buffer max keeps historic peaks for 80 frames and squashes
-        # subsequent quiet signal → waveform looks flat / unresponsive.
-        # Using only the recent window the normalization resets quickly.
+        # -- Short-window normalization (last 20 frames only) -----------
         NORM_WIN   = 20
         recent_max = wf[-NORM_WIN:].max() if len(wf) >= NORM_WIN else wf.max()
         mx         = max(float(recent_max), 1e-6)
@@ -199,12 +262,10 @@ class ReaderThread(threading.Thread):
         energy = float(np.sqrt(np.mean(diff[-10:] ** 2)))
 
         # Instantaneous dominant frequency via FFT of waveform
-        # Sample rate ≈ 1 frame / mean_latency (capped at 1000 Hz)
-        fps      = 1.0 / max(lat_ms / 1000, 0.001) if lat_ms > 0 else 100.0
+        fps      = 1.0 / max(lat_ms / 1000, 0.001) if lat_ms > 0 else self.fs
         fps      = min(fps, 1000.0)
         freqs    = np.fft.rfftfreq(len(wf_norm), d=1.0 / fps)
         fft_mag  = np.abs(np.fft.rfft(wf_norm - wf_norm.mean()))
-        # Exclude DC (index 0)
         if len(fft_mag) > 1:
             peak_idx  = np.argmax(fft_mag[1:]) + 1
             inst_freq = float(freqs[peak_idx])
@@ -226,17 +287,14 @@ class ReaderThread(threading.Thread):
             "freq_hz":  inst_freq,
         }
 
-    # ── Internal push ────────────────────────────────────────────────
-
     def _push(self, frame, rssi=None, seq=None):
         now = time.perf_counter()
         amp    = np.abs(frame)
         active = amp[amp > 0.0]
         val    = float(active.mean()) if active.size > 0 else 0.0
 
-        # Normalised full subcarrier array (padded / trimmed to MAX_SC)
-        n = min(len(amp), MAX_SC)
-        sc = np.zeros(MAX_SC, dtype=np.float32)
+        n = min(len(amp), self.max_sc)
+        sc = np.zeros(self.max_sc, dtype=np.float32)
         sc[:n] = amp[:n]
         mx = sc.max() or 1.0
         sc_norm = sc / mx
@@ -245,44 +303,34 @@ class ReaderThread(threading.Thread):
             self._raw.append(val)
             self._sc_mags[:] = sc_norm
             self._frames += 1
-
-            if rssi is not None:
-                self._rssi = float(rssi)
-
-            # Packet-loss detection via sequence number gaps
+            if rssi is not None: self._rssi = float(rssi)
             if seq is not None and self._last_seq >= 0:
                 gap = (seq - self._last_seq - 1) % 4096
-                if 0 < gap < 200:
-                    self._pkt_loss += gap
-            if seq is not None:
-                self._last_seq = seq
-
-            # Inter-frame latency
-            dt = now - self._t_last
+                if 0 < gap < 200: self._pkt_loss += gap
+            if seq is not None: self._last_seq = seq
+            self._latencies.append(now - self._t_last)
             self._t_last = now
-            self._latencies.append(dt)
-
-    # ── Run ──────────────────────────────────────────────────────────
 
     def run(self):
         if self.demo:
             self._run_demo(); return
+        
+        ser = None  # Initialize to None for safe finally block
         try:
-            ser = serial.Serial(self.port, BAUD, timeout=0.5)
+            ser = serial.Serial(self.port, self.baud, timeout=0.5)
             if os.name == "nt" and hasattr(ser, "set_buffer_size"):
-                ser.set_buffer_size(rx_size=2_000_000)
+                ser.set_buffer_size(rx_size=self.rx_buffer_size)
             ser.reset_input_buffer()
-            print(f"✅  {self.port} @ {BAUD}")
+            print(f"[OK]  {self.port} @ {self.baud}")
         except Exception as e:
-            print(f"❌  {e}  →  demo mode")
+            print(f"[ERROR]  {e}  ->  demo mode")
             self._run_demo(); return
         try:
             while not self.stop_event.is_set():
                 raw = ser.readline()
-                if not raw:
-                    continue
+                if not raw: continue
                 line = raw.decode("utf-8", errors="ignore").strip()
-                if "CSI_DATA" not in line:
+                if not line.startswith("CSI_DATA"):
                     continue
                 rssi, seq = self._extract_meta(line)
                 frame = (parse_csi_line(line) if _PARSER_OK
@@ -290,15 +338,13 @@ class ReaderThread(threading.Thread):
                 if frame is not None:
                     self._push(frame, rssi=rssi, seq=seq)
         finally:
-            if ser.is_open:
+            if ser is not None and ser.is_open:
                 ser.close()
 
     @staticmethod
     def _extract_meta(line):
-        """Extract RSSI and sequence number from Magic Header CSV line."""
         try:
             parts = line.split(",")
-            # CSI_DATA,seq,mac,rssi,...
             seq  = int(parts[1].strip())  if len(parts) > 1 else None
             rssi = float(parts[3].strip()) if len(parts) > 3 else None
             return rssi, seq
@@ -307,348 +353,184 @@ class ReaderThread(threading.Thread):
 
     @staticmethod
     def _fallback(line):
+        """Minimal fallback parser if csi_parser.py is missing. Handles hardware fix."""
         try:
+            parts = line.split(",")
             ds = line.split("[")[-1].split("]")[0].replace('"', '').strip()
-            vs = [int(v.strip()) for v in ds.split(",") if v.strip()]
-            if len(vs) < 2:
-                return None
-            return np.array([complex(vs[i + 1], vs[i])
-                             for i in range(0, len(vs) - 1, 2)],
-                            dtype=np.complex64)
+            vs = np.array([float(v.strip()) for v in ds.split(",") if v.strip()],
+                          dtype=np.float32)
+
+            if len(parts) > 13 and int(parts[13]) != 0 and vs.size >= 4:
+                vs = vs.copy(); vs[:4] = 0.0
+
+            if vs.size < 2: return None
+            imag, real = vs[0::2], vs[1::2]
+            return (real + 1j * imag).astype(np.complex64)
         except Exception:
             return None
 
     def _run_demo(self):
-        """Synthetic data: quiet baseline with periodic motion bursts."""
-        rng   = np.random.default_rng(42)
-        ph    = 0.0
-        seq   = 0
-        print("🎮  Demo mode")
+        rng, ph, seq = np.random.default_rng(42), 0.0, 0
+        print("[DEMO]  Demo mode")
         while not self.stop_event.is_set():
             time.sleep(0.01)
             ph    += 0.18
             burst  = 1.0 + 2.8 * max(0.0, math.sin(ph * 0.07) ** 8)
             val    = (abs(math.sin(ph) * 0.65 + math.sin(ph * 0.37) * 0.35)
                       * float(rng.uniform(0.88, 1.0)) * burst)
+            fake_sc = np.exp(-np.linspace(0, 3, MAX_SC)) * rng.uniform(0.9, 1.1, MAX_SC)
+            self._push(fake_sc * (val + 1), rssi=-50 + val*2, seq=seq)
+            seq = (seq + 1) % 4096
 
-            # Fake full subcarrier array (64 subcarriers, varying shape)
-            sc_arr = (np.abs(np.sin(np.linspace(0, math.pi, 64) + ph * 0.3))
-                      * val * rng.uniform(0.7, 1.3, 64)).astype(np.float32)
-            frame  = sc_arr.astype(np.complex64)  # treat as magnitudes
-
-            rssi = -55.0 + 10.0 * math.sin(ph * 0.05) + rng.normal(0, 1.5)
-            self._push(frame, rssi=rssi, seq=seq % 4096)
-            seq += 1
-
-
-# ════════════════════════════════════════════════════════════════════════
-# HELPERS — pyqtgraph plot factories
-# ════════════════════════════════════════════════════════════════════════
-
-def _waveform_plot():
-    """PlotWidget for the main waveform with labelled Y axis."""
-    pw = pg.PlotWidget(background=SURFACE)
-    pw.setMenuEnabled(False)
-    pw.setMouseEnabled(x=False, y=False)
-
-    # Show left (Y) axis with numeric labels
-    ax_l = pw.getAxis("left")
-    ax_l.setStyle(tickLength=-6, tickTextOffset=4)
-    ax_l.setTextPen(pg.mkPen(TEXT_MID))
-    ax_l.setPen(pg.mkPen(BORDER))
-    ax_l.setTicks([[(v, f"{v:.1f}") for v in np.linspace(0, 1.5, 4)]])
-
-    # Bottom axis — frame index
-    ax_b = pw.getAxis("bottom")
-    ax_b.setStyle(tickLength=-4, tickTextOffset=3)
-    ax_b.setTextPen(pg.mkPen(TEXT_DIM))
-    ax_b.setPen(pg.mkPen(BORDER))
-    ax_b.setTickFont(QtGui.QFont("Courier New", 8))
-
-    # Setting Y-range to 1.5 puts 1.0 comfortably in the upper-middle
-    pw.setYRange(0.0, 1.5, padding=0)
-    pw.setXRange(0, WAVEFORM_LEN - 1, padding=0.02)
-
-    # Grid
-    for yv in np.linspace(0, 1.5, 4):
-        pw.addItem(pg.InfiniteLine(pos=yv, angle=0,
-                                   pen=pg.mkPen(GRID_CLR, width=1)))
-    for xv in np.linspace(0, WAVEFORM_LEN - 1, 9):
-        pw.addItem(pg.InfiniteLine(pos=xv, angle=90,
-                                   pen=pg.mkPen(GRID_CLR, width=1)))
-    return pw
-
-
-def _sc_plot():
-    """PlotWidget for the subcarrier power bar chart."""
-    pw = pg.PlotWidget(background=SURFACE)
-    pw.setMenuEnabled(False)
-    pw.setMouseEnabled(x=False, y=False)
-
-    # Y axis
-    ax_l = pw.getAxis("left")
-    ax_l.setStyle(tickLength=-4, tickTextOffset=3)
-    ax_l.setTextPen(pg.mkPen(TEXT_DIM))
-    ax_l.setPen(pg.mkPen(BORDER))
-    ax_l.setTickFont(QtGui.QFont("Courier New", 7))
-    ax_l.setTicks([[(v, f"{v:.1f}") for v in [0, 0.5, 1.0]]])
-
-    # X axis — subcarrier index
-    ax_b = pw.getAxis("bottom")
-    ax_b.setStyle(tickLength=-4, tickTextOffset=3)
-    ax_b.setTextPen(pg.mkPen(TEXT_DIM))
-    ax_b.setPen(pg.mkPen(BORDER))
-    ax_b.setTickFont(QtGui.QFont("Courier New", 7))
-    ticks = [(i, str(i)) for i in range(0, MAX_SC + 1, MAX_SC // 4)]
-    ax_b.setTicks([ticks])
-
-    pw.setYRange(0.0, 1.05, padding=0)
-    pw.setXRange(-0.5, MAX_SC - 0.5, padding=0.01)
-
-    # Horizontal reference
-    pw.addItem(pg.InfiniteLine(pos=0.5, angle=0,
-                               pen=pg.mkPen(GRID_CLR, width=1,
-                                            style=Qt.DashLine)))
-    return pw
-
-
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 # MAIN WINDOW
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 
 class WaveformMonitor(QWidget):
 
-    def __init__(self, reader: ReaderThread, port: str):
+    def __init__(self, reader: ReaderThread, port: str, refresh_ms=REFRESH_MS, threshold=MOTION_THRESHOLD, color_smooth=COLOR_SMOOTH):
         super().__init__()
-        self.reader   = reader
-        self._t_color = 0.0
-        self.setWindowTitle(f"CSI Monitor  ·  {port}")
+        self.reader    = reader
+        self.refresh_ms = refresh_ms
+        self.threshold  = threshold
+        self.color_smooth = color_smooth
+        self._t_color  = 0.0
+        self.setWindowTitle(f"CSI Monitor  -  {port}")
         self.resize(1400, 680)
         self.setStyleSheet(QSS)
         pg.setConfigOptions(antialias=True)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(8)
+        root.setContentsMargins(20, 20, 20, 20)
+        root.setSpacing(20)
 
-        # ═══════════════════════════════════════════════════════════════
-        # TOP ROW: waveform (left)  +  stat cards column (right)
-        # ═══════════════════════════════════════════════════════════════
-        main_row = QHBoxLayout()
-        main_row.setSpacing(8)
-
-        # ── Waveform ──────────────────────────────────────────────────
-        self._pw_wf = _waveform_plot()
-        main_row.addWidget(self._pw_wf, stretch=3)
-
-        # ── Stats cards — stacked vertically on the right ─────────────
-        cards_col = QVBoxLayout()
-        cards_col.setSpacing(6)
-
-        self._v_rssi   = self._make_card(cards_col, "RSSI",      "dBm")
-        self._v_loss   = self._make_card(cards_col, "PKT  LOSS", "frames")
-        self._v_var    = self._make_card(cards_col, "VARIANCE",  "")
-        self._v_lat    = self._make_card(cards_col, "LATENCY",   "ms")
-        self._v_freq   = self._make_card(cards_col, "INST FREQ", "Hz")
-        self._v_frames = self._make_card(cards_col, "FRAMES",    "")
-
-        main_row.addLayout(cards_col, stretch=1)
-        root.addLayout(main_row, stretch=3)
-
-        # ═══════════════════════════════════════════════════════════════
-        # BOTTOM: Subcarrier Power Distribution — full width
-        # ═══════════════════════════════════════════════════════════════
-        sc_wrap = QFrame(); sc_wrap.setObjectName("panel")
-        sc_outer = QVBoxLayout(sc_wrap)
-        sc_outer.setContentsMargins(8, 6, 8, 6)
-        sc_outer.setSpacing(4)
-
-        sc_title = QLabel("SUBCARRIER  POWER  DISTRIBUTION  ·  all active SC")
-        sc_title.setObjectName("stat_key")
-        sc_outer.addWidget(sc_title)
-
-        self._pw_sc = _sc_plot()
-        sc_outer.addWidget(self._pw_sc)
-
-        root.addWidget(sc_wrap, stretch=1)
-
-        # ── Waveform plot items ───────────────────────────────────────
-        x  = np.arange(WAVEFORM_LEN, dtype=float)
-        y0 = np.zeros(WAVEFORM_LEN)
-
-        self._g3   = self._pw_wf.plot(x, y0, pen=pg.mkPen((*CLR_CALM, 10), width=44))
-        self._g2   = self._pw_wf.plot(x, y0, pen=pg.mkPen((*CLR_CALM, 28), width=18))
-        self._g1   = self._pw_wf.plot(x, y0, pen=pg.mkPen((*CLR_CALM, 60), width=7))
-
-        _z = pg.PlotDataItem(x, y0, pen=None)
-        _w = pg.PlotDataItem(x, y0, pen=None)
-        self._fill = pg.FillBetweenItem(_z, _w, brush=pg.mkBrush(*CLR_CALM, 35))
-        self._pw_wf.addItem(self._fill)
-
-        self._line = self._pw_wf.plot(x, y0,
-                                      pen=pg.mkPen((*CLR_CALM, 255), width=2.0))
-        self._x  = x
-        self._y0 = y0
-
-        # ── Subcarrier bar chart items ────────────────────────────────
-        sc_x    = np.arange(MAX_SC, dtype=float)
-        brushes = [pg.mkBrush(*CLR_CALM, 180)] * MAX_SC
-        self._bars = pg.BarGraphItem(
-            x=sc_x, height=np.zeros(MAX_SC, dtype=float),
-            width=0.85, brushes=brushes, pen=pg.mkPen(None),
+        # Upper row: Waveform + SC Bars
+        top_row = QHBoxLayout()
+        top_row.setSpacing(20)
+        
+        # 1. Waveform Panel
+        wf_panel = QFrame()
+        wf_panel.setObjectName("panel")
+        wf_lay = QVBoxLayout(wf_panel)
+        wf_lay.setContentsMargins(1, 1, 1, 1)
+        self.plot = create_waveform_plot()
+        wf_lay.addWidget(self.plot)
+        
+        self._x    = np.arange(WAVEFORM_LEN)
+        self._line = self.plot.plot(self._x, np.zeros(WAVEFORM_LEN), pen=pg.mkPen(ACCENT, width=2))
+        
+        # Glow / Fill
+        self._fill = pg.FillBetweenItem(
+            pg.PlotDataItem(self._x, np.zeros(WAVEFORM_LEN)),
+            pg.PlotDataItem(self._x, np.zeros(WAVEFORM_LEN)),
+            brush=pg.mkBrush(88, 166, 255, 30)
         )
-        self._pw_sc.addItem(self._bars)
+        self.plot.addItem(self._fill)
+        
+        top_row.addWidget(wf_panel, stretch=3)
 
-        # ── Timer ─────────────────────────────────────────────────────
-        self._timer = QtCore.QTimer(self)
-        self._timer.timeout.connect(self._refresh)
-        self._timer.start(REFRESH_MS)
+        # 2. Subcarrier Panel
+        sc_panel = QFrame()
+        sc_panel.setObjectName("panel")
+        sc_lay = QVBoxLayout(sc_panel)
+        sc_lay.setContentsMargins(10, 10, 10, 10)
+        sc_lay.addWidget(QLabel("SUBCARRIER POWER DISTRIBUTION"))
+        self.sc_plot = create_sc_plot(reader.max_sc)
+        sc_lay.addWidget(self.sc_plot)
+        
+        self._bars = pg.BarGraphItem(x=np.arange(reader.max_sc), height=np.zeros(reader.max_sc), width=0.7, brush=ACCENT)
+        self.sc_plot.addItem(self._bars)
+        
+        top_row.addWidget(sc_panel, stretch=1)
+        root.addLayout(top_row)
 
-    # ── Helpers ───────────────────────────────────────────────────────
+        # Bottom row: Stats
+        stat_row = QHBoxLayout()
+        stat_row.setSpacing(15)
+        
+        self.panels = {}
+        for key, unit in [("RSSI", "dBm"), ("Packet Loss", "pkts"), ("Variance", "Var"), ("Latency", "ms"), ("Dom. Freq", "Hz"), ("Frames", "count")]:
+            p, v = create_stat_panel(key, unit)
+            stat_row.addWidget(p)
+            self.panels[key] = v
 
-    @staticmethod
-    def _make_card(col_layout: QVBoxLayout, key: str, unit: str) -> QLabel:
-        """
-        Add a stat card to a vertical column layout.
-        Returns the value QLabel for later updates.
-        """
-        frame = QFrame(); frame.setObjectName("panel")
-        frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        inner = QVBoxLayout(frame)
-        inner.setContentsMargins(12, 8, 12, 8)
-        inner.setSpacing(2)
-        inner.setAlignment(Qt.AlignCenter)
+        self._v_rssi, self._v_loss, self._v_var, self._v_lat, self._v_freq, self._v_frames = \
+            self.panels["RSSI"], self.panels["Packet Loss"], self.panels["Variance"], self.panels["Latency"], self.panels["Dom. Freq"], self.panels["Frames"]
 
-        k_lbl = QLabel(key)
-        k_lbl.setObjectName("stat_key")
-        k_lbl.setAlignment(Qt.AlignCenter)
+        root.addLayout(stat_row)
 
-        v_lbl = QLabel("—")
-        v_lbl.setObjectName("stat_val")
-        v_lbl.setAlignment(Qt.AlignCenter)
+        # Timer
+        self.timer = QtCore.QTimer()
+        self.timer.timeout.connect(self.update_ui)
+        self.timer.start(REFRESH_MS)
 
-        u_lbl = QLabel(unit)
-        u_lbl.setObjectName("stat_unit")
-        u_lbl.setAlignment(Qt.AlignCenter)
+    def update_ui(self):
+        data = self.reader.get_snapshot()
+        wf, sc_mags, energy, fc, rssi, loss, lat_ms, var, freq_hz = \
+            data["wf"], data["sc_mags"], data["energy"], data["frames"], data["rssi"], data["pkt_loss"], data["lat_ms"], data["variance"], data["freq_hz"]
 
-        inner.addWidget(k_lbl)
-        inner.addWidget(v_lbl)
-        inner.addWidget(u_lbl)
-        col_layout.addWidget(frame)
-        return v_lbl
-
-    @staticmethod
-    def _color_stat(label: QLabel, text: str, color: str = TEXT_HI):
-        label.setText(text)
-        label.setStyleSheet(
-            f"font-family:'Courier New'; font-size:18px; "
-            f"font-weight:bold; color:{color};"
-        )
-
-    # ── Refresh ───────────────────────────────────────────────────────
-
-    def _refresh(self):
-        d = self.reader.snapshot()
-        wf      = d["wf"]
-        sc_mags = d["sc_mags"]
-        energy  = d["energy"]
-        rssi    = d["rssi"]
-        loss    = d["pkt_loss"]
-        lat_ms  = d["lat_ms"]
-        var     = d["variance"]
-        freq_hz = d["freq_hz"]
-        fc      = d["frames"]
-
-        # ── Color parameter (smoothed) ────────────────────────────────
-        t_target       = min(1.0, energy / (MOTION_THRESHOLD * 1.5))
-        self._t_color += COLOR_SMOOTH * (t_target - self._t_color)
+        # Motion color logic
+        target = 1.0 if var > self.threshold else 0.0
+        self._t_color += (target - self._t_color) * self.color_smooth
         t = self._t_color
-        r, g, b = tri_lerp(t)
-
-        # ── Waveform glow layers ──────────────────────────────────────
-        self._g3.setData(self._x, wf)
-        self._g3.setPen(pg.mkPen((r, g, b, int( 6 + t * 22)), width=44))
-        self._g2.setData(self._x, wf)
-        self._g2.setPen(pg.mkPen((r, g, b, int(22 + t * 55)), width=18))
-        self._g1.setData(self._x, wf)
-        self._g1.setPen(pg.mkPen((r, g, b, int(55 + t * 90)), width=7))
-
-        self._fill.setCurves(
-            pg.PlotDataItem(self._x, self._y0, pen=None),
-            pg.PlotDataItem(self._x, wf,       pen=None),
-        )
+        
+        # Color interpolation (Dark -> Cyan -> Bright Cyan)
+        r = int(88 * t + 10 * (1-t))
+        g = int(166 * t + 20 * (1-t))
+        b = int(255 * t + 40 * (1-t))
+        
         self._fill.setBrush(pg.mkBrush(r, g, b, int(30 + t * 85)))
-
         self._line.setData(self._x, wf)
         self._line.setPen(pg.mkPen((r, g, b, 255), width=2.0))
 
-        # ── Subcarrier power bars (per-bar color) ─────────────────────
+        # Subcarrier bars
         brushes = [pg.mkBrush(*sc_color(float(v)), 200) for v in sc_mags]
         self._bars.setOpts(height=sc_mags.astype(float), brushes=brushes)
 
-        # ── Stats ─────────────────────────────────────────────────────
-        # RSSI
-        rssi_color = (ACCENT if rssi > -65
-                      else "#ff8c14" if rssi > -80
-                      else "#f85149")
+        # Stats
+        rssi_color = (ACCENT if rssi > -65 else "#ff8c14" if rssi > -80 else "#f85149")
         self._color_stat(self._v_rssi, f"{rssi:.0f}", rssi_color)
-
-        # Packet loss
-        loss_color = (ACCENT if loss == 0 else
-                      "#ff8c14" if loss < 50 else "#f85149")
+        loss_color = (ACCENT if loss == 0 else "#ff8c14" if loss < 50 else "#f85149")
         self._color_stat(self._v_loss, str(loss), loss_color)
-
-        # Variance
-        var_color = (ACCENT if var < 0.01 else
-                     "#ff8c14" if var < 0.05 else "#f85149")
-        self._color_stat(self._v_var, f"{var:.4f}", var_color)
-
-        # Latency
-        lat_color = (ACCENT if lat_ms < 15 else
-                     "#ff8c14" if lat_ms < 40 else "#f85149")
-        self._color_stat(self._v_lat, f"{lat_ms:.1f}", lat_color)
-
-        # Instantaneous frequency
+        self._color_stat(self._v_var, f"{var:.4f}", TEXT_HI if var < self.threshold else "#aff5b4")
+        self._color_stat(self._v_lat, f"{lat_ms:.1f}", TEXT_HI if lat_ms < 20 else "#ff8c14")
         self._color_stat(self._v_freq, f"{freq_hz:.2f}", TEXT_HI)
-
-        # Frames
         self._color_stat(self._v_frames, str(fc), TEXT_MID)
 
-
-# ════════════════════════════════════════════════════════════════════════
-# ENTRY POINT
-# ════════════════════════════════════════════════════════════════════════
+    def _color_stat(self, lbl, txt, color):
+        lbl.setText(txt)
+        lbl.setStyleSheet(f"color: {color};")
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--port", default="COM6" if os.name == "nt" else "/dev/ttyUSB0")
-    p.add_argument("--demo", action="store_true")
+    p.add_argument("-p", "--port",      default="COM6", help="Serial port (e.g. COM6). Optional for --demo.")
+    p.add_argument("--baud",      type=int,   default=BAUD)
+    p.add_argument("--window",    type=int,   default=WAVEFORM_LEN)
+    p.add_argument("--refresh",   type=int,   default=REFRESH_MS)
+    p.add_argument("--threshold", type=float, default=MOTION_THRESHOLD)
+    p.add_argument("--smooth",    type=float, default=COLOR_SMOOTH)
+    p.add_argument("--max-sc",    type=int,   default=MAX_SC)
+    p.add_argument("--rx-buf",    type=int,   default=2_000_000, help="Windows RX buffer size")
+    p.add_argument("--demo",      action="store_true", help="Run with synthetic data")
+    p.add_argument("--fs",        type=float, default=100.0, help="Expected sampling frequency (Hz)")
     return p.parse_args()
-
 
 def main():
     args = parse_args()
     app  = QApplication(sys.argv)
-
     stop   = threading.Event()
-    reader = ReaderThread(port=args.port, demo=args.demo, stop_event=stop)
+    reader = ReaderThread(port=args.port, baud=args.baud, demo=args.demo, stop_event=stop, 
+                          window_size=args.window, max_sc=args.max_sc, rx_buffer_size=args.rx_buf, fs=args.fs)
     reader.start()
-
-    win = WaveformMonitor(reader=reader, port=args.port)
-    
-    # Center the window on the computer screen
+    win = WaveformMonitor(reader=reader, port=args.port, refresh_ms=args.refresh, 
+                          threshold=args.threshold, color_smooth=args.smooth)
     screen_rect = app.primaryScreen().availableGeometry()
-    x = (screen_rect.width() - win.width()) // 2
-    y = (screen_rect.height() - win.height()) // 2
-    win.move(x, y)
-    
+    win.move((screen_rect.width() - win.width()) // 2, (screen_rect.height() - win.height()) // 2)
     win.show()
-
-    code = app.exec_()
+    res = app.exec_()
     stop.set()
-    reader.join(timeout=2.0)
-    sys.exit(code)
-
+    reader.join(timeout=1.0)
+    sys.exit(res)
 
 if __name__ == "__main__":
     main()

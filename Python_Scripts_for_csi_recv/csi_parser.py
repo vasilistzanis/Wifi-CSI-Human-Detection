@@ -2,16 +2,16 @@
 # -*- coding: utf-8 -*-
 
 """
-CSI Parser — Shared Parsing & Loading Utilities
+CSI Parser - Shared Parsing & Loading Utilities
 ================================================
 Central module for all CSI data parsing, loading, and path resolution.
 
 Used by:
-  • csi_plotter_heatmap.py   (plotting)
-  • live_predict.py           (real-time inference)
-  • live_data_visualization.py (live PyQt viewer)
-  • plot_lines_data_preprocessing.py
-  • visualize_all_steps_heatmap_data_preprocessing.py
+  * csi_plotter_heatmap.py   (plotting)
+  * live_predict.py           (real-time inference)
+  * live_data_visualization.py (live PyQt viewer)
+  * plot_lines_data_preprocessing.py
+  * visualize_all_steps_heatmap_data_preprocessing.py
 """
 
 from __future__ import annotations
@@ -22,17 +22,17 @@ from pathlib import Path
 
 import numpy as np
 
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 # CONSTANTS
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 
 BASE_DIR = Path(__file__).resolve().parent
 RECV_FIELD_COUNT = 15
 
 
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 # CONSOLE HELPER
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 
 def configure_console_output() -> None:
     """Avoid UnicodeEncodeError on legacy Windows console encodings."""
@@ -44,9 +44,9 @@ def configure_console_output() -> None:
                 pass
 
 
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 # SEQUENCE STATS
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 
 @dataclass
 class SeqStats:
@@ -71,7 +71,13 @@ class SeqStats:
                 self.received_count += 1
                 return                  # do NOT update last_seq for duplicate
             elif diff < 0:
-                self.reset_count += 1  # sequence counter reset or reorder
+                # Likely counter wrap-around; assume 16-bit counter
+                wrapped_gap = (65536 - self.last_seq) + seq - 1
+                if wrapped_gap < 200:  # Plausible wrap, not a firmware reset
+                    self.missing_count += wrapped_gap
+                    self.gap_events += 1
+                else:
+                    self.reset_count += 1  # Genuine firmware reset or reorder
 
         self.last_seq = seq
         self.received_count += 1
@@ -91,9 +97,9 @@ class SeqStats:
         return (self.missing_count / self.expected_count) * 100.0
 
 
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 # PATH HELPERS
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 
 def resolve_path(path_arg: str) -> Path:
     """Resolve relative path from script directory."""
@@ -107,9 +113,9 @@ def get_latest_dataset(datasets_dir: Path) -> Path | None:
     return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
 
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 # LINE-LEVEL PARSING
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 
 def split_recv_fields(line: str) -> list[str] | None:
     """Split one recv/logger line and reject malformed concatenated records."""
@@ -193,9 +199,9 @@ def parse_csi_line(line: str, expected_subcarriers: int | None = None) -> np.nda
     return (real + 1j * imag).astype(np.complex64)
 
 
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 # FILE-LEVEL LOADING
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 
 def load_csi_matrix(dataset_path: Path) -> tuple[np.ndarray, int, SeqStats]:
     """

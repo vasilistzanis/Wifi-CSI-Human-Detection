@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+
 """
 CSI Step-by-Step Filter Visualization (Thesis Grade - Improved)
 Visualizes each DSP stage of the preprocessing pipeline in SEPARATE WINDOWS.
+
 
 Improvements:
   - Better error handling for imports and file loading
@@ -12,12 +14,16 @@ Improvements:
   - More informative error messages
 """
 
+
 import sys
 import argparse
 from pathlib import Path
 
+
 import numpy as np
 import matplotlib
+
+
 
 
 def configure_console_output() -> None:
@@ -36,30 +42,33 @@ configure_console_output()
 try:
     matplotlib.use("Qt5Agg")
 except Exception:
-    print("⚠️  Qt5Agg backend not available, falling back to TkAgg")
+    print("[WARNING]  Qt5Agg backend not available, falling back to TkAgg")
     try:
         matplotlib.use("TkAgg")
     except Exception:
-        print("⚠️  TkAgg backend not available, using default")
+        print("[WARNING]  TkAgg backend not available, using default")
         pass
+
 
 import matplotlib.pyplot as plt
 plt.ioff()  # Disable interactive mode for faster background rendering
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
-# ✅ IMPROVED: Better import error handling
+
+# Improved: Better import error handling
 try:
     from csi_parser import load_csi_matrix, resolve_path, get_latest_dataset
 except ImportError as e:
-    print(f"❌ Missing dependency: {e}")
+    print(f"[ERROR] Missing dependency: {e}")
     print("   Make sure csi_parser.py is in the same directory")
     sys.exit(1)
+
 
 try:
     from data_preprocessing import CSIPipeline
 except ImportError as e:
-    print(f"❌ Missing dependency: {e}")
+    print(f"[ERROR] Missing dependency: {e}")
     print("   Make sure data_preprocessing.py is in the same directory")
     sys.exit(1)
 
@@ -81,8 +90,8 @@ def parse_args():
         help="Number of PCA components (default: 10)"
     )
     parser.add_argument(
-        "--cutoff", type=float, default=12.0,
-        help="Butterworth cutoff frequency in Hz (default: 12)"
+        "--cutoff", type=float, default=10.0,
+        help="Butterworth cutoff frequency in Hz (default: 10)"
     )
     parser.add_argument(
         "--no-diff", action="store_true",
@@ -94,55 +103,54 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # ── Εύρεση αρχείου ───────────────────────────────────────────────────
+    # -- File discovery -------------------------------------------------------
     if args.file:
         file_path = Path(args.file)
         if not file_path.exists():
-            print(f"❌ File not found: {file_path}")
+            print(f"[ERROR] File not found: {file_path}")
             sys.exit(1)
     else:
         default_dir = resolve_path("datasets")
         if not default_dir.exists():
-            print(f"❌ Directory not found: {default_dir}")
+            print(f"[ERROR] Directory not found: {default_dir}")
             print("   Create a 'datasets/' directory or specify a file with: python script.py <file.txt>")
             sys.exit(1)
         file_path = get_latest_dataset(default_dir)
         if file_path is None:
-            print(f"❌ No TXT/CSV files in {default_dir}")
+            print(f"[ERROR] No TXT/CSV files in {default_dir}")
             print("   Run csi_logger.py first to capture data")
             sys.exit(1)
 
-    print(f"\n📂 Loading: {file_path.name}")
+    print(f"\n[FILE] Loading: {file_path.name}")
 
-    # ── Φόρτωση ──────────────────────────────────────────────────────────
-    # ✅ IMPROVED: Better error handling
+    # -- Data Loading ----------------------------------------------------------
     try:
         complex_matrix, dropped_frames, seq_stats = load_csi_matrix(file_path)
     except (FileNotFoundError, PermissionError, ValueError) as e:
-        print(f"❌ Error loading file: {e}")
+        print(f"[ERROR] Error loading file: {e}")
         sys.exit(1)
     except Exception as e:
-        print(f"❌ Unexpected error loading file: {e}")
+        print(f"[ERROR] Unexpected error loading file: {e}")
         sys.exit(1)
 
     n_frames, n_sub = complex_matrix.shape
     print(f"   Frames: {n_frames} | Subcarriers: {n_sub} | "
           f"Dropped: {dropped_frames} | Loss: {seq_stats.loss_percent:.2f}%")
 
-    # ── Pipeline step-by-step ─────────────────────────────────────────────
+    # -- Pipeline step-by-step ---------------------------------------------
     pipeline = CSIPipeline(
         fs=100.0,
         use_diff=not args.no_diff,
     )
 
-    # ✅ IMPROVED: Validate each step
+    # Improved: Validate each step
     try:
         amp_step0 = np.abs(complex_matrix)
         amp_step1 = pipeline.remove_null_subcarriers(complex_matrix, fit=True)
         
-        # ✅ NEW: Check if we have any active subcarriers
+        # Check if we have any active subcarriers
         if amp_step1.shape[1] == 0:
-            print("❌ No active subcarriers after null removal!")
+            print("[ERROR] No active subcarriers after null removal!")
             print("   All subcarriers appear to be zero. Check your ESP32 configuration.")
             sys.exit(1)
         
@@ -150,15 +158,15 @@ def main():
         amp_step3 = pipeline.apply_lowpass_filter(amp_step2, cutoff=args.cutoff)
         amp_step4 = pipeline.apply_temporal_diff(amp_step3)
 
-        # ✅ NEW: Validate PCA inputs
+        # Validate PCA inputs
         if amp_step4.shape[0] < 2:
-            print(f"❌ Too few frames ({amp_step4.shape[0]}) for PCA after temporal diff")
+            print(f"[ERROR] Too few frames ({amp_step4.shape[0]}) for PCA after temporal diff")
             print("   Need at least 2 frames. Try capturing more data.")
             sys.exit(1)
 
         n_components = min(args.pca_components, amp_step4.shape[0] - 1, amp_step4.shape[1])
         if n_components < 1:
-            print(f"❌ Cannot perform PCA: shape {amp_step4.shape} too small")
+            print(f"[ERROR] Cannot perform PCA: shape {amp_step4.shape} too small")
             sys.exit(1)
 
         pca = PCA(n_components=n_components)
@@ -169,16 +177,16 @@ def main():
         amp_step6 = scaler.fit_transform(amp_step5)
 
     except Exception as e:
-        print(f"❌ Error during preprocessing: {e}")
+        print(f"[ERROR] Error during preprocessing: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
 
-    # ── Stats ─────────────────────────────────────────────────────────────
+    # -- Stats -------------------------------------------------------------
     active_count   = amp_step1.shape[1]
     null_count     = n_sub - active_count
     diff_enabled   = not args.no_diff
-    print(f"\n📊 Pipeline stats:")
+    print(f"\n[STATS] Pipeline results:")
     print(f"   [0] Raw:            {amp_step0.shape}")
     print(f"   [1] Null removed:   {amp_step1.shape} ({null_count} nulls)")
     print(f"   [2] Hampel:         {amp_step2.shape}")
@@ -187,13 +195,13 @@ def main():
     print(f"   [5] PCA:            {amp_step5.shape} ({explained_var:.1f}% variance)")
     print(f"   [6] StandardScaler: {amp_step6.shape}")
 
-    # ════════════════════════════════════════════════════════════════════
-    # SEPARATE WINDOW VISUALIZATION
-    # ════════════════════════════════════════════════════════════════════
+    # ====================================================================
+    # VISUALIZATION
+    # ====================================================================
 
     step4_title = (
         f"4. Temporal Difference\n(Rate of change  {amp_step4.shape[0]} frames)"
-        if diff_enabled else "4. Temporal Difference\n⚠ DISABLED"
+        if diff_enabled else "4. Temporal Difference\n[WARNING] DISABLED"
     )
     step4_cmap = "RdBu_r" if diff_enabled else "jet"
 
@@ -203,7 +211,7 @@ def main():
         (amp_step2, "2. Hampel Filter\n(spike / outlier removal)",        "jet"),
         (amp_step3, f"3. Butterworth Low-Pass\n({args.cutoff} Hz cutoff)", "jet"),
         (amp_step4, step4_title,                                           step4_cmap),
-        (amp_step5, f"5. PCA\n({n_components} components · {explained_var:.0f}% variance)", "viridis"),
+        (amp_step5, f"5. PCA\n({n_components} components - {explained_var:.0f}% variance)", "viridis"),
         (amp_step6, "6. StandardScaler (Z-score)\nFinal AI Input",         "viridis"),
     ]
 
@@ -224,13 +232,12 @@ def main():
     })
 
     global_suptitle = (
-        f"CSI Preprocessing Pipeline  ·  {file_path.name}\n"
-        f"{n_frames} frames  ·  {n_sub} subcarriers ({active_count} active)  ·  "
+        f"CSI Preprocessing Pipeline - {file_path.name}\n"
+        f"{n_frames} frames - {n_sub} subcarriers ({active_count} active) - "
         f"packet loss {seq_stats.loss_percent:.2f}%"
     )
 
-    # Δημιουργούμε ένα ξεχωριστό παράθυρο (figure) για κάθε γράφημα
-    # ✅ IMPROVED: Better error handling for plotting
+    # Create a separate window (figure) for each plot
     try:
         for step_num, (data, title, cmap) in enumerate(plots_config):
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -279,27 +286,24 @@ def main():
                 out_path = file_path.parent / f"{file_path.stem}_step{step_num}.png"
                 try:
                     fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor=STYLE_BG)
-                    print(f"💾 Saved: {out_path}")
+                    print(f"[FILE] Saved: {out_path}")
                 except (PermissionError, OSError) as e:
-                    print(f"⚠️  Could not save {out_path}: {e}")
+                    print(f"[WARNING]  Could not save {out_path}: {e}")
 
     except Exception as e:
-        print(f"❌ Error during plotting: {e}")
-        print("   Try installing: pip install matplotlib python-tk")
+        print(f"[ERROR] Error during plotting: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
 
-    print("\n✅ Created 7 separate windows! (Close them all to end the script)")
+    print("\n[OK] Created 7 separate windows! (Close them all to end the script)")
     
     try:
         plt.show()
     except Exception as e:
-        print(f"⚠️  Error displaying plots: {e}")
-        print("   Plots were created but may not display properly.")
+        print(f"[WARNING]  Error displaying plots: {e}")
     
     plt.rcParams.update(plt.rcParamsDefault)
-
 
 if __name__ == "__main__":
     main()

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+
 """
-CSI HAR — Complete ML Pipeline
+CSI HAR - Complete ML Pipeline
 ====================================
 Supports: SVM, Random Forest, K-NN, Logistic Regression, Extra Trees, Naive Bayes
 Compatible with: CSIPipeline from data_preprocessing.py
+
 
 Features:
   - Advanced Feature Extraction (Statistical + FFT Doppler analysis)
@@ -15,10 +17,12 @@ Features:
   - Hyperparameter tuning via GridSearchCV
   - Export of Feature Importances and Metrics
 
+
 Usage:
   python csi_ml_pipeline.py --classes walk idle
   python csi_ml_pipeline.py --classes walk sit fall idle --save_model --tune
 """
+
 
 import sys
 import json
@@ -27,6 +31,7 @@ import argparse
 import numpy as np
 from pathlib import Path
 from collections import Counter
+
 
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, GradientBoostingClassifier
@@ -43,13 +48,16 @@ from sklearn.metrics import (
 )
 from sklearn.preprocessing import LabelEncoder
 
+
 import warnings
 warnings.filterwarnings("ignore")
 
-# 14 classical stats + 6 DWT (energy+std × 3 levels with db4 wavelet)
-# DWT_LEVELS = 3  →  detail coeff d1,d2,d3  (approx a3 excluded — slow drift)
+
+# 14 classical stats + 6 DWT (energy+std x 3 levels with db4 wavelet)
+# DWT_LEVELS = 3  ->  detail coeff d1,d2,d3  (approx a3 excluded - slow drift)
 _DWT_STATS_PER_COMPONENT = 6          # energy_d1, std_d1, ... energy_d3, std_d3
 N_STATS = 14 + _DWT_STATS_PER_COMPONENT   # = 20
+
 
 try:
     import pywt as _pywt
@@ -59,34 +67,42 @@ except ImportError:
     _PYWT_AVAILABLE = False
     import warnings as _warnings
     _warnings.warn(
-        "PyWavelets (pywt) not installed — DWT features will be zero-padded. "
+        "PyWavelets (pywt) not installed - DWT features will be zero-padded. "
         "Run: pip install PyWavelets",
         RuntimeWarning, stacklevel=1
     )
+
 
 try:
     from sklearn.model_selection import StratifiedGroupKFold
 except ImportError:
     StratifiedGroupKFold = None
 
-# ════════════════════════════════════════════════════════════════════════
+
+# ========================================================================
 # IMPORT PREPROCESSING PIPELINE
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
+
 
 try:
     from data_preprocessing import CSIPipeline, load_csi_csv
-    print("✅ CSIPipeline imported successfully")
+    print("[OK] CSIPipeline imported successfully")
 except ImportError:
-    print("⚠️  data_preprocessing.py not found — using simulation mode")
+    print("[WARNING]  data_preprocessing.py not found - using simulation mode")
     CSIPipeline = None
     load_csi_csv = None
 
 
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
 # 1. DATA AUGMENTATION  (applied on RAW amplitude windows, BEFORE PCA)
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
+
 
 ALL_AUGMENT_TECHNIQUES = ['noise', 'shift', 'scale', 'time_warp']
+
+
 
 
 def _aug_noise(window: np.ndarray, rng: np.random.Generator, class_label: str = None) -> np.ndarray:
@@ -94,12 +110,16 @@ def _aug_noise(window: np.ndarray, rng: np.random.Generator, class_label: str = 
     signal_std = np.std(window)
     noise_level = rng.uniform(0.003, 0.01) * (signal_std if signal_std > 1e-6 else 1.0)
     
+
     if class_label == 'fall':
         noise_level *= 0.5
     elif class_label == 'sit':
         noise_level *= 0.7
         
+
     return window + rng.normal(0, noise_level, window.shape)
+
+
 
 
 def _aug_shift(window: np.ndarray, rng: np.random.Generator, class_label: str = None) -> np.ndarray:
@@ -107,6 +127,7 @@ def _aug_shift(window: np.ndarray, rng: np.random.Generator, class_label: str = 
     shift_steps = int(rng.integers(1, 4))
     direction = rng.choice([-1, 1])
     
+
     if direction == 1:
         # Shift forward: pad start with edge value, drop end
         pad = np.repeat(window[0:1], shift_steps, axis=0)
@@ -115,6 +136,8 @@ def _aug_shift(window: np.ndarray, rng: np.random.Generator, class_label: str = 
         # Shift backward: drop start, pad end with edge value
         pad = np.repeat(window[-1:], shift_steps, axis=0)
         return np.vstack([window[shift_steps:], pad])
+
+
 
 
 def _aug_scale(window: np.ndarray, rng: np.random.Generator, class_label: str = None) -> np.ndarray:
@@ -128,10 +151,13 @@ def _aug_scale(window: np.ndarray, rng: np.random.Generator, class_label: str = 
     return window * scale
 
 
+
+
 def _aug_time_warp(window: np.ndarray, rng: np.random.Generator, class_label: str = None) -> np.ndarray:
     """Advanced Time Warp with Reflect Padding to avoid artifacts."""
     T = window.shape[0]
     
+
     # Class-aware factor selection
     if class_label == 'walk':
         factor = rng.uniform(0.9, 1.1)
@@ -140,18 +166,24 @@ def _aug_time_warp(window: np.ndarray, rng: np.random.Generator, class_label: st
     else:  # idle/static
         factor = rng.uniform(0.98, 1.02)
         
+
     src_indices = np.linspace(0, T - 1, T) / factor
     
+
     # Reflect Padding logic (no flat tails)
     overflow = src_indices > (T - 1)
     src_indices[overflow] = 2 * (T - 1) - src_indices[overflow]
     src_indices = np.clip(src_indices, 0, T - 1)
     
+
     warped = np.empty_like(window, dtype=np.float64)
     for c in range(window.shape[1]):
         warped[:, c] = np.interp(src_indices, np.arange(T), window[:, c])
         
+
     return warped.astype(np.float32)
+
+
 
 
 _AUG_FN_MAP = {
@@ -160,6 +192,8 @@ _AUG_FN_MAP = {
     'scale':     _aug_scale,
     'time_warp': _aug_time_warp,
 }
+
+
 
 
 def augment_window(window: np.ndarray,
@@ -176,14 +210,17 @@ def augment_window(window: np.ndarray,
     if not techniques:
         return []
 
+
     rng = np.random.default_rng(seed)
     augmented_windows = []
+
 
     # Fall safety: Gravity doesn't warp
     safe_techs = [t for t in techniques if t != 'time_warp'] if class_label == 'fall' else techniques
 
+
     # If class-aware filtering left nothing, fall back to noise (safest technique)
-    # to preserve dataset size consistency — do NOT return duplicates silently
+    # to preserve dataset size consistency - do NOT return duplicates silently
     if not safe_techs:
         import warnings
         warnings.warn(
@@ -193,53 +230,65 @@ def augment_window(window: np.ndarray,
         )
         safe_techs = ['noise']
 
+
     for _ in range(n_augments):
         # Pick 1 or 2 techniques
         n_to_apply = rng.choice([1, 2])
         chosen = rng.choice(safe_techs, size=min(n_to_apply, len(safe_techs)), replace=False)
+
 
         aug = window.copy()
         for tech in chosen:
             if tech in _AUG_FN_MAP:
                 aug = _AUG_FN_MAP[tech](aug, rng, class_label=class_label)
 
+
         augmented_windows.append(aug.astype(np.float32))
+
 
     return augmented_windows
 
-# ════════════════════════════════════════════════════════════════════════
+
+# ========================================================================
 # 2. FEATURE EXTRACTION
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
+
 
 def _dwt_features_for_col(col: np.ndarray, wavelet: str = 'db4',
                           level: int = 3) -> list:
     """
     Compute DWT features for a single 1-D column (one PCA component).
 
+
     Decomposition: db4 wavelet, 3 levels.
     Features extracted from DETAIL coefficients d1, d2, d3 only
-    (approximation a3 is excluded — it carries slow DC drift, already
+    (approximation a3 is excluded - it carries slow DC drift, already
     captured by 'mean' in the classical stats block).
 
+
     For window=50 frames @ 100 Hz the frequency bands are:
-      d1 : 25–50 Hz  (high-freq noise)
-      d2 : 12.5–25 Hz (rapid motion transients)
-      d3 :  6.25–12.5 Hz (fall / fast gestures)
-      a3 :  0–6.25 Hz  (walking ~2 Hz, idle ~0 Hz)  ← excluded
+      d1 : 25-50 Hz  (high-freq noise)
+      d2 : 12.5-25 Hz (rapid motion transients)
+      d3 :  6.25-12.5 Hz (fall / fast gestures)
+      a3 :  0-6.25 Hz  (walking ~2 Hz, idle ~0 Hz)  - excluded
+
 
     Returns 6 floats: [energy_d1, std_d1, energy_d2, std_d2, energy_d3, std_d3]
     """
     if not _PYWT_AVAILABLE:
         return [0.0] * _DWT_STATS_PER_COMPONENT
 
+
     # Clamp level to what the signal length supports
     max_level = _pywt.dwt_max_level(len(col), wavelet)
     actual_level = min(level, max_level)
+
 
     coeffs = _pywt.wavedec(col, wavelet, level=actual_level)
     # coeffs = [a_n, d_n, d_{n-1}, ..., d1]  (pywt order)
     # We want detail coefficients d1..d3 (indices [-1], [-2], [-3])
     detail_coeffs = coeffs[1:]   # drop approximation a_n
+
 
     feats = []
     for lvl in range(1, level + 1):
@@ -252,25 +301,30 @@ def _dwt_features_for_col(col: np.ndarray, wavelet: str = 'db4',
             energy, std = 0.0, 0.0
         feats.extend([energy, std])
 
+
     return feats
+
+
 
 
 def extract_features_from_window(window: np.ndarray) -> np.ndarray:
     """
-    20 features per PCA component → flat feature vector.
+    20 features per PCA component -> flat feature vector.
+
 
     Input:  (window_size, n_pca_components)  e.g. (50, 10)
-    Output: (200,)  [20 features × 10 components]
+    Output: (200,)  [20 features x 10 components]
+
 
     Feature breakdown (20 per component):
-      [0–13]  Classical stats (14):
+      [0-13]  Classical stats (14):
               mean, std, max, min, range, median, energy,
               skewness, kurtosis, fft_mean, fft_std, zcr,
               fft_peak_idx, spectral_entropy
-      [14–19] DWT features (6) — db4 wavelet, 3 detail levels:
-              energy_d1, std_d1,   (d1: 25–50 Hz)
-              energy_d2, std_d2,   (d2: 12.5–25 Hz)
-              energy_d3, std_d3    (d3: 6.25–12.5 Hz)
+      [14-19] DWT features (6) - db4 wavelet, 3 detail levels:
+              energy_d1, std_d1,   (d1: 25-50 Hz)
+              energy_d2, std_d2,   (d2: 12.5-25 Hz)
+              energy_d3, std_d3    (d3: 6.25-12.5 Hz)
     """
     feats = []
     for c in range(window.shape[1]):
@@ -278,23 +332,29 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
         mean_val = col.mean()
         std_val  = col.std() + 1e-8
 
-        # ── FFT features ─────────────────────────────────────────────────
+
+        # -- FFT features -------------------------------------------------
         fft_vals = np.abs(np.fft.rfft(col))
         fft_mean = float(fft_vals.mean())
         fft_std  = float(fft_vals.std())
 
-        # ── ZCR (Zero-Crossing Rate) ──────────────────────────────────────
+
+        # -- ZCR (Zero-Crossing Rate) --------------------------------------
         centered = col - mean_val
         zcr = float(np.sum(np.diff(np.sign(centered)) != 0) / max(1, len(col) - 1))
 
-        # ── Dominant Frequency index ──────────────────────────────────────
-        fft_peak_idx = float(np.argmax(fft_vals))
 
-        # ── Spectral Entropy ──────────────────────────────────────────────
-        prob = fft_vals / (np.sum(fft_vals) + 1e-8)
+        # -- Dominant Frequency index (exclude DC bin) ---------------------
+        fft_vals_no_dc = fft_vals[1:]  # DC carries static offset, not motion
+        fft_peak_idx = float(np.argmax(fft_vals_no_dc) + 1)  # +1 restores original index
+
+
+        # -- Spectral Entropy (exclude DC bin) -----------------------------
+        prob = fft_vals_no_dc / (np.sum(fft_vals_no_dc) + 1e-8)
         spectral_entropy = float(-np.sum(prob * np.log2(prob + 1e-8)))
 
-        # ── Classical 14 stats ────────────────────────────────────────────
+
+        # -- Classical 14 stats --------------------------------------------
         feats.extend([
             mean_val,
             std_val,
@@ -312,10 +372,14 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
             spectral_entropy,
         ])
 
-        # ── DWT 6 stats (db4, 3 detail levels) ───────────────────────────
+
+        # -- DWT 6 stats (db4, 3 detail levels) ---------------------------
         feats.extend(_dwt_features_for_col(col, wavelet='db4', level=3))
 
+
     return np.array(feats, dtype=np.float32)
+
+
 
 
 def _get_feature_names(n_pca_components: int) -> list[str]:
@@ -329,14 +393,18 @@ def _get_feature_names(n_pca_components: int) -> list[str]:
     return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in all_stats]
 
 
+
+
 def extract_windows(data: np.ndarray,
                     window_size: int = 50,
                     step: int = 25) -> list[np.ndarray]:
-    """Sliding window → list of (window_size, n_components) arrays."""
+    """Sliding window -> list of (window_size, n_components) arrays."""
     if data.shape[0] < window_size:
         return []
     return [data[s:s + window_size]
             for s in range(0, data.shape[0] - window_size + 1, step)]
+
+
 
 
 def _make_group_cv(y: np.ndarray,
@@ -350,6 +418,7 @@ def _make_group_cv(y: np.ndarray,
     if len(y) != len(groups):
         raise ValueError("y and groups must have the same length")
 
+
     group_to_label = {}
     for label, group in zip(y, groups):
         group = int(group)
@@ -358,11 +427,14 @@ def _make_group_cv(y: np.ndarray,
             raise ValueError("Each recording group must belong to exactly one class")
         group_to_label[group] = label
 
+
     if len(group_to_label) < 2:
         raise ValueError("Need at least 2 train recordings for group-based CV.")
 
+
     class_group_counts = Counter(group_to_label.values())
     max_stratified_folds = min(class_group_counts.values()) if class_group_counts else 0
+
 
     if StratifiedGroupKFold is not None and max_stratified_folds >= 2:
         n_splits = min(requested_folds, max_stratified_folds, len(group_to_label))
@@ -379,16 +451,20 @@ def _make_group_cv(y: np.ndarray,
         print("Warning: StratifiedGroupKFold unavailable or unsupported by"
               " class counts; falling back to GroupKFold.")
 
+
     return splitter, n_splits, splitter_name
 
 
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
 # 3. DATASET BUILDER
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
 # Loads recordings, handles train/test splitting at the file-level, 
 # applies augmentation on training data only to prevent leakage,
 # and returns the separated features.
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
+
 
 def build_dataset(
     data_dir: str | Path,
@@ -402,6 +478,7 @@ def build_dataset(
     test_recording_ratio: float = 0.2,
     random_seed: int = 42,
     n_pca: int = 10,
+    cutoff: float = 10.0,
 ) -> tuple:
     """
     Load recordings, preprocess, extract features.
@@ -409,10 +486,12 @@ def build_dataset(
     (physics-aware: noise, shift, scale, time_warp with strict limits).
     Returns train/test split at recording level (no leakage).
 
+
     Args:
       augment_techniques : list of technique names to use, e.g. ['noise', 'scale'].
-                           None or empty list → no augmentation.
+                           None or empty list -> no augmentation.
                            Default (when called from main): ALL_AUGMENT_TECHNIQUES.
+
 
     Returns:
       X_train      : (N, n_pca * N_STATS) augmented train features
@@ -428,17 +507,20 @@ def build_dataset(
     if pipeline_kwargs is None:
         pipeline_kwargs = {'fs': 100.0, 'use_diff': True}
 
-    do_augment = bool(augment_techniques)  # empty list / None → no augmentation
+
+    do_augment = bool(augment_techniques)  # empty list / None -> no augmentation
     if do_augment:
         print(f"   Augmentation techniques: {augment_techniques}")
+
 
     data_dir = Path(data_dir)
     le = LabelEncoder()
     le.fit(classes)
 
-    # ── Simulation Mode ──────────────────────────────────────────────────
+
+    # -- Simulation Mode --------------------------------------------------
     if simulation_mode or CSIPipeline is None:
-        print("\n🔬 SIMULATION MODE")
+        print("\n[INFO] SIMULATION MODE")
         sim_rng = np.random.default_rng(random_seed)
         X_tr, y_tr = [], []
         X_tr_orig, y_tr_orig = [], []
@@ -447,14 +529,17 @@ def build_dataset(
         recording_group_id = 0
         global_window_idx = 0
 
+
         # Collect all synthetic CMs first
         rec_data = []
+
 
         for label_idx, cls in enumerate(classes):
             n_recs = 20
             n_test = max(1, int(n_recs * test_recording_ratio))
             print(f"   [{cls}] {n_recs} synthetic recordings "
                   f"(train={n_recs-n_test}, test={n_test})")
+
 
             for rec_i in range(n_recs):
                 t    = np.linspace(0, 5, 500)
@@ -467,28 +552,33 @@ def build_dataset(
                 cm[:, :6]  = 0
                 cm[:, -6:] = 0
                 
+
                 is_test = (rec_i >= n_recs - n_test)
                 rec_data.append((cm, label_idx, is_test))
+
 
         pp = CSIPipeline(**pipeline_kwargs) if CSIPipeline else None
         if pp:
             print("   Fitting single CSIPipeline for simulation...")
             train_cms = [r[0] for r in rec_data if not r[2]]
             if train_cms:
-                pp.fit_transform(np.vstack(train_cms), use_pca=True, n_components=n_pca, scaler_type='standard')
+                pp.fit_transform(np.vstack(train_cms), use_pca=True, n_components=n_pca,
+                                 scaler_type='standard', cutoff=cutoff)
+
 
         for cm, label_idx, is_test in rec_data:
-            # ── Get RAW amplitude (pre-PCA) for augmentation ──────────────
+            # -- Get RAW amplitude (pre-PCA) for augmentation --------------
             if pp:
                 # Replicate pipeline steps up to (but not including) PCA+scaler
                 amp = pp.remove_null_subcarriers(cm, fit=False)
                 amp = pp.apply_hampel_filter(amp)
-                amp = pp.apply_lowpass_filter(amp)
+                amp = pp.apply_lowpass_filter(amp, cutoff=cutoff)
                 if pp.use_diff:
                     amp = pp.apply_temporal_diff(amp)
                 raw_pre_pca = amp  # shape: (N_frames, n_active_subcarriers)
             else:
                 raw_pre_pca = sim_rng.standard_normal((499, 114)).astype(np.float32)
+
 
             for w_raw in extract_windows(raw_pre_pca, window_size, step):
                 if is_test:
@@ -514,6 +604,7 @@ def build_dataset(
                     X_tr.append(feat_orig)
                     y_tr.append(label_idx)
 
+
                     # Augmentation on RAW window, THEN project
                     if do_augment:
                         cls_name = classes[label_idx]
@@ -532,6 +623,7 @@ def build_dataset(
                     global_window_idx += 1
             recording_group_id += 1
 
+
         X_train      = np.array(X_tr,      dtype=np.float32)
         X_train_orig = np.array(X_tr_orig, dtype=np.float32)
         X_test       = np.array(X_te,      dtype=np.float32)
@@ -540,22 +632,26 @@ def build_dataset(
         y_test       = np.array(y_te,      dtype=np.int32)
         train_groups_orig = np.array(train_groups_orig, dtype=np.int32)
 
-        print(f"\n✅ Train={len(X_train)} (orig={len(X_train_orig)}) "
+
+        print(f"\n[OK] Train={len(X_train)} (orig={len(X_train_orig)}) "
               f"| Test={len(X_test)} samples")
         return (X_train, X_train_orig, X_test,
                 y_train, y_train_orig, y_test, train_groups_orig, le, None)
 
-    # ── Real Data Mode ───────────────────────────────────────────────────
-    print(f"\n📂 Loading data from: {data_dir}")
+
+    # -- Real Data Mode ---------------------------------------------------
+    print(f"\n[FILE] Loading data from: {data_dir}")
+
 
     train_files_all = {}
     test_files_all  = {}
+
 
     for cls in classes:
         files = (sorted((data_dir/cls).glob("*.csv")) +
                  sorted((data_dir/cls).glob("*.txt")))
         if not files:
-            print(f"⚠️  No files found for class '{cls}'")
+            print(f"[WARNING]  No files found for class '{cls}'")
             train_files_all[cls] = []
             test_files_all[cls]  = []
             continue
@@ -566,21 +662,29 @@ def build_dataset(
         train_files_all[cls] = files[:-n_test]
         test_files_all[cls]  = files[-n_test:]
 
+
     fit_matrices = []
     for cls in classes:
         for fpath in train_files_all.get(cls, []):
-            cm, _ = load_csi_csv(fpath)
-            if cm.size > 0:
-                fit_matrices.append(cm)
+            try:
+                cm, _ = load_csi_csv(fpath)
+                if cm.size > 0:
+                    fit_matrices.append(cm)
+            except Exception as e:
+                print(f"   [WARNING]  Initial fit skip {fpath.name}: {e}")
+                continue
+
 
     if not fit_matrices:
         raise ValueError("No valid training CSI data found.")
 
-    print("\n🔧 Fitting CSIPipeline on TRAIN recordings only...")
+
+    print("\n[INFO] Fitting CSIPipeline on TRAIN recordings only...")
     pipeline = CSIPipeline(**pipeline_kwargs)
     pipeline.fit_transform(np.vstack(fit_matrices),
                            use_pca=True, n_components=n_pca,
-                           scaler_type='standard')
+                           scaler_type='standard', cutoff=cutoff)
+
 
     X_tr, y_tr = [], []
     X_tr_orig, y_tr_orig = [], []
@@ -589,36 +693,41 @@ def build_dataset(
     recording_group_id = 0
     global_window_idx = 0
 
+
     for cls in classes:
         label_idx   = int(le.transform([cls])[0])
         train_files = train_files_all.get(cls, [])
         test_files  = test_files_all.get(cls, [])
 
+
         print(f"\n   [{cls}]  "
               f"train={len(train_files)} | test={len(test_files)} recordings")
 
+
         tr_wins = 0
         for fpath in train_files:
-            cm, _ = load_csi_csv(fpath)
-            if cm.size == 0:
-                continue
             try:
-                # ── Pre-PCA steps (for augmentation on raw signal) ────────
+                cm, _ = load_csi_csv(fpath)
+                if cm.size == 0:
+                    continue
+                # -- Pre-PCA steps (for augmentation on raw signal) --------
                 amp = pipeline.remove_null_subcarriers(cm, fit=False)
                 amp = pipeline.apply_hampel_filter(amp)
-                amp = pipeline.apply_lowpass_filter(amp)
+                amp = pipeline.apply_lowpass_filter(amp, cutoff=cutoff)
                 if pipeline.use_diff:
                     amp = pipeline.apply_temporal_diff(amp)
                 raw_pre_pca = amp  # (N_frames, n_active_subcarriers)
-            except ValueError as e:
-                print(f"   ⚠️  {fpath.name}: {e} — skipped")
+            except Exception as e:
+                print(f"   [WARNING]  {fpath.name}: {e} - skipped")
                 continue
+
 
             for w_raw in extract_windows(raw_pre_pca, window_size, step):
                 # Project original window through PCA+scaler
                 w_proj = pipeline.pca.transform(w_raw)
                 w_proj = pipeline.scaler.transform(w_proj)
                 feat_orig = extract_features_from_window(w_proj)
+
 
                 X_tr_orig.append(feat_orig)
                 y_tr_orig.append(label_idx)
@@ -627,7 +736,8 @@ def build_dataset(
                 y_tr.append(label_idx)
                 tr_wins += 1
 
-                # Augmentation: on RAW window → then project → features
+
+                # Augmentation: on RAW window -> then project -> features
                 if do_augment:
                     for aw_raw in augment_window(
                             w_raw, n_augments,
@@ -641,15 +751,16 @@ def build_dataset(
                 global_window_idx += 1
             recording_group_id += 1
 
+
         te_wins = 0
         for fpath in test_files:
-            cm, _ = load_csi_csv(fpath)
-            if cm.size == 0:
-                continue
             try:
-                processed = pipeline.transform(cm, use_pca=True)
-            except ValueError as e:
-                print(f"   ⚠️  {fpath.name}: {e} — skipped")
+                cm, _ = load_csi_csv(fpath)
+                if cm.size == 0:
+                    continue
+                processed = pipeline.transform(cm, use_pca=True, cutoff=cutoff)
+            except Exception as e:
+                print(f"   [WARNING]  {fpath.name}: {e} - skipped")
                 continue
             # Test files: use full pipeline.transform (no augmentation)
             for w in extract_windows(processed, window_size, step):
@@ -657,14 +768,21 @@ def build_dataset(
                 y_te.append(label_idx)
                 te_wins += 1
 
+
         aug_count = tr_wins * n_augments if do_augment else 0
-        print(f"   → train: {tr_wins} orig + {aug_count} augmented | "
+        print(f"   -> train: {tr_wins} orig + {aug_count} augmented | "
               f"test: {te_wins} windows")
+
 
     if not X_tr:
         raise ValueError("No training features extracted.")
     if not X_te:
         raise ValueError("No test features extracted.")
+
+    # Safety: augmented samples must NOT be tracked in groups (CV uses orig only)
+    assert len(X_tr_orig) == len(train_groups_orig), \
+        f"Group tracking mismatch: {len(X_tr_orig)} orig samples vs {len(train_groups_orig)} groups"
+
 
     X_train      = np.array(X_tr,      dtype=np.float32)
     X_train_orig = np.array(X_tr_orig, dtype=np.float32)
@@ -674,9 +792,11 @@ def build_dataset(
     y_test       = np.array(y_te,      dtype=np.int32)
     train_groups_orig = np.array(train_groups_orig, dtype=np.int32)
 
-    print(f"\n✅ Dataset ready:")
+
+    print(f"\n[OK] Dataset ready:")
     print(f"   Train : {len(X_train)} samples "
           f"(orig={len(X_train_orig)}) | Test: {len(X_test)} samples")
+
 
     dist_tr = ", ".join(f"{cls}={int((y_train_orig==i).sum())}"
                         for i, cls in enumerate(le.classes_))
@@ -685,17 +805,22 @@ def build_dataset(
     print(f"   Train distribution (orig): {dist_tr}")
     print(f"   Test  distribution       : {dist_te}")
 
-    print(f"\n📊 Distribution Check:")
+
+    print(f"\n[INFO] Distribution Check:")
     print(f"   Train mean/std: {X_train.mean():.4f} / {X_train.std():.4f}")
     print(f"   Test  mean/std: {X_test.mean():.4f} / {X_test.std():.4f}")
+
 
     return (X_train, X_train_orig, X_test,
             y_train, y_train_orig, y_test, train_groups_orig, le, pipeline)
 
 
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
 # 4. OPTIONAL HYPERPARAMETER TUNING
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
+
 
 def tune_hyperparameters(X_train_orig: np.ndarray,
                          y_train_orig: np.ndarray,
@@ -706,7 +831,7 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     GridSearchCV on non-augmented train data.
     Returns best params for SVM and RF.
     """
-    print(f"\n{'═'*60}")
+    print(f"\n{'='*60}")
     cv, actual_folds, splitter_name = _make_group_cv(
         y_train_orig, train_groups_orig, requested_folds=cv_folds,
         random_seed=random_seed
@@ -715,15 +840,17 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     print(f" HYPERPARAMETER TUNING ({splitter_name}, {actual_folds}-fold)")
     print(f" Data: {len(X_train_orig)} non-augmented train windows "
           f"from {n_recordings} recordings")
-    print(f"{'═'*60}")
+    print(f"{'='*60}")
+
 
     best_params = {}
+
 
     svm_grid = {
         'C':     [1, 10, 100],
         'gamma': ['scale', 'auto', 0.01, 0.001],
     }
-    print("\n🔍 Tuning SVM...")
+    print("\n[TUNE] Tuning SVM...")
     svm_search = GridSearchCV(
         SVC(kernel='rbf', class_weight='balanced', probability=True),
         svm_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
@@ -733,12 +860,13 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     print(f"   Best SVM params : {svm_search.best_params_}")
     print(f"   Best SVM CV acc : {svm_search.best_score_*100:.2f}%")
 
+
     rf_grid = {
         'n_estimators': [100, 200, 300],
         'max_depth':    [10, 15, 20, None],
         'min_samples_leaf': [1, 2, 4],
     }
-    print("\n🔍 Tuning Random Forest...")
+    print("\n[TUNE] Tuning Random Forest...")
     rf_search = GridSearchCV(
         RandomForestClassifier(class_weight='balanced',
                                n_jobs=-1, random_state=random_seed),
@@ -753,7 +881,7 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
         'max_depth':        [10, 15, 20, None],
         'min_samples_leaf': [1, 2, 4],
     }
-    print("\n🔍 Tuning Extra Trees...")
+    print("\n[SEARCH] Tuning Extra Trees...")
     et_search = GridSearchCV(
         ExtraTreesClassifier(class_weight='balanced', n_jobs=-1, random_state=random_seed),
         et_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
@@ -763,12 +891,13 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     print(f"   Best ET params  : {et_search.best_params_}")
     print(f"   Best ET CV acc  : {et_search.best_score_*100:.2f}%")
 
+
     knn_grid = {
         'n_neighbors': [3, 5, 7, 9],
         'weights':     ['uniform', 'distance'],
         'metric':      ['euclidean', 'manhattan'],
     }
-    print("\n🔍 Tuning K-NN...")
+    print("\n[TUNE] Tuning K-NN...")
     knn_search = GridSearchCV(
         KNeighborsClassifier(n_jobs=-1),
         knn_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
@@ -778,12 +907,13 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     print(f"   Best K-NN params: {knn_search.best_params_}")
     print(f"   Best K-NN CV acc: {knn_search.best_score_*100:.2f}%")
 
+
     lr_grid = {
         'C': [0.1, 1.0, 10.0, 100.0],
     }
-    print("\n🔍 Tuning Logistic Regression...")
+    print("\n[TUNE] Tuning Logistic Regression...")
     lr_search = GridSearchCV(
-        LogisticRegression(penalty='l2', solver='lbfgs', max_iter=1000,
+        LogisticRegression(penalty='l2', solver='liblinear', max_iter=1000,
                            class_weight='balanced', random_state=random_seed),
         lr_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
@@ -792,12 +922,13 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     print(f"   Best LR params  : {lr_search.best_params_}")
     print(f"   Best LR CV acc  : {lr_search.best_score_*100:.2f}%")
 
+
     gb_grid = {
         'n_estimators': [100, 200],
         'learning_rate': [0.05, 0.1, 0.2],
         'max_depth': [3, 5],
     }
-    print("\n🔍 Tuning Gradient Boosting...")
+    print("\n[TUNE] Tuning Gradient Boosting...")
     gb_search = GridSearchCV(
         GradientBoostingClassifier(random_state=random_seed),
         gb_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
@@ -807,12 +938,13 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     print(f"   Best GB params  : {gb_search.best_params_}")
     print(f"   Best GB CV acc  : {gb_search.best_score_*100:.2f}%")
 
+
     mlp_grid = {
         'hidden_layer_sizes': [(100,), (100, 50), (50, 50)],
         'alpha': [0.0001, 0.001, 0.01],
         'learning_rate': ['constant', 'adaptive'],
     }
-    print("\n🔍 Tuning MLP (Neural Network)...")
+    print("\n[TUNE] Tuning MLP (Neural Network)...")
     mlp_search = GridSearchCV(
         MLPClassifier(max_iter=500, random_state=random_seed),
         mlp_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
@@ -822,12 +954,16 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     print(f"   Best MLP params : {mlp_search.best_params_}")
     print(f"   Best MLP CV acc : {mlp_search.best_score_*100:.2f}%")
 
+
     return best_params
 
 
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
 # 5. MODEL TRAINING & EVALUATION
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
+
 
 def train_and_evaluate(
     X_train:      np.ndarray,
@@ -850,13 +986,15 @@ def train_and_evaluate(
     """
     results = {}
 
-    print(f"\n{'═'*60}")
+
+    print(f"\n{'='*60}")
     print(f" MODEL TRAINING & EVALUATION")
     print(f" Classes : {list(le.classes_)}")
     print(f" Train   : {len(X_train)} samples "
           f"(orig={len(X_train_orig)}) | Test: {len(X_test)} samples")
     print(f" Features: {X_train.shape[1]}")
-    print(f"{'═'*60}")
+    print(f"{'='*60}")
+
 
     svm_params = best_params.get('SVM (RBF)', {})          if best_params else {}
     rf_params  = best_params.get('Random Forest', {})      if best_params else {}
@@ -865,6 +1003,7 @@ def train_and_evaluate(
     lr_params  = best_params.get('Logistic Regression', {}) if best_params else {}
     gb_params  = best_params.get('Gradient Boosting', {})  if best_params else {}
     mlp_params = best_params.get('MLP', {})                if best_params else {}
+
 
     all_models = {
         'svm': SVC(
@@ -919,25 +1058,31 @@ def train_and_evaluate(
         'nb': GaussianNB(),
     }
 
+
     # Map full names if needed or filter by ID
     if target_model.lower() == 'all':
         models = all_models
     elif target_model.lower() in all_models:
         models = {target_model.lower(): all_models[target_model.lower()]}
     else:
-        print(f"⚠️ Warning: Model '{target_model}' not recognized. Training all.")
+        print(f"[WARNING] Warning: Model '{target_model}' not recognized. Training all.")
         models = all_models
+
 
     cv, actual_folds, splitter_name = _make_group_cv(
         y_train_orig, train_groups_orig, requested_folds=cv_folds,
         random_seed=random_seed
     )
-    n_pca = X_train.shape[1] // N_STATS
+    
+    # Calculate actual number of PCA components used based on feature count
+    n_pca = int(X_train.shape[1] // N_STATS)
+
 
     for name, model in models.items():
-        print(f"\n{'─'*50}")
+        print(f"\n{'-'*50}")
         print(f"  {name}")
-        print(f"{'─'*50}")
+        print(f"{'-'*50}")
+
 
         cv_scores = cross_val_score(
             model, X_train_orig, y_train_orig,
@@ -945,18 +1090,21 @@ def train_and_evaluate(
             groups=train_groups_orig
         )
         print(f"  {actual_folds}-Fold {splitter_name} CV "
-              f"{cv_scores.mean()*100:.2f}% ± {cv_scores.std()*100:.2f}%")
+              f"{cv_scores.mean()*100:.2f}% +/- {cv_scores.std()*100:.2f}%")
+
 
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
         acc    = accuracy_score(y_test, y_pred)
         f1_mac = f1_score(y_test, y_pred, average='macro')
 
+
         print(f"  Hold-out Test Accuracy : {acc*100:.2f}%")
         print(f"  Hold-out F1 (macro)    : {f1_mac*100:.2f}%")
         print(f"\n  Classification Report:")
         print(classification_report(y_test, y_pred,
                                     target_names=le.classes_, digits=3))
+
 
         cm = confusion_matrix(y_test, y_pred)
         print(f"  Confusion Matrix:")
@@ -965,11 +1113,13 @@ def train_and_evaluate(
             print(f"  {le.classes_[i]:>8}  " +
                   "  ".join(f"{v:>8}" for v in row))
 
+
         print(f"\n  Per-class Accuracy:")
         for i, cls in enumerate(le.classes_):
             mask    = y_test == i
             cls_acc = accuracy_score(y_test[mask], y_pred[mask]) if mask.sum() > 0 else 0.0
             print(f"    {cls:>10}: {cls_acc*100:.1f}%  ({mask.sum()} test samples)")
+
 
         results[name] = {
             'model': model,
@@ -983,11 +1133,13 @@ def train_and_evaluate(
             'feature_importances': []
         }
 
+
         if hasattr(model, 'feature_importances_'):
             importances = model.feature_importances_
             feat_names  = _get_feature_names(n_pca)
             top_idx     = np.argsort(importances)[::-1][:10]
             
+
             top_features = []
             print(f"\n  Top 10 Important Features:")
             for rank, idx in enumerate(top_idx):
@@ -996,26 +1148,33 @@ def train_and_evaluate(
                 top_features.append({"name": fname, "importance": importance_val})
                 print(f"    {rank+1:2}. {fname:30s}  {importance_val*100:.2f}%")
             
+
             results[name]['feature_importances'] = top_features
 
-    print(f"\n{'═'*60}")
+
+    print(f"\n{'='*60}")
     print(f" SUMMARY")
-    print(f"{'═'*60}")
+    print(f"{'='*60}")
     for name, res in results.items():
         print(f"  {name:20s}  "
-              f"CV={res['cv_mean']*100:.1f}% ±{res['cv_std']*100:.1f}%  "
+              f"CV={res['cv_mean']*100:.1f}% +/-{res['cv_std']*100:.1f}%  "
               f"Test={res['test_accuracy']*100:.1f}%  "
               f"F1={res['test_f1_macro']*100:.1f}%")
 
+
     best = max(results.items(), key=lambda x: x[1]['cv_mean'])
-    print(f"\n  🏆 Best: {best[0]} (CV {best[1]['cv_mean']*100:.1f}%)")
+    print(f"\n  [OK] Best: {best[0]} (CV {best[1]['cv_mean']*100:.1f}%)")
+
 
     return results
 
 
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
 # 6. SAVE MODELS
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
+
 
 def save_models(results: dict,
                 pipeline,
@@ -1023,29 +1182,32 @@ def save_models(results: dict,
                 output_dir: str = "./models") -> None:
     """
     Save everything needed for inference:
-      csi_pipeline.joblib    ← preprocess new recordings
-      label_encoder.joblib   ← int → class name
-      SVM_RBF.joblib
-      Random_Forest.joblib
-      metrics.json           ← for thesis tables
+      csi_pipeline.joblib    - preprocess new recordings
+      label_encoder.joblib   - int -> class name
+      svm.joblib, rf.joblib  - trained models
+      metrics.json           - for thesis tables
     """
     import joblib
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+
     if pipeline is not None:
         joblib.dump(pipeline, out / "csi_pipeline.joblib")
-        print(f"💾 {out / 'csi_pipeline.joblib'}")
+        print(f"[SAVE] {out / 'csi_pipeline.joblib'}")
+
 
     joblib.dump(le, out / "label_encoder.joblib")
-    print(f"💾 {out / 'label_encoder.joblib'}")
+    print(f"[SAVE] {out / 'label_encoder.joblib'}")
+
 
     metrics = {}
     for name, res in results.items():
         safe = name.replace(" ", "_").replace("(", "").replace(")", "")
         path = out / f"{safe}.joblib"
         joblib.dump(res['model'], path)
-        print(f"💾 {path}  (test={res['test_accuracy']*100:.1f}%)")
+        print(f"[SAVE] {path}  (test={res['test_accuracy']*100:.1f}%)")
+
 
         metrics[name] = {
             'cv_accuracy_mean': round(res['cv_mean'], 4),
@@ -1057,10 +1219,12 @@ def save_models(results: dict,
             'feature_importances': res.get('feature_importances', [])
         }
 
+
     json_path = out / "metrics.json"
     with open(json_path, 'w', encoding='utf-8') as f:
         json.dump(metrics, f, indent=2, ensure_ascii=False)
-    print(f"📊 {json_path}  (metrics for thesis)")
+    print(f"[SAVE] {json_path}  (metrics for thesis)")
+
 
     best = max(results.items(), key=lambda x: x[1]['cv_mean'])[0]
     safe_best = best.replace(" ", "_").replace("(", "").replace(")", "")
@@ -1071,12 +1235,15 @@ def save_models(results: dict,
     print(f"     model    = joblib.load('{out}/{safe_best}.joblib')")
 
 
-# ════════════════════════════════════════════════════════════════════════
+
+
+# ========================================================================
 # MAIN
-# ════════════════════════════════════════════════════════════════════════
+# ========================================================================
+
 
 def main():
-    parser = argparse.ArgumentParser(description="CSI HAR — ML Pipeline")
+    parser = argparse.ArgumentParser(description="CSI HAR - ML Pipeline")
     parser.add_argument("--data_dir",    type=str,   default="./datasets")
     parser.add_argument("--classes",     nargs="+",  default=["walk", "idle"])
     parser.add_argument("--window_size", type=int,   default=50)
@@ -1108,15 +1275,24 @@ def main():
     parser.add_argument("--save_model",  action="store_true")
     parser.add_argument("--tune",        action="store_true",
                         help="Run GridSearchCV hyperparameter tuning")
-    parser.add_argument("--model",       type=str,   default="all",
-                        help="Specific model to train (svm, rf, et, knn, lr, gb, mlp, nb) or 'all'")
+    parser.add_argument("--model", type=str, default="all",
+                        choices=["svm", "rf", "et", "knn", "lr", "gb", "mlp", "nb", "all"],
+                        help="Specific model to train, or 'all'")
     parser.add_argument("--seed",        type=int,   default=42)
+    parser.add_argument("--cv_folds",    type=int,   default=5,
+                        help="Number of cross-validation folds (default: 5)")
+    parser.add_argument("--cutoff",      type=float, default=10.0,
+                        help="Butterworth filter cutoff frequency in Hz (default: 10)")
+    parser.add_argument("--models_dir",  type=str,   default="./models",
+                        help="Directory to save/load model files (default: ./models)")
     args = parser.parse_args()
+
 
     # Validation: Step vs Window size
     if args.step > args.window_size:
-        print(f"\n⚠️  WARNING: step ({args.step}) > window_size ({args.window_size}).")
+        print(f"\n[WARNING]  WARNING: step ({args.step}) > window_size ({args.window_size}).")
         print("   This means some CSI frames will be skipped and not covered by any window.\n")
+
 
     # --no_augment disables everything; otherwise use the specified (or default) list
     if args.no_augment:
@@ -1129,17 +1305,19 @@ def main():
         parser.error(f"Unknown augmentation technique(s): {unknown}. "
                      f"Valid: {ALL_AUGMENT_TECHNIQUES}")
 
+
     print("=" * 60)
-    print(" CSI HAR — ML Pipeline")
+    print(" CSI HAR - ML Pipeline")
     print(f" Classes : {args.classes}")
     print(f" Data dir: {args.data_dir}")
     print(f" Window  : {args.window_size} frames @ {args.fs} Hz = "
           f"{args.window_size/args.fs:.2f}s")
     aug_label = ', '.join(augment_techniques) if augment_techniques else 'DISABLED'
-    print(f" Augment : [{aug_label}] (×{args.n_augments}) | "
+    print(f" Augment : [{aug_label}] (x{args.n_augments}) | "
           f"PCA: {args.pca} | Diff: {not args.no_diff}")
     print(f" Tune    : {args.tune} | Seed: {args.seed}")
     print("=" * 60)
+
 
     (X_train, X_train_orig, X_test,
      y_train, y_train_orig, y_test,
@@ -1155,31 +1333,42 @@ def main():
         test_recording_ratio=args.test_ratio,
         random_seed=args.seed,
         n_pca=args.pca,
+        cutoff=args.cutoff,
     )
 
+
     if X_train.shape[0] == 0:
-        print("❌ No samples — check data_dir and classes")
+        print("[ERROR] No samples - check data_dir and classes")
         sys.exit(1)
 
+
     print(f"\n{'-'*60}\n Step 3: Model Training\n{'-'*60}")
+
 
     best_params = None
     if args.tune:
         best_params = tune_hyperparameters(
             X_train_orig, y_train_orig, train_groups_orig,
-            random_seed=args.seed
+            random_seed=args.seed, cv_folds=args.cv_folds
         )
+
 
     results = train_and_evaluate(
         X_train, X_train_orig, X_test,
         y_train, y_train_orig, y_test,
         train_groups_orig, le, best_params=best_params,
         random_seed=args.seed,
-        target_model=args.model
+        target_model=args.model,
+        cv_folds=args.cv_folds
     )
 
+
     if args.save_model:
-        save_models(results, pipeline, le)
+        save_models(results, pipeline, le, output_dir=args.models_dir)
+
+
+
+
 
 
 

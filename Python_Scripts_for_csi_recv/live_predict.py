@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ESP32 CSI — Live HAR Prediction
+ESP32 CSI - Live HAR Prediction
 =============================================
 Reads CSI frames from serial, runs the trained pipeline + model in real-time,
 and prints predictions to the terminal with a confidence bar.
 
 Design goals:
-  • Zero GUI dependencies (no Qt / Tk)
-  • Single-threaded read loop — no locking overhead
-  • Rolling deque buffer — O(1) frame push / O(1) pop
-  • Reuses parse_csi_line from csi_parser  (no code duplication)
-  • Reuses extract_features_from_window from csi_ml_pipeline
+  * Zero GUI dependencies (no Qt / Tk)
+  * Single-threaded read loop - no locking overhead
+  * Rolling deque buffer - O(1) frame push / O(1) pop
+  * Reuses parse_csi_line from csi_parser  (no code duplication)
+  * Reuses extract_features_from_window from csi_ml_pipeline
 
 Usage:
   python live_predict.py -p COM6
@@ -28,50 +28,61 @@ import time
 from collections import Counter, deque
 from pathlib import Path
 
+def configure_console_output() -> None:
+    """Avoid UnicodeEncodeError on legacy Windows console encodings."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except Exception:
+                pass
+
+configure_console_output()
+
 import numpy as np
 import serial
 
-# ─── Local imports ────────────────────────────────────────────────────────────
+# --- Local imports ------------------------------------------------------------
 try:
     from csi_parser import parse_csi_line
 except ImportError:
-    print("❌  csi_parser.py not found in the same directory.")
+    print("[ERROR]  csi_parser.py not found in the same directory.")
     sys.exit(1)
 
 try:
     from data_preprocessing import CSIPipeline  # noqa: F401  (used via joblib load)
 except ImportError:
-    print("❌  data_preprocessing.py not found in the same directory.")
+    print("[ERROR]  data_preprocessing.py not found in the same directory.")
     sys.exit(1)
 
 try:
     from csi_ml_pipeline import extract_features_from_window
 except ImportError:
-    print("❌  csi_ml_pipeline.py not found in the same directory.")
+    print("[ERROR]  csi_ml_pipeline.py not found in the same directory.")
     sys.exit(1)
 
 try:
     import joblib
 except ImportError:
-    print("❌  joblib not installed.  Run:  pip install joblib")
+    print("[ERROR]  joblib not installed.  Run:  pip install joblib")
     sys.exit(1)
 
 
-# ─── Defaults ─────────────────────────────────────────────────────────────────
+# --- Defaults -----------------------------------------------------------------
 _IS_WIN        = os.name == "nt"
 DEFAULT_PORT   = "COM6" if _IS_WIN else "/dev/ttyUSB0"
 DEFAULT_BAUD   = 2_000_000
 WINDOW_SIZE    = 50      # frames per inference window (must match training)
 STEP           = 10      # predict every N new frames (lower = more frequent)
 # Extra frames kept beyond window_size so the Butterworth filter has enough
-# edge context.  padlen for 4th-order SOS ≈ 3*(2*n_sections+1) ≈ 27.
-FILTER_WARMUP  = 20
+# edge context.  padlen for 4th-order SOS ~ 3*(2*n_sections+1) ~ 27.
+FILTER_WARMUP  = 50
 SERIAL_BUF_MB  = 2_000_000
 # Rolling FPS window: measure rate over the last N frames
 FPS_WINDOW     = 60
 
 
-# ─── ANSI helpers ─────────────────────────────────────────────────────────────
+# --- ANSI helpers -------------------------------------------------------------
 _ANSI = {
     "green":   "\033[92m",
     "yellow":  "\033[93m",
@@ -112,19 +123,19 @@ def _c(text: str, *styles: str) -> str:
 
 
 def _bar(value: float, width: int = 20) -> str:
-    """ASCII confidence bar  0..100 → '████░░░░'"""
+    """ASCII confidence bar  0..100 -> '########'"""
     filled = max(0, min(width, round(value / 100 * width)))
-    return "█" * filled + "░" * (width - filled)
+    return "#" * filled + "-" * (width - filled)
 
 
-# ─── Argument parsing ─────────────────────────────────────────────────────────
+# --- Argument parsing ---------------------------------------------------------
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="ESP32 CSI — Live HAR Prediction",
+        description="ESP32 CSI - Live HAR Prediction",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("-p", "--port",       default=DEFAULT_PORT,
-                   help="Serial port")
+                   help="Serial port (e.g. COM6). Optional for --demo.")
     p.add_argument("-b", "--baud",       type=int, default=DEFAULT_BAUD,
                    help="Baud rate")
     p.add_argument("--models_dir",       default="./models",
@@ -142,10 +153,18 @@ def parse_args() -> argparse.Namespace:
                    help="Show per-class probability breakdown each prediction")
     p.add_argument("--no-color",         action="store_true",
                    help="Disable ANSI colors (useful for logging to file)")
+    p.add_argument("--fps-window",       type=int, default=FPS_WINDOW,
+                   help="Rolling FPS window: measure rate over the last N frames")
+    p.add_argument("--warmup",           type=int, default=FILTER_WARMUP,
+                   help="Extra frames kept for filter warmup context")
+    p.add_argument("--rx-buf",           type=int, default=SERIAL_BUF_MB,
+                   help="Serial RX buffer size in bytes")
+    p.add_argument("--cutoff",           type=float, default=10.0,
+                   help="Butterworth filter cutoff frequency (Hz)")
     return p.parse_args()
 
 
-# ─── Model loader ─────────────────────────────────────────────────────────────
+# --- Model loader -------------------------------------------------------------
 def load_models(models_dir: str, model_choice: str):
     """
     Load pipeline, label-encoder, and chosen classifier from disk.
@@ -153,23 +172,23 @@ def load_models(models_dir: str, model_choice: str):
     """
     d = Path(models_dir)
     model_files = {
-        "rf": "Random_Forest.joblib",
-        "svm": "SVM_RBF.joblib",
-        "et": "Extra_Trees.joblib",
-        "knn": "K-NN_k=5.joblib",
-        "lr": "Logistic_Regression.joblib",
-        "gb": "Gradient_Boosting.joblib",
-        "mlp": "MLP_Neural_Network.joblib",
-        "nb": "Naive_Bayes.joblib"
+        "rf": "rf.joblib",
+        "svm": "svm.joblib",
+        "et": "et.joblib",
+        "knn": "knn.joblib",
+        "lr": "lr.joblib",
+        "gb": "gb.joblib",
+        "mlp": "mlp.joblib",
+        "nb": "nb.joblib"
     }
     files = {
         "pipeline": d / "csi_pipeline.joblib",
         "le":       d / "label_encoder.joblib",
-        "model":    d / model_files.get(model_choice, "Random_Forest.joblib"),
+        "model":    d / model_files.get(model_choice, "rf.joblib"),
     }
     for key, path in files.items():
         if not path.exists():
-            print(f"❌  Missing file: {path}")
+            print(f"[ERROR]  Missing file: {path}")
             print("   Train first:  python csi_ml_pipeline.py --save_model")
             sys.exit(1)
 
@@ -179,13 +198,14 @@ def load_models(models_dir: str, model_choice: str):
     return pipeline, le, model
 
 
-# ─── Core inference ───────────────────────────────────────────────────────────
+# --- Core inference -----------------------------------------------------------
 def run_inference(
     buffer: deque,
     pipeline,
     model,
     le,
     window_size: int,
+    cutoff: float = 10.0,
 ) -> "tuple[str, float, np.ndarray] | None":
     """
     Transform the current rolling buffer and return
@@ -195,39 +215,41 @@ def run_inference(
 
     Steps
     -----
-    1. Stack raw complex frames  → (N, n_subcarriers)
-    2. pipeline.transform()      → (N-1, n_pca)   [temporal diff reduces by 1]
+    1. Stack raw complex frames  -> (N, n_subcarriers)
+    2. pipeline.transform()      -> (N-1, n_pca)   [temporal diff reduces by 1]
     3. Take last `window_size` rows as inference window
-    4. extract_features_from_window → (110,) feature vector
-    5. model.predict_proba        → argmax + per-class probabilities
+    4. extract_features_from_window -> (110,) feature vector
+    5. model.predict_proba        -> argmax + per-class probabilities
     """
-    # 1. Stack — frames may rarely have inconsistent lengths if the ESP32
+    # 1. Stack - frames may rarely have inconsistent lengths if the ESP32
     #    sent a truncated packet just before a reset; catch that explicitly.
     try:
         cm = np.vstack(buffer).astype(np.complex64)         # (N, n_sub)
     except ValueError as exc:
-        print(f"\n⚠️   Buffer vstack failed ({exc}) — skipping",
+        print(f"\n[WARNING]   Buffer vstack failed ({exc}) - skipping",
               file=sys.stderr)
         return None
 
-    # 2. Preprocess using the masks/PCA/scaler fitted during training (no refit)
+    # 2. Preprocess using the unified transform method
+    #    This ensures live inference exactly matches the training pipeline.
     try:
-        data = pipeline.remove_null_subcarriers(cm, fit=False)
-        # Skip Hampel for live inference performance
-        data = pipeline.apply_lowpass_filter(data)
-        if pipeline.use_diff:
-            data = pipeline.apply_temporal_diff(data)
-        if pipeline.pca is not None:
-            data = pipeline.pca.transform(data)
-        processed = pipeline.scaler.transform(data)     # (N-1, n_pca)
+        # P2 Fix: Explicit shape check to avoid IndexError before transform
+        if cm.shape[1] != pipeline._fitted_n_subcarriers:
+            print(f"\n[ERROR] Subcarrier mismatch: got {cm.shape[1]}, "
+                  f"expected {pipeline._fitted_n_subcarriers}", file=sys.stderr)
+            return None
+
+        # Call the unified transform (handles nulls, hampel, lowpass, diff, pca, scaler)
+        processed = pipeline.transform(cm, use_pca=True, cutoff=cutoff)
+
     except ValueError as exc:
         # Most likely: subcarrier count mismatch between training and live data
-        print(f"\n❌  Pipeline transform error: {exc}", file=sys.stderr)
+        print(f"\n[ERROR]  Pipeline transform error: {exc}", file=sys.stderr)
         print("   Check ESP32 config (bandwidth/channel) matches training.",
               file=sys.stderr)
         return None
     except Exception as exc:
-        print(f"\n⚠️   Unexpected pipeline error: {exc}", file=sys.stderr)
+        print(f"\n[WARNING]   Unexpected pipeline error: {exc}", file=sys.stderr)
         return None
 
     # 3. Need at least window_size processed frames
@@ -236,8 +258,13 @@ def run_inference(
 
     window = processed[-window_size:]                       # (window_size, n_pca)
 
-    # 4. Feature extraction → flat vector
+    # 4. Feature extraction -> flat vector
     features = extract_features_from_window(window).reshape(1, -1)
+
+    # Guard against corrupted data propagating to model
+    if not np.all(np.isfinite(features)):
+        print("\n[WARNING] Non-finite features detected - skipping", file=sys.stderr)
+        return None
 
     # 5. Predict
     if hasattr(model, "predict_proba"):
@@ -256,7 +283,7 @@ def run_inference(
     return label, confidence, all_probs
 
 
-# ─── Display ──────────────────────────────────────────────────────────────────
+# --- Display ------------------------------------------------------------------
 def print_compact(
     raw_label: str,
     confidence: float,
@@ -298,7 +325,7 @@ def print_verbose(
     Multi-line display showing all per-class probabilities.
     Prints a full block each prediction (scrolls, does not overwrite).
     """
-    sep = "─" * 46
+    sep = "-" * 46
     print(f"\n{sep}")
     print(
         f"  frames: {frame_count:>6}  "
@@ -309,7 +336,7 @@ def print_verbose(
         pct    = float(prob) * 100.0
         color  = class_colors.get(cls, "green")
         bar    = _bar(pct, width=16)
-        marker = _c("▶ ", color, "bold") if cls == smoothed else "  "
+        marker = _c(">>", color, "bold") if cls == smoothed else "  "
         print(
             f"  {marker}{_c(f'{cls:<12}', color)}  "
             f"[{bar}] {pct:5.1f}%"
@@ -317,13 +344,13 @@ def print_verbose(
     raw_color = class_colors.get(raw_label, "green")
     print(
         f"  {sep}\n"
-        f"  Smoothed → {_c(smoothed, class_colors.get(smoothed,'green'), 'bold')}"
-        f"   raw → {_c(raw_label, raw_color)}"
+        f"  Smoothed -> {_c(smoothed, class_colors.get(smoothed,'green'), 'bold')}"
+        f"   raw -> {_c(raw_label, raw_color)}"
         f"   conf {confidence:.1f}%"
     )
 
 
-# ─── Rolling FPS helper ───────────────────────────────────────────────────────
+# --- Rolling FPS helper -------------------------------------------------------
 class RollingFPS:
     """Compute FPS as frames/second over a sliding window of recent timestamps."""
 
@@ -340,22 +367,22 @@ class RollingFPS:
         return (len(self._times) - 1) / (self._times[-1] - self._times[0])
 
 
-# ─── Main loop ────────────────────────────────────────────────────────────────
+# --- Main loop ----------------------------------------------------------------
 def main() -> int:
     global _USE_COLOR
 
     args = parse_args()
 
-    # ── Color setup ──────────────────────────────────────────────────────
+    # -- Color setup ------------------------------------------------------
     if args.no_color or not sys.stdout.isatty():
         _USE_COLOR = False
     elif _IS_WIN:
         _USE_COLOR = _enable_win_ansi()
 
-    # ── Header ───────────────────────────────────────────────────────────
-    print("\n" + "═" * 52)
-    print("  ESP32 CSI — Live HAR Prediction")
-    print("═" * 52)
+    # -- Header -----------------------------------------------------------
+    print("\n" + "=" * 52)
+    print("  ESP32 CSI - Live HAR Prediction")
+    print("=" * 52)
 
     pipeline, le, model = load_models(args.models_dir, args.model)
     classes      = list(le.classes_)
@@ -382,34 +409,34 @@ def main() -> int:
           f"| Step: {args.step}  "
           f"| History: {args.history}")
     print(f"  Verbose : {args.verbose}")
-    print("═" * 52)
+    print("=" * 52)
     print("  Press Ctrl+C to stop.\n")
 
-    # ── Rolling buffer ───────────────────────────────────────────────────
+    # -- Rolling buffer ---------------------------------------------------
     # maxlen = window + warmup; deque auto-drops oldest frames when full
-    buf_size = args.window + FILTER_WARMUP
+    buf_size = args.window + args.warmup
     buffer: deque = deque(maxlen=buf_size)
 
     pred_history: deque = deque(maxlen=args.history)
-    fps_tracker  = RollingFPS()
+    fps_tracker  = RollingFPS(maxlen=args.fps_window)
 
     frame_count       = 0   # valid frames pushed to buffer
     frames_since_pred = 0   # counts valid frames since last inference
-                            # ← separate from frame_count so dropped serial
-                            #   frames never cause a missed prediction step
+                            # (separate from frame_count so dropped serial
+                            #   frames never cause a missed prediction step)
     warmup_done       = False
 
-    # ── Open serial ──────────────────────────────────────────────────────
-    ser = None      # ← initialise to None so the finally block is always safe
+    # -- Open serial ------------------------------------------------------
+    ser = None      # initialized to None so the finally block is always safe
     try:
         ser = serial.Serial(args.port, args.baud, timeout=0.1)
     except serial.SerialException as exc:
-        print(f"❌  Cannot open {args.port}: {exc}")
+        print(f"[ERROR]  Cannot open {args.port}: {exc}")
         return 1
 
     if _IS_WIN and hasattr(ser, "set_buffer_size"):
         try:
-            ser.set_buffer_size(rx_size=SERIAL_BUF_MB)
+            ser.set_buffer_size(rx_size=args.rx_buf)
         except Exception:
             pass
 
@@ -418,9 +445,9 @@ def main() -> int:
     except Exception:
         pass
 
-    print(f"  Warming up — need {buf_size} frames before first prediction …")
+    print(f"  Warming up - need {buf_size} frames before first prediction...")
 
-    # ── Read loop ────────────────────────────────────────────────────────
+    # -- Read loop --------------------------------------------------------
     try:
         while True:
             raw = ser.readline()
@@ -440,7 +467,7 @@ def main() -> int:
             frames_since_pred += 1
             fps_tracker.tick()
 
-            # ── Warmup progress bar ──────────────────────────────────────
+            # -- Warmup progress bar --------------------------------------
             if not warmup_done:
                 pct = min(frame_count / buf_size * 100, 100)
                 bar = _bar(pct, width=20)
@@ -453,12 +480,12 @@ def main() -> int:
                 if frame_count >= buf_size:
                     warmup_done = True
                     print(
-                        f"\r  ✅  Buffer ready — live predictions starting!"
+                        f"\r  [OK]  Buffer ready - live predictions starting!"
                         f"{'':30}"
                     )
                 continue
 
-            # ── Inference gate ───────────────────────────────────────────
+            # -- Inference gate -------------------------------------------
             # Use a dedicated counter, NOT frame_count % step, so that any
             # dropped/unparseable serial frames don't accidentally skip a step.
             if frames_since_pred < args.step:
@@ -466,7 +493,7 @@ def main() -> int:
             frames_since_pred = 0
 
             t0         = time.monotonic()
-            result     = run_inference(buffer, pipeline, model, le, args.window)
+            result     = run_inference(buffer, pipeline, model, le, args.window, cutoff=args.cutoff)
             latency_ms = (time.monotonic() - t0) * 1000.0
 
             if result is None:
@@ -490,12 +517,12 @@ def main() -> int:
                 )
 
     except serial.SerialException as exc:
-        print(f"\n❌  Serial error: {exc}")
+        print(f"\n[ERROR]  Serial error: {exc}")
         return 1
     except KeyboardInterrupt:
-        print("\n\n⏹   Stopped by user.")
+        print("\n\n[INFO]   Stopped by user.")
     finally:
-        # ser is None if serial.Serial() raised — guard against NameError
+        # ser is None if serial.Serial() raised - guard against NameError
         if ser is not None and ser.is_open:
             ser.close()
 

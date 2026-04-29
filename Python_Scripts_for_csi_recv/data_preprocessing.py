@@ -51,12 +51,12 @@ def configure_console_output() -> None:
 configure_console_output()
 
 
-# ════════════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------------------
 # INTERNAL HELPERS
-# ════════════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------------------
 
 def _safe_json(s: str):
-    """Parse JSON string → list, or None on failure."""
+    """Parse JSON string -> list, or None on failure."""
     try:
         result = json.loads(s)
         return result if isinstance(result, list) else None
@@ -83,8 +83,8 @@ def _build_complex_frame(raw: list, first_word_invalid: bool):
         raw[3] = 0
 
     arr = np.array(raw, dtype=np.float32)
-    real = arr[1::2]   # odd  indices → real
-    imag = arr[0::2]   # even indices → imaginary
+    real = arr[1::2]   # odd  indices -> real
+    imag = arr[0::2]   # even indices -> imaginary
     return (real + 1j * imag).astype(np.complex64)
 
 
@@ -110,9 +110,9 @@ def _parse_recv_row(line: str) -> dict[str, str] | None:
     return row
 
 
-# ════════════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------------------
 # LOADERS
-# ════════════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------------------
 
 def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
     """
@@ -126,7 +126,7 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
     if not filepath.exists():
         raise FileNotFoundError(f"File not found: {filepath}")
 
-    # Load — names=DATA_COLUMNS + default header=0 skips the logger header row
+    # Load - names=DATA_COLUMNS + default header=0 skips the logger header row
     rows = []
     with filepath.open("r", encoding="utf-8", errors="ignore") as fh:
         for line in fh:
@@ -137,7 +137,7 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
     df = pd.DataFrame(rows, columns=DATA_COLUMNS)
 
     if df.empty:
-        print("⚠️  No CSI_DATA rows found.")
+        print("[WARNING] No CSI_DATA rows found.")
         return np.zeros((0, 0), dtype=np.complex64), df
 
     # Numeric conversion
@@ -150,7 +150,7 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
     df = df.dropna(subset=['seq', 'len']).reset_index(drop=True)
 
     if df.empty:
-        print("⚠️  No valid rows after dropna.")
+        print("[WARNING] No valid rows after dropna.")
         return np.zeros((0, 0), dtype=np.complex64), df
 
     # Sequence gap detection
@@ -159,7 +159,7 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
     total_gaps = int(gaps[gaps > 0].sum())
     if total_gaps > 0:
         gap_events = int((gaps > 0).sum())
-        print(f"⚠️  Sequence gaps: {total_gaps} packets lost "
+        print(f"[WARNING] Sequence gaps: {total_gaps} packets lost "
               f"in {gap_events} events out of {len(seqs)} received")
 
     # Vectorized JSON parsing for better performance
@@ -168,13 +168,13 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
 
     n_invalid = int((~valid_mask).sum())
     if n_invalid > 0:
-        print(f"⚠️  {n_invalid} rows with unparseable data — skipped")
+        print(f"[WARNING] {n_invalid} rows with unparseable data - skipped")
 
     df = df[valid_mask].copy().reset_index(drop=True)
     parsed = parsed[valid_mask].reset_index(drop=True)
 
     if df.empty:
-        print("⚠️  No frames could be parsed.")
+        print("[WARNING] No frames could be parsed.")
         return np.zeros((0, 0), dtype=np.complex64), df
 
     first_words = df['first_word'].tolist()
@@ -188,7 +188,7 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
             valid_idx.append(i)
 
     if not frames:
-        print("⚠️  No frames converted to complex.")
+        print("[WARNING] No frames converted to complex.")
         return np.zeros((0, 0), dtype=np.complex64), df
 
     # Consistency: keep only frames with the most common length
@@ -200,14 +200,14 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
                 if l == most_common_len]
         frames, valid_idx = zip(*kept)
         frames, valid_idx = list(frames), list(valid_idx)
-        print(f"⚠️  Mixed frame lengths — kept {len(frames)} "
+        print(f"[WARNING] Mixed frame lengths - kept {len(frames)} "
               f"frames with len={most_common_len}")
 
     complex_matrix = np.vstack(frames).astype(np.complex64)
     metadata_df = df.iloc[valid_idx].reset_index(drop=True)
 
-    print(f"✅ Loaded {complex_matrix.shape[0]} frames "
-          f"× {complex_matrix.shape[1]} subcarriers")
+    print(f"[OK] Loaded {complex_matrix.shape[0]} frames "
+          f"x {complex_matrix.shape[1]} subcarriers")
     summary_parts = []
     rssi_values = metadata_df['rssi'].dropna()
     if not rssi_values.empty:
@@ -227,10 +227,9 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
     return complex_matrix, metadata_df
 
 
-
-# ════════════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------------------
 # PREPROCESSING PIPELINE
-# ════════════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------------------
 
 class CSIPipeline:
     """
@@ -240,33 +239,21 @@ class CSIPipeline:
     Steps:
       1. Null Subcarrier Removal    (guard/null band removal, saves mask)
       2. Hampel Filter              (outlier / spike removal)
-      3. Butterworth Low-Pass       (noise smoothing, zero phase, 12 Hz)
+      3. Butterworth Low-Pass       (noise smoothing, zero phase, 10 Hz)
       4. Temporal Difference        (first-order diff, motion focus)
       5. PCA                        (dimensionality reduction)
       6. StandardScaler             (environment-scale normalization)
-
-    Why step 4 makes HAR environment-independent:
-      - Temporal difference converts absolute values → rate of change.
-        A static room gives diff ≈ 0, a person moving gives large diff values.
-      - This makes the model "blind" to room layout and see only motion.
-
-    This is the standard approach used in academic papers like Widar3.0, EI,
-    CrossSense, and is essential for cross-environment model generalization.
     """
 
     def __init__(
         self,
         fs: float = 100.0,
         use_diff: bool = True,
+        cutoff: float = 10.0,
     ):
-        """
-        Args:
-          fs                : Sampling frequency in Hz (default: 100)
-          use_diff          : Enable temporal difference (frame[t+1] - frame[t])
-                              Set to False to disable temporal differencing
-        """
         self.fs = fs
         self.use_diff = use_diff
+        self.cutoff = cutoff
 
         # State (saved after fit_transform for reuse in transform)
         self.active_mask = None
@@ -277,196 +264,112 @@ class CSIPipeline:
         # Store training shape for validation
         self._fitted_n_subcarriers = None
 
-    # ── 1. Null Subcarrier Removal ────────────────────────────────────────
+    # -- 1. Null Subcarrier Removal ------------------------------------------
     def remove_null_subcarriers(self, complex_matrix: np.ndarray,
                                 fit: bool = False) -> np.ndarray:
-        """
-        Remove guard/null subcarriers (amplitude ≈ 0) from CSI data.
-
-        In fit mode: creates and stores a mask of active subcarriers.
-        In transform mode: applies the stored mask from training data.
-
-        Why this is environment-independent:
-          The same subcarrier indices are null in all environments
-          (HT40 WiFi standard: pilot tones, DC null, guard bands).
-          This is a hardware property, not environment-dependent.
-        """
         amp = np.abs(complex_matrix)
 
         if fit:
-            self.active_mask = np.any(amp > 0, axis=0)
+            self.active_mask = np.any(amp > 1e-3, axis=0)
             n_active = int(self.active_mask.sum())
-            n_total = complex_matrix.shape[1]
             if n_active == 0:
-                raise ValueError("All subcarriers are zero — check your data!")
-            print(f"   Null removal: {n_total} → {n_active} subcarriers "
-                  f"({n_total - n_active} nulls)")
+                raise ValueError("All subcarriers are zero - check your data!")
 
         if self.active_mask is None:
             raise RuntimeError("remove_null_subcarriers: fit=True was never called")
 
         return amp[:, self.active_mask]
 
-    # ── 2. Hampel Filter (Vectorized) ────────────────────────────────────
+    # -- 2. Hampel Filter (Vectorized) ---------------------------------------
     def apply_hampel_filter(self, data: np.ndarray, window_size: int = 11,
                             n_sigmas: float = 3.0) -> np.ndarray:
-        """
-        Hampel filter: replaces outliers with median of local window.
-        Applied per-subcarrier (along time axis).
-
-        OPTIMIZED: Uses pandas rolling instead of nested Python loops.
-        ~10-20x faster than the naive implementation.
-        Mathematically identical results.
-
-        Why this is environment-independent:
-          Outliers (spikes) are hardware/driver artifacts, not environment.
-          This is a quality-of-signal preprocessing step.
-        """
         filtered = data.copy()
 
         for sc in range(data.shape[1]):
             s = pd.Series(data[:, sc])
-            # Rolling median (centered window)
-            rolling_median = s.rolling(
-                window_size, center=True, min_periods=1
-            ).median()
-            # Deviation from rolling median
+            rolling_median = s.rolling(window_size, center=True, min_periods=1).median()
             deviation = (s - rolling_median).abs()
-            # Rolling MAD (Median Absolute Deviation)
-            rolling_mad = deviation.rolling(
-                window_size, center=True, min_periods=1
-            ).median()
-            # MAD → σ conversion: σ ≈ 1.4826 × MAD (for Gaussian data)
+            rolling_mad = deviation.rolling(window_size, center=True, min_periods=1).median()
             threshold = n_sigmas * 1.4826 * rolling_mad
-            # Replace outliers with rolling median
+            threshold = threshold.clip(lower=1e-6)  # Prevent zero-MAD from flagging everything
             outlier_mask = deviation > threshold
             filtered[outlier_mask.values, sc] = rolling_median[outlier_mask].values
 
         return filtered
 
-    # ── 3. Butterworth Low-Pass (Vectorized) ──────────────────────────────
+    # -- 3. Butterworth Low-Pass (Vectorized) --------------------------------
     def apply_lowpass_filter(self, data: np.ndarray,
-                             cutoff: float = 12.0) -> np.ndarray:
-        """
-        Zero-phase Butterworth low-pass filter (4th order).
-        Applied to ALL subcarriers at once via axis parameter.
-
-        Applied to ALL subcarriers at once via axis parameter.
-
-        Default cutoff: 12 Hz — removes high-frequency noise while
-        preserving human motion (walk ≈ 2 Hz, fall ≈ 5-10 Hz).
-
-        Why this is environment-independent:
-          Human motion frequency range is universal, not environment-specific.
-          This targets the signal bandwidth of interest.
-        """
+                             cutoff: float = 10.0) -> np.ndarray:
         from scipy.signal import sosfiltfilt
 
         nyquist = self.fs / 2.0
         if cutoff >= nyquist:
-            print(f"⚠️  Lowpass cutoff {cutoff} Hz ≥ Nyquist {nyquist:.1f} Hz "
-                  f"— skipping filter")
+            print(f"[WARNING] Lowpass cutoff {cutoff} Hz >= Nyquist {nyquist:.1f} Hz "
+                  f"- skipping filter")
             return data
 
         sos = butter(4, cutoff / nyquist, btype='low', output='sos')
         padlen = 3 * (2 * sos.shape[0] + 1)
         if data.shape[0] <= padlen:
-            print(f"β οΈ  Lowpass skipped: only {data.shape[0]} frames available "
+            print(f"[WARNING] Lowpass skipped: only {data.shape[0]} frames available "
                   f"(need > {padlen})")
             return data
-        # sosfiltfilt with axis=0 filters ALL subcarriers in one vectorized call
         return sosfiltfilt(sos, data, axis=0).astype(data.dtype)
 
-
-
-    # ── 4. Temporal Difference ────────────────────────────────────────────
+    # -- 4. Temporal Difference ----------------------------------------------
     def apply_temporal_diff(self, data: np.ndarray) -> np.ndarray:
-        """
-        First-order temporal difference: replaces absolute amplitude with
-        the RATE OF CHANGE between consecutive frames.
-
-        Why this makes HAR environment-independent:
-          - A static room: frame[t] ≈ frame[t-1] → diff ≈ 0 for all t
-          - A falling person: frame[t] changes rapidly → large diff values
-          - The model sees "what changed" instead of "what the room looks like"
-          - This is the key technique in Widar3.0, EI, and CrossSense papers
-
-        Output shape: (N_frames - 1, N_subcarriers)
-        The first frame is lost — this is mathematically unavoidable.
-        For a 1000-frame recording at 100 Hz: 999 frames remain (9.99 s).
-
-        NOTE: both training and inference data will have N-1 frames.
-        Your ML model must be designed for variable-length inputs (RNN/LSTM)
-        or use fixed-length windows AFTER this step.
-        """
         if not self.use_diff:
             return data
 
         if data.shape[0] < 2:
-            print("⚠️  Temporal diff skipped: need at least 2 frames")
+            print("[WARNING] Temporal diff skipped: need at least 2 frames")
             return data
 
-        # np.diff along axis=0: out[i] = data[i+1] - data[i]
         return np.diff(data, n=1, axis=0).astype(np.float32)
 
-    # ── fit_transform (Training) ──────────────────────────────────────────
+    # -- fit_transform (Training) --------------------------------------------
     def fit_transform(self, complex_matrix: np.ndarray,
                       use_pca: bool = True,
                       n_components: int = 10,
-                      scaler_type: str = 'standard') -> np.ndarray:
-        """
-        Train pipeline on training data and transform it.
-        Saves active_mask, background_mean, PCA, Scaler for transform().
+                      scaler_type: str = 'standard',
+                      cutoff: float | None = None) -> np.ndarray:
+        if cutoff is not None:
+            self.cutoff = cutoff
+        print(f"[SETUP] fit_transform - input {complex_matrix.shape}")
 
-        Default scaler changed to 'standard' (Z-score) because it normalizes
-        each component to mean=0, std=1 — making the model insensitive to
-        the absolute signal strength which varies between environments.
-        Use 'minmax' only if your model requires [0,1] input range.
-        """
-        print(f"🔧 fit_transform — input {complex_matrix.shape}")
-
-        # Store training shape for validation
         self._fitted_n_subcarriers = complex_matrix.shape[1]
 
         # [1] Null removal
         data = self.remove_null_subcarriers(complex_matrix, fit=True)
-        print(f"   [1] Null removal: {complex_matrix.shape[1]} → "
-              f"{data.shape[1]} subcarriers")
+        print(f"   [1] Null removal: {complex_matrix.shape[1]} -> {data.shape[1]} subcarriers")
 
         # [2] Hampel
         data = self.apply_hampel_filter(data)
-        print(f"   [2] Hampel ✅")
+        print(f"   [2] Hampel [OK]")
 
         # [3] Butterworth
-        data = self.apply_lowpass_filter(data)
-        print(f"   [3] Butterworth ✅")
+        data = self.apply_lowpass_filter(data, cutoff=self.cutoff)
+        print(f"   [3] Butterworth [OK]")
 
         # [4] Temporal difference
         if self.use_diff:
             data = self.apply_temporal_diff(data)
-            print(f"   [4] Temporal diff ✅  shape={data.shape}  "
-                  f"(N-1={data.shape[0]} frames)")
+            print(f"   [4] Temporal diff [OK] shape={data.shape}")
         else:
             print(f"   [4] Temporal diff: disabled")
 
         # [5] PCA
         if use_pca:
             if data.shape[0] < 2:
-                raise ValueError(
-                    "PCA requires at least 2 frames after preprocessing. "
-                    "Capture more data or disable PCA."
-                )
+                raise ValueError("PCA requires at least 2 frames after preprocessing.")
             actual_n = min(n_components, data.shape[0] - 1, data.shape[1])
-            
-            # Warn if components were reduced by matrix rank limit
             if actual_n < n_components:
-                print(f"   ⚠️  PCA: requested {n_components} components, "
-                      f"but limited to {actual_n} by data shape {data.shape}")
+                print(f"   [WARNING] PCA: limited to {actual_n} by data shape {data.shape}")
             
             self.pca = PCA(n_components=actual_n)
             data = self.pca.fit_transform(data)
             explained = self.pca.explained_variance_ratio_.sum() * 100
-            print(f"   [5] PCA: {actual_n} components, {explained:.1f}% variance ✅")
+            print(f"   [5] PCA: {actual_n} components, {explained:.1f}% variance [OK]")
         else:
             self.pca = None
             print(f"   [5] PCA: skipped")
@@ -480,41 +383,29 @@ class CSIPipeline:
             raise ValueError(f"Unknown scaler_type '{scaler_type}'")
 
         data = self.scaler.fit_transform(data)
-        print(f"   [6] {scaler_type} scaling → output {data.shape} ✅")
+        print(f"   [6] {scaler_type} scaling -> output {data.shape} [OK]")
 
         self.is_fitted = True
         return data
 
-    # ── transform (Inference) ─────────────────────────────────────────────
+    # -- transform (Inference) -----------------------------------------------
     def transform(self, complex_matrix: np.ndarray,
-                  use_pca: bool = True) -> np.ndarray:
-        """
-        Transform new data using already-trained mask, background,
-        PCA, and Scaler. Does NOT retrain anything.
-
-        IMPORTANT: background_mean comes from training data — this is
-        intentional. Applying a test room's background would defeat the
-        purpose of background subtraction.
-        """
+                  use_pca: bool = True,
+                  cutoff: float | None = None) -> np.ndarray:
+        eff_cutoff = cutoff if cutoff is not None else self.cutoff
         if not self.is_fitted:
             raise RuntimeError("Pipeline not fitted. Call fit_transform() first.")
 
-        # Validate input shape matches training shape
         if complex_matrix.shape[1] != self._fitted_n_subcarriers:
             raise ValueError(
-                f"Shape mismatch: input has {complex_matrix.shape[1]} subcarriers, "
-                f"but pipeline was trained with {self._fitted_n_subcarriers} subcarriers. "
-                f"Ensure training and test data come from the same ESP32 configuration "
-                f"(same bandwidth, same channel, same receiver)."
+                f"Shape mismatch: input has {complex_matrix.shape[1]}, "
+                f"expected {self._fitted_n_subcarriers}. Check hardware config."
             )
 
         data = self.remove_null_subcarriers(complex_matrix, fit=False)
         data = self.apply_hampel_filter(data)
-        data = self.apply_lowpass_filter(data)
+        data = self.apply_lowpass_filter(data, cutoff=eff_cutoff)
 
-
-
-        # Temporal diff
         if self.use_diff:
             data = self.apply_temporal_diff(data)
 
@@ -529,47 +420,36 @@ class CSIPipeline:
         return int(self.active_mask.sum()) if self.active_mask is not None else 0
 
 
-# ════════════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------------------
 # STANDALONE TEST
-# ════════════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------------------
 if __name__ == "__main__":
-    import sys
-
     if len(sys.argv) > 1:
         csv_path = Path(sys.argv[1])
-        print(f"\n📂 Loading: {csv_path}")
+        print(f"\n[FILE] Loading: {csv_path}")
         complex_matrix, meta = load_csi_csv(csv_path)
     else:
-        print("ℹ️  Simulation mode")
+        print("[INFO] Simulation mode")
         np.random.seed(42)
         r  = np.random.randn(500, 128).astype(np.float32) * 10
         im = np.random.randn(500, 128).astype(np.float32) * 10
         complex_matrix = (r + 1j * im).astype(np.complex64)
         complex_matrix[:, :6]  = 0
         complex_matrix[:, -6:] = 0
-        # Simulate static room: add constant offset to first 50 frames
         complex_matrix[:50] += 5.0
 
     if complex_matrix.size == 0:
-        print("❌ Empty matrix — exiting")
+        print("[ERROR] Empty matrix - exiting")
         sys.exit(1)
 
-    print(f"\n📊 Input: {complex_matrix.shape}")
+    print(f"\n[STATS] Input: {complex_matrix.shape}")
 
-    # Default: environment-independent pipeline
-    pipeline = CSIPipeline(
-        fs=100.0,
-        use_diff=True,           # temporal diff for environment independence
-    )
+    pipeline = CSIPipeline(fs=100.0, use_diff=True)
     processed = pipeline.fit_transform(
         complex_matrix,
         use_pca=True,
         n_components=10,
-        scaler_type='standard'  # Z-score for cross-environment robustness
+        scaler_type='standard'
     )
-    print(f"\n✅ Output: {processed.shape}")
-    print(f"   Mean={processed.mean():.4f} | Std={processed.std():.4f}  "
-          f"(should be ~0 and ~1 for standard scaler)")
-    print(f"   Active subcarriers: {pipeline.n_active_subcarriers}")
-    print(f"\n   Note: output has N-1={processed.shape[0]} frames "
-          f"(temporal diff reduces by 1)")
+    print(f"\n[OK] Output: {processed.shape}")
+    print(f"   Mean={processed.mean():.4f} | Std={processed.std():.4f}")
