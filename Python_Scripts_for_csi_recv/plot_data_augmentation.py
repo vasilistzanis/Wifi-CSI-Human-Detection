@@ -20,9 +20,11 @@ except ImportError:
 # ---------------------------------------------------------------------
 
 
-RANDOM_SEED    = 42     # reproducible plots
+import config
+
+RANDOM_SEED    = config.RANDOM_SEED     # reproducible plots
 MIN_FRAMES     = 200    # minimum recording length required
-SEGMENT_LEN    = 200    # frames per segment used for visualization
+SEGMENT_LEN    = config.WINDOW_SIZE    # frames per segment used for visualization
 SUBCARRIER_IDX = 30     # preferred subcarrier (bounds-checked below)
 
 

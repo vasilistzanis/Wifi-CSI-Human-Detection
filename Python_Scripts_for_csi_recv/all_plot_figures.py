@@ -36,6 +36,7 @@ from pathlib import Path
 
 
 import numpy as np
+import config
 import matplotlib
 from scipy.signal import spectrogram
 
@@ -452,7 +453,7 @@ def parse_args():
                    help="Dataset .txt or .csv (default: latest in datasets/)")
     p.add_argument("--save", action="store_true",
                    help="Save all figures as PNG (300 DPI)")
-    p.add_argument("--fs", type=float, default=100.0,
+    p.add_argument("--fs", type=float, default=config.SAMPLING_RATE,
                    help="Sampling frequency in Hz (default: 100)")
     p.add_argument("--fft-max", type=float, default=25.0,
                    help="Max frequency (Hz) to show in FFT/Spectrogram (default: 25)")
