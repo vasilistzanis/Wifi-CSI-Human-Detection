@@ -55,6 +55,8 @@ plt.ioff()  # Disable interactive mode for faster background rendering
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
+import config
+
 
 # Improved: Better import error handling
 try:
@@ -86,8 +88,8 @@ def parse_args():
         help="Save output PNG next to the dataset file (Will save 7 files!)"
     )
     parser.add_argument(
-        "--pca-components", type=int, default=10,
-        help="Number of PCA components (default: 10)"
+        "--pca-components", type=int, default=config.N_PCA_COMPONENTS,
+        help=f"Number of PCA components (default: {config.N_PCA_COMPONENTS})"
     )
     parser.add_argument(
         "--cutoff", type=float, default=10.0,
@@ -139,7 +141,7 @@ def main():
 
     # -- Pipeline step-by-step ---------------------------------------------
     pipeline = CSIPipeline(
-        fs=100.0,
+        fs=config.SAMPLING_RATE,
         use_diff=not args.no_diff,
     )
 

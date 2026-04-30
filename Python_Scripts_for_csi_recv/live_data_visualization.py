@@ -22,6 +22,7 @@ from pyqtgraph import PlotWidget, ScatterPlotItem
 
 # -- Shared parsing from csi_parser -------------------------------------------
 from csi_parser import (
+    analyze_seq_transition,
     configure_console_output,
     split_recv_fields,
     extract_seq,
@@ -112,6 +113,7 @@ class CSIState:
     seq_sample_count: int = 0
     missing_seq_count: int = 0
     gap_event_count: int = 0
+    duplicate_count: int = 0
     non_monotonic_count: int = 0
     last_gap_size: int = 0
 
@@ -130,12 +132,16 @@ class CSIState:
     def update_seq(self, seq: int) -> None:
         with self.lock:
             if self.last_seq is not None:
-                if seq > self.last_seq + 1:
-                    gap_size = seq - self.last_seq - 1
-                    self.missing_seq_count += gap_size
+                transition = analyze_seq_transition(self.last_seq, seq)
+                if transition.gap_event:
+                    self.missing_seq_count += transition.missing_count
                     self.gap_event_count += 1
-                    self.last_gap_size = gap_size
-                elif seq <= self.last_seq:
+                    self.last_gap_size = transition.missing_count
+                elif transition.duplicate:
+                    self.duplicate_count += 1
+                    self.seq_sample_count += 1
+                    return
+                elif transition.reset:
                     self.non_monotonic_count += 1
 
 
@@ -165,6 +171,7 @@ class CSIState:
                 latest_idx = (self.write_idx - 1) % self.buffer_size
                 latest_frame = self.buffer[latest_idx].copy()
 
+            unique_seq_count = max(0, self.seq_sample_count - self.duplicate_count)
 
             return {
                 "latest_frame": latest_frame,
@@ -177,11 +184,12 @@ class CSIState:
                 "last_seq": self.last_seq,
                 "missing_seq_count": self.missing_seq_count,
                 "gap_event_count": self.gap_event_count,
+                "duplicate_count": self.duplicate_count,
                 "non_monotonic_count": self.non_monotonic_count,
                 "last_gap_size": self.last_gap_size,
                 "loss_percent": (
-                    (self.missing_seq_count / (self.seq_sample_count + self.missing_seq_count)) * 100.0
-                    if (self.seq_sample_count + self.missing_seq_count) > 0
+                    (self.missing_seq_count / (unique_seq_count + self.missing_seq_count)) * 100.0
+                    if (unique_seq_count + self.missing_seq_count) > 0
                     else 0.0
                 ),
             }
@@ -357,6 +365,9 @@ class CSIWindow(QWidget):
 
         if snapshot["gap_event_count"] > 0:
             status += f" | Gaps: {snapshot['gap_event_count']} (last: {snapshot['last_gap_size']})"
+
+        if snapshot["duplicate_count"] > 0:
+            status += f" | Duplicates: {snapshot['duplicate_count']}"
 
 
         if snapshot["non_monotonic_count"] > 0:

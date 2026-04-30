@@ -337,49 +337,67 @@ def plot_group_importance(
         n_jobs=-1, scoring='accuracy',
     )
 
-    # Clip negative importances to 0 for aggregation
-    clipped = np.clip(result.importances_mean, 0, None)
-    groups = _aggregate_group_importance(feature_names, clipped)
+    groups = _aggregate_group_importance(feature_names, result.importances_mean)
 
-    # Sort by importance
+    # Sort by signed net importance for the bar chart
     sorted_groups = sorted(groups.items(), key=lambda x: x[1], reverse=True)
     group_names = [g[0] for g in sorted_groups]
-    group_vals  = [g[1] for g in sorted_groups]
-    total = sum(group_vals) if sum(group_vals) > 0 else 1.0
-    group_pcts = [v / total * 100 for v in group_vals]
+    group_vals = [g[1] for g in sorted_groups]
     colors = [GROUP_COLORS.get(g, STYLE["accent5"]) for g in group_names]
+
+    # Positive-only share for the pie chart, without hiding negative bars
+    positive_groups = [(name, val) for name, val in sorted_groups if val > 0]
+    positive_total = sum(val for _, val in positive_groups)
+    pie_names = [name for name, _ in positive_groups]
+    pie_vals = [val for _, val in positive_groups]
+    pie_pcts = [val / positive_total * 100 for val in pie_vals] if positive_total > 0 else []
+    pie_colors = [GROUP_COLORS.get(name, STYLE["accent5"]) for name in pie_names]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6.5),
                                     gridspec_kw={"width_ratios": [1, 1.2]})
 
-    # Left: Pie chart
-    wedges, texts, autotexts = ax1.pie(
-        group_pcts, labels=group_names, colors=colors,
-        autopct='%1.1f%%', startangle=90,
-        textprops={"fontsize": 12, "fontweight": "bold"},
-        wedgeprops={"edgecolor": "white", "linewidth": 2},
-    )
-    for t in autotexts:
-        t.set_fontsize(11)
-        t.set_color("white")
-        t.set_fontweight("bold")
-    ax1.set_title("Feature Domain Contribution", fontweight="bold", fontsize=13)
+    # Left: Positive-contribution pie chart
+    if pie_pcts:
+        wedges, texts, autotexts = ax1.pie(
+            pie_pcts, labels=pie_names, colors=pie_colors,
+            autopct='%1.1f%%', startangle=90,
+            textprops={"fontsize": 12, "fontweight": "bold"},
+            wedgeprops={"edgecolor": "white", "linewidth": 2},
+        )
+        for t in autotexts:
+            t.set_fontsize(11)
+            t.set_color("white")
+            t.set_fontweight("bold")
+        ax1.set_title("Positive Contribution Share", fontweight="bold", fontsize=13)
+    else:
+        ax1.text(
+            0.5, 0.5,
+            "No positive net\npermutation importance",
+            ha="center", va="center", fontsize=12, fontweight="bold",
+            transform=ax1.transAxes,
+        )
+        ax1.set_title("Positive Contribution Share", fontweight="bold", fontsize=13)
+        ax1.axis("off")
 
-    # Right: Horizontal bar
+    # Right: Signed horizontal bar
     ax2.barh(
-        range(len(group_names)), group_pcts,
+        range(len(group_names)), group_vals,
         color=colors, edgecolor="white", linewidth=1,
         height=0.5,
     )
     ax2.set_yticks(range(len(group_names)))
     ax2.set_yticklabels(group_names, fontsize=12, fontweight="bold")
     ax2.invert_yaxis()
-    ax2.set_xlabel("Relative Importance (%)", fontweight="bold", fontsize=12)
-    ax2.set_title("Importance by Signal Domain", fontweight="bold", fontsize=13)
+    ax2.set_xlabel("Net Mean Accuracy Decrease", fontweight="bold", fontsize=12)
+    ax2.set_title("Net Importance by Signal Domain", fontweight="bold", fontsize=13)
+    ax2.axvline(0, color=STYLE["grid"], linewidth=1)
 
-    # Annotate bars with percentages
-    for i, (pct, val) in enumerate(zip(group_pcts, group_vals)):
-        ax2.text(pct + 0.5, i, f"{pct:.1f}%", va="center", fontsize=11, fontweight="bold")
+    # Annotate bars with signed values
+    for i, val in enumerate(group_vals):
+        offset = 0.002 if val >= 0 else -0.002
+        ha = "left" if val >= 0 else "right"
+        ax2.text(val + offset, i, f"{val:.3f}", va="center", ha=ha,
+                 fontsize=11, fontweight="bold")
 
     fig.suptitle(
         f"Feature Group Analysis - {model_name}",
@@ -393,9 +411,12 @@ def plot_group_importance(
 
     # Print summary
     print(f"\n   Feature Group Breakdown ({model_name}):")
-    for name, pct in zip(group_names, group_pcts):
-        bar = "#" * int(pct / 2)
-        print(f"     {name:15s}  {pct:5.1f}%  {bar}")
+    for name, val in zip(group_names, group_vals):
+        print(f"     {name:15s}  net={val: .4f}")
+    if pie_pcts:
+        print("   Positive-share view:")
+        for name, pct in zip(pie_names, pie_pcts):
+            print(f"     {name:15s}  {pct:5.1f}%")
 
     return fig
 

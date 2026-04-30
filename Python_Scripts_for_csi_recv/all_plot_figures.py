@@ -313,46 +313,68 @@ def plot_fft_spectrogram(complex_matrix, fs, title_base, save_dir, save, f_max=2
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6),
                                     gridspec_kw={"width_ratios": [1, 1.5]})
 
+    if signal.size == 0:
+        ax1.text(0.5, 0.5, "No frames available", ha="center", va="center",
+                 transform=ax1.transAxes, fontsize=11)
+        ax2.text(0.5, 0.5, "No frames available", ha="center", va="center",
+                 transform=ax2.transAxes, fontsize=11)
+        ax1.set_title("FFT Spectrum", fontweight="bold")
+        ax2.set_title("Spectrogram (dB)", fontweight="bold")
+        fig.suptitle(f"5. Frequency Domain Analysis\n{title_base}",
+                     fontweight="bold")
+        fig.tight_layout()
+        if save:
+            _save_fig(fig, save_dir, "05_fft_spectrogram")
+        return fig
+
 
     # Left: FFT magnitude spectrum
     n = len(signal)
     fft_vals = np.abs(np.fft.rfft(signal))
     freqs = np.fft.rfftfreq(n, d=1.0 / fs)
 
-
     # Skip DC (index 0)
-    ax1.plot(freqs[1:], fft_vals[1:], color=STYLE["accent1"], linewidth=1.2)
-    ax1.fill_between(freqs[1:], fft_vals[1:], alpha=0.15, color=STYLE["accent1"])
-    peak_idx = np.argmax(fft_vals[1:]) + 1
-    peak_freq = freqs[peak_idx]
-    ax1.axvline(peak_freq, color=STYLE["accent4"], linestyle="--", linewidth=1,
-                label=f"Peak: {peak_freq:.1f} Hz")
+    if len(fft_vals) > 1:
+        ax1.plot(freqs[1:], fft_vals[1:], color=STYLE["accent1"], linewidth=1.2)
+        ax1.fill_between(freqs[1:], fft_vals[1:], alpha=0.15, color=STYLE["accent1"])
+        peak_idx = np.argmax(fft_vals[1:]) + 1
+        peak_freq = freqs[peak_idx]
+        ax1.axvline(peak_freq, color=STYLE["accent4"], linestyle="--", linewidth=1,
+                    label=f"Peak: {peak_freq:.1f} Hz")
+    else:
+        ax1.text(0.5, 0.5, "Need at least 2 frames\nfor FFT analysis",
+                 ha="center", va="center", transform=ax1.transAxes, fontsize=11)
     ax1.set_xlabel("Frequency (Hz)", fontweight="bold")
     ax1.set_ylabel("FFT Magnitude", fontweight="bold")
     ax1.set_title("FFT Spectrum", fontweight="bold")
-    ax1.legend(fontsize=9)
+    handles, labels = ax1.get_legend_handles_labels()
+    if handles:
+        ax1.legend(fontsize=9)
     ax1.set_xlim(0, min(fs / 2, f_max))
 
 
     # Right: Spectrogram
-    nperseg = min(256, len(signal) // 4)
-    if nperseg < 16:
-        nperseg = 16
-    noverlap = nperseg // 2
+    if len(signal) < 2:
+        ax2.text(0.5, 0.5, "Need at least 2 frames\nfor spectrogram",
+                 ha="center", va="center", transform=ax2.transAxes, fontsize=11)
+        ax2.set_xlabel("Time (s)", fontweight="bold")
+        ax2.set_ylabel("Frequency (Hz)", fontweight="bold")
+        ax2.set_title("Spectrogram (dB)", fontweight="bold")
+    else:
+        nperseg = min(256, len(signal))
+        noverlap = max(0, min(nperseg // 2, nperseg - 1))
 
+        f, t_spec, Sxx = spectrogram(signal, fs=fs, nperseg=nperseg,
+                                     noverlap=noverlap, scaling="spectrum")
 
-    f, t_spec, Sxx = spectrogram(signal, fs=fs, nperseg=nperseg,
-                                  noverlap=noverlap, scaling="spectrum")
-
-
-    # Limit frequency range
-    f_mask = f <= min(fs / 2, f_max)
-    im = ax2.pcolormesh(t_spec, f[f_mask], 10 * np.log10(Sxx[f_mask] + 1e-12),
-                        shading="gouraud", cmap="inferno")
-    ax2.set_xlabel("Time (s)", fontweight="bold")
-    ax2.set_ylabel("Frequency (Hz)", fontweight="bold")
-    ax2.set_title("Spectrogram (dB)", fontweight="bold")
-    fig.colorbar(im, ax=ax2, label="Power (dB)", shrink=0.8)
+        # Limit frequency range
+        f_mask = f <= min(fs / 2, f_max)
+        im = ax2.pcolormesh(t_spec, f[f_mask], 10 * np.log10(Sxx[f_mask] + 1e-12),
+                            shading="gouraud", cmap="inferno")
+        ax2.set_xlabel("Time (s)", fontweight="bold")
+        ax2.set_ylabel("Frequency (Hz)", fontweight="bold")
+        ax2.set_title("Spectrogram (dB)", fontweight="bold")
+        fig.colorbar(im, ax=ax2, label="Power (dB)", shrink=0.8)
 
 
     fig.suptitle(f"5. Frequency Domain Analysis\n{title_base}",

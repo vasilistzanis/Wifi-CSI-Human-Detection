@@ -528,7 +528,7 @@ def main() -> int:
             ser.close()
 
     print(f"  Total valid frames : {frame_count}")
-    print(f"  Rolling fps (last {FPS_WINDOW} frames) : {fps_tracker.fps:.1f}")
+    print(f"  Rolling fps (last {args.fps_window} frames) : {fps_tracker.fps:.1f}")
     return 0
 
 

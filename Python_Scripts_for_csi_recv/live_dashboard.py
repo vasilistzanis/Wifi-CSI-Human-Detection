@@ -49,9 +49,26 @@ from PyQt5.QtWidgets import (
 
 # --- Local imports ------------------------------------------------------------
 try:
-    from csi_parser import parse_csi_line
+    from csi_parser import analyze_seq_transition, parse_csi_line
     _PARSER_OK = True
 except ImportError:
+    class _SeqTransitionFallback:
+        def __init__(self, missing_count=0, gap_event=False, duplicate=False, reset=False):
+            self.missing_count = missing_count
+            self.gap_event = gap_event
+            self.duplicate = duplicate
+            self.reset = reset
+
+    def analyze_seq_transition(previous_seq, current_seq):
+        if previous_seq is None:
+            return _SeqTransitionFallback()
+        diff = current_seq - previous_seq
+        if diff > 1:
+            return _SeqTransitionFallback(missing_count=diff - 1, gap_event=True)
+        if diff == 0:
+            return _SeqTransitionFallback(duplicate=True)
+        return _SeqTransitionFallback(reset=True)
+
     _PARSER_OK = False
 
 # --- Constants & Aesthetics ---------------------------------------------------
@@ -164,7 +181,11 @@ def create_sc_plot(max_sc):
     ax_b.setTextPen(pg.mkPen(TEXT_DIM))
     ax_b.setPen(pg.mkPen(BORDER))
     ax_b.setTickFont(QtGui.QFont("Courier New", 7))
-    ticks = [(i, str(i)) for i in range(0, max_sc + 1, max_sc // 4)]
+    tick_step = max(1, max_sc // 4)
+    tick_positions = list(range(0, max_sc, tick_step))
+    if (max_sc - 1) not in tick_positions:
+        tick_positions.append(max_sc - 1)
+    ticks = [(i, str(i)) for i in sorted(set(tick_positions))]
     ax_b.setTicks([ticks])
 
     pw.setYRange(0.0, 1.05, padding=0)
@@ -307,8 +328,9 @@ class ReaderThread(threading.Thread):
             self._frames += 1
             if rssi is not None: self._rssi = float(rssi)
             if seq is not None and self._last_seq >= 0:
-                gap = (seq - self._last_seq - 1) % 4096
-                if 0 < gap < 200: self._pkt_loss += gap
+                transition = analyze_seq_transition(self._last_seq, seq)
+                if transition.gap_event:
+                    self._pkt_loss += transition.missing_count
             if seq is not None: self._last_seq = seq
             self._latencies.append(now - self._t_last)
             self._t_last = now
@@ -380,9 +402,9 @@ class ReaderThread(threading.Thread):
             burst  = 1.0 + 2.8 * max(0.0, math.sin(ph * 0.07) ** 8)
             val    = (abs(math.sin(ph) * 0.65 + math.sin(ph * 0.37) * 0.35)
                       * float(rng.uniform(0.88, 1.0)) * burst)
-            fake_sc = np.exp(-np.linspace(0, 3, MAX_SC)) * rng.uniform(0.9, 1.1, MAX_SC)
+            fake_sc = np.exp(-np.linspace(0, 3, self.max_sc)) * rng.uniform(0.9, 1.1, self.max_sc)
             self._push(fake_sc * (val + 1), rssi=-50 + val*2, seq=seq)
-            seq = (seq + 1) % 4096
+            seq += 1
 
 # ========================================================================
 # MAIN WINDOW
@@ -519,6 +541,9 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if args.max_sc < 1:
+        print("[ERROR] --max-sc must be at least 1")
+        return 1
     app  = QApplication(sys.argv)
     stop   = threading.Event()
     reader = ReaderThread(port=args.port, baud=args.baud, demo=args.demo, stop_event=stop, 
@@ -532,7 +557,7 @@ def main():
     res = app.exec_()
     stop.set()
     reader.join(timeout=1.0)
-    sys.exit(res)
+    return res
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

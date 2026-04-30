@@ -31,6 +31,8 @@ from scipy.signal import butter
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
+from csi_parser import SeqStats
+
 DATA_COLUMNS = [
     'type', 'seq', 'mac', 'rssi', 'rate', 'noise_floor',
     'fft_gain', 'agc_gain', 'channel', 'local_timestamp',
@@ -153,14 +155,27 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
         print("[WARNING] No valid rows after dropna.")
         return np.zeros((0, 0), dtype=np.complex64), df
 
-    # Sequence gap detection
-    seqs = df['seq'].astype(int).values
-    gaps = np.diff(seqs) - 1
-    total_gaps = int(gaps[gaps > 0].sum())
-    if total_gaps > 0:
-        gap_events = int((gaps > 0).sum())
-        print(f"[WARNING] Sequence gaps: {total_gaps} packets lost "
-              f"in {gap_events} events out of {len(seqs)} received")
+    # Sequence diagnostics aligned with the shared parser logic
+    seq_stats = SeqStats()
+    for seq in df['seq'].astype(int).tolist():
+        seq_stats.update(seq)
+
+    if (seq_stats.missing_count > 0 or
+            seq_stats.reset_count > 0 or
+            seq_stats.duplicate_count > 0):
+        summary_parts = []
+        if seq_stats.missing_count > 0:
+            summary_parts.append(
+                f"{seq_stats.missing_count} packets lost in {seq_stats.gap_events} events"
+            )
+        if seq_stats.reset_count > 0:
+            summary_parts.append(f"{seq_stats.reset_count} non-monotonic transitions")
+        if seq_stats.duplicate_count > 0:
+            summary_parts.append(f"{seq_stats.duplicate_count} duplicate packets")
+        print(
+            f"[WARNING] Sequence anomalies: {' | '.join(summary_parts)} "
+            f"out of {seq_stats.received_count} received"
+        )
 
     # Vectorized JSON parsing for better performance
     parsed = df['data'].apply(_safe_json)

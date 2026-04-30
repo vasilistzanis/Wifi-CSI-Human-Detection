@@ -48,6 +48,35 @@ def configure_console_output() -> None:
 # SEQUENCE STATS
 # ========================================================================
 
+@dataclass(frozen=True)
+class SeqTransition:
+    missing_count: int = 0
+    gap_event: bool = False
+    duplicate: bool = False
+    reset: bool = False
+
+
+def analyze_seq_transition(previous_seq: int | None, current_seq: int) -> SeqTransition:
+    """
+    Classify one sequence-number transition without assuming a fixed wrap modulus.
+
+    The recorded datasets in this project use large monotonic sequence values,
+    so negative jumps are treated as resets/reordering rather than wrapped
+    counters.
+    """
+    if previous_seq is None:
+        return SeqTransition()
+
+    diff = current_seq - previous_seq
+    if diff > 1:
+        return SeqTransition(missing_count=diff - 1, gap_event=True)
+    if diff == 0:
+        return SeqTransition(duplicate=True)
+    if diff < 0:
+        return SeqTransition(reset=True)
+    return SeqTransition()
+
+
 @dataclass
 class SeqStats:
     first_seq: int | None = None
@@ -62,22 +91,16 @@ class SeqStats:
         if self.first_seq is None:
             self.first_seq = seq
         elif self.last_seq is not None:
-            diff = seq - self.last_seq
-            if diff > 1:
-                self.missing_count += diff - 1
+            transition = analyze_seq_transition(self.last_seq, seq)
+            if transition.gap_event:
+                self.missing_count += transition.missing_count
                 self.gap_events += 1
-            elif diff == 0:
+            elif transition.duplicate:
                 self.duplicate_count += 1
                 self.received_count += 1
                 return                  # do NOT update last_seq for duplicate
-            elif diff < 0:
-                # Likely counter wrap-around; assume 16-bit counter
-                wrapped_gap = (65536 - self.last_seq) + seq - 1
-                if wrapped_gap < 200:  # Plausible wrap, not a firmware reset
-                    self.missing_count += wrapped_gap
-                    self.gap_events += 1
-                else:
-                    self.reset_count += 1  # Genuine firmware reset or reorder
+            elif transition.reset:
+                self.reset_count += 1
 
         self.last_seq = seq
         self.received_count += 1

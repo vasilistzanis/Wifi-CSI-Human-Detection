@@ -51,6 +51,10 @@ DEFAULT_FLUSH_INTERVAL = 0.5
 DEFAULT_STATUS_INTERVAL = 0.25
 DEFAULT_SERIAL_BUFFER_SIZE = config.RX_BUFFER_SIZE
 MAX_FILE_SIZE_MB = 500  # Safety limit to prevent filling disk
+CSV_HEADER = (
+    "type,seq,mac,rssi,rate,noise_floor,fft_gain,agc_gain,"
+    "channel,local_timestamp,sig_len,rx_state,len,first_word,data\n"
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -167,6 +171,20 @@ def safe_set_buffer_size(ser: serial.Serial, rx_size: int) -> None:
 def prompt_for_label() -> str:
     """Prompt user for capture label."""
     return input("Enter capture label (e.g. walk_1, fall_3, empty): ")
+
+
+def export_csv_with_header(source_path: Path, csv_path: Path) -> None:
+    """Create a spreadsheet-friendly CSV export with a header row."""
+    with open(source_path, "r", encoding="utf-8", errors="ignore") as src, \
+            open(csv_path, "w", encoding="utf-8", newline="\n") as dst:
+        first_line = src.readline()
+        if first_line.startswith("type,"):
+            dst.write(first_line if first_line.endswith("\n") else first_line + "\n")
+        else:
+            dst.write(CSV_HEADER)
+            if first_line:
+                dst.write(first_line if first_line.endswith("\n") else first_line + "\n")
+        shutil.copyfileobj(src, dst)
 
 
 
@@ -367,13 +385,13 @@ def main() -> int:
             print(f"File size       : {output_path.stat().st_size / 1024:.1f} KB")
             
 
-            # Create a CSV copy for convenience
+            # Create a true CSV export with a header row for spreadsheet tools
             csv_path = output_path.with_suffix(".csv")
             try:
-                shutil.copy2(output_path, csv_path)
-                print(f"CSV Copy        : {csv_path.name} (Successfully created)")
+                export_csv_with_header(output_path, csv_path)
+                print(f"CSV Export      : {csv_path.name} (Header added successfully)")
             except Exception as e:
-                print(f"CSV Copy        : Failed to create copy ({e})")
+                print(f"CSV Export      : Failed to create export ({e})")
         else:
             print("[WARNING]  Warning: Output file is empty or missing!")
 

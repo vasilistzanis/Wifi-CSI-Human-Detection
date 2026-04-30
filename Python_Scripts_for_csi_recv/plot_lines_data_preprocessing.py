@@ -76,6 +76,7 @@ plt.ioff()
 
 
 try:
+    import config
     from csi_parser import load_csi_matrix, resolve_path, get_latest_dataset
 except ImportError as e:
     print(f"[ERROR] Missing dependency: {e}")
@@ -111,12 +112,12 @@ def parse_args():
         help="Save figures as PNG next to the dataset file (creates 7 files)"
     )
     p.add_argument(
-        "--n-subcarriers", type=int, default=128,
-        help="Number of subcarriers to overlay (default: 128 (all))"
+        "--n-subcarriers", type=int, default=config.MAX_SUBCARRIERS,
+        help=f"Number of subcarriers to overlay (default: {config.MAX_SUBCARRIERS})"
     )
     p.add_argument(
-        "--pca-components", type=int, default=10,
-        help="Number of PCA components to show (default: 10)"
+        "--pca-components", type=int, default=config.N_PCA_COMPONENTS,
+        help=f"Number of PCA components to show (default: {config.N_PCA_COMPONENTS})"
     )
     p.add_argument(
         "--cutoff", type=float, default=10.0,
@@ -127,8 +128,8 @@ def parse_args():
         help="Disable temporal difference"
     )
     p.add_argument(
-        "--fs", type=float, default=100.0,
-        help="Sampling frequency in Hz (default: 100)"
+        "--fs", type=float, default=config.SAMPLING_RATE,
+        help=f"Sampling frequency in Hz (default: {config.SAMPLING_RATE})"
     )
     return p.parse_args()
 
