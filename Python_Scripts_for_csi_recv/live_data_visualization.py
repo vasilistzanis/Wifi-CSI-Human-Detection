@@ -32,19 +32,20 @@ from csi_parser import (
 configure_console_output()
 
 
-DEFAULT_BAUD = 2_000_000
-DEFAULT_BUFFER_SIZE = 200
-DEFAULT_SUBCARRIERS = 128
-DEFAULT_REFRESH_MS = 50
+import config
+DEFAULT_BAUD = config.BAUD_RATE
+DEFAULT_BUFFER_SIZE = config.LIVE_DATA_BUFFER_SIZE
+DEFAULT_SUBCARRIERS = config.LIVE_DATA_SUBCARRIERS
+DEFAULT_REFRESH_MS = config.LIVE_DATA_REFRESH_MS
 DEFAULT_SERIAL_TIMEOUT = 0.25
-DEFAULT_SERIAL_BUFFER_SIZE = 2_000_000
+DEFAULT_SERIAL_BUFFER_SIZE = config.RX_BUFFER_SIZE
 
 
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Live CSI viewer for ESP32 CSI frames")
-    parser.add_argument("-p", "--port", required=True, help="Serial port, e.g. COM6")
+    parser.add_argument("-p", "--port", default=config.SERIAL_PORT, help="Serial port, e.g. COM6")
     parser.add_argument("-b", "--baud", type=int, default=DEFAULT_BAUD, help="Baud rate")
     parser.add_argument(
         "--buffer-size",

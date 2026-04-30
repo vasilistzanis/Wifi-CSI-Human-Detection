@@ -126,21 +126,22 @@ def plot_comparison(df_comp, output_path):
 
 
 def main():
+    import config
     parser = argparse.ArgumentParser(description="Multi-Model CSI Latency Benchmark")
     parser.add_argument('--simulate', action='store_true', help="Use synthetic data")
     parser.add_argument('--save', action='store_true', help="Save results (CSV and Plot)")
     parser.add_argument('--output-csv', type=str, default="multi_model_latency.csv")
     parser.add_argument('--output-plot', type=str, default="models/plots/Latency_Comparison.png")
-    parser.add_argument('--pca', type=int, default=10, help="Number of PCA components (default: 10)")
+    parser.add_argument('--pca', type=int, default=config.N_PCA_COMPONENTS, help="Number of PCA components (default: 10)")
     parser.add_argument('--file', type=str, default="datasets/walk/walk_01.txt",
                         help="Path to real CSI data file (default: datasets/walk/walk_01.txt)")
     parser.add_argument('--start-frame', type=int, default=500,
                         help="Start frame index for benchmarking (default: 500)")
-    parser.add_argument('--window-size', type=int, default=50,
+    parser.add_argument('--window-size', type=int, default=config.WINDOW_SIZE,
                         help="Number of frames per inference window (default: 50)")
     parser.add_argument('--n_warmup', type=int, default=10, help="Warm-up runs (default: 10)")
     parser.add_argument('--n_benchmark', type=int, default=50, help="Benchmark runs (default: 50)")
-    parser.add_argument('--seed', type=int, default=42, help="Random seed (default: 42)")
+    parser.add_argument('--seed', type=int, default=config.RANDOM_SEED, help="Random seed (default: 42)")
     args = parser.parse_args()
 
 

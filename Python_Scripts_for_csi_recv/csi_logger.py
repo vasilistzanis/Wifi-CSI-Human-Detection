@@ -40,15 +40,16 @@ configure_console_output()
 
 
 # Cross-platform defaults
-DEFAULT_PORT = "COM6" if os.name == "nt" else "/dev/ttyUSB0"
+import config
+DEFAULT_PORT = config.SERIAL_PORT if os.name == "nt" else "/dev/ttyUSB0"
 
 
 # Mismatch causes garbled output and zero valid frames.
-DEFAULT_BAUD = 2_000_000
+DEFAULT_BAUD = config.BAUD_RATE
 DEFAULT_IDLE_SLEEP = 0.001
 DEFAULT_FLUSH_INTERVAL = 0.5
 DEFAULT_STATUS_INTERVAL = 0.25
-DEFAULT_SERIAL_BUFFER_SIZE = 2_000_000
+DEFAULT_SERIAL_BUFFER_SIZE = config.RX_BUFFER_SIZE
 MAX_FILE_SIZE_MB = 500  # Safety limit to prevent filling disk
 
 

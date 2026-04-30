@@ -455,6 +455,30 @@ def _make_group_cv(y: np.ndarray,
     return splitter, n_splits, splitter_name
 
 
+def _resolve_split_paths(paths: list[str] | list[Path], data_dir: Path) -> list[Path]:
+    """Normalize split entries from JSON into absolute Paths."""
+    resolved = []
+    for entry in paths:
+        path = Path(entry)
+        if not path.is_absolute():
+            path = data_dir / path
+        resolved.append(path)
+    return resolved
+
+
+def _serialize_split_paths(paths: list[Path], data_dir: Path) -> list[str]:
+    """Store split entries relative to data_dir when possible."""
+    serialized = []
+    root = data_dir.resolve()
+    for path in paths:
+        resolved = Path(path).resolve()
+        try:
+            serialized.append(resolved.relative_to(root).as_posix())
+        except ValueError:
+            serialized.append(str(resolved))
+    return serialized
+
+
 
 
 # ========================================================================
@@ -479,6 +503,10 @@ def build_dataset(
     random_seed: int = 42,
     n_pca: int = 10,
     cutoff: float = 10.0,
+    train_files_override: dict | None = None,
+    test_files_override: dict | None = None,
+    pipeline_override = None,
+    label_encoder_override = None,
 ) -> tuple:
     """
     Load recordings, preprocess, extract features.
@@ -503,6 +531,7 @@ def build_dataset(
       train_groups_orig : (N_orig,) recording ids for X_train_orig
       le           : fitted LabelEncoder
       pipeline     : fitted CSIPipeline
+      dataset_info : exact split / preprocessing metadata
     """
     if pipeline_kwargs is None:
         pipeline_kwargs = {'fs': 100.0, 'use_diff': True}
@@ -514,8 +543,28 @@ def build_dataset(
 
 
     data_dir = Path(data_dir)
-    le = LabelEncoder()
-    le.fit(classes)
+    classes = list(classes)
+    if label_encoder_override is not None:
+        le = label_encoder_override
+        classes = list(le.classes_)
+    else:
+        le = LabelEncoder()
+        le.fit(classes)
+
+    dataset_info = {
+        'data_dir': str(data_dir.resolve()),
+        'classes': list(classes),
+        'pipeline_kwargs': dict(pipeline_kwargs),
+        'window_size': int(window_size),
+        'step': int(step),
+        'test_recording_ratio': float(test_recording_ratio),
+        'random_seed': int(random_seed),
+        'n_pca': int(n_pca),
+        'cutoff': float(cutoff),
+        'simulation_mode': bool(simulation_mode or CSIPipeline is None),
+        'train_files': {},
+        'test_files': {},
+    }
 
 
     # -- Simulation Mode --------------------------------------------------
@@ -636,7 +685,8 @@ def build_dataset(
         print(f"\n[OK] Train={len(X_train)} (orig={len(X_train_orig)}) "
               f"| Test={len(X_test)} samples")
         return (X_train, X_train_orig, X_test,
-                y_train, y_train_orig, y_test, train_groups_orig, le, None)
+                y_train, y_train_orig, y_test, train_groups_orig, le, None,
+                dataset_info)
 
 
     # -- Real Data Mode ---------------------------------------------------
@@ -647,20 +697,45 @@ def build_dataset(
     test_files_all  = {}
 
 
-    for cls in classes:
-        files = (sorted((data_dir/cls).glob("*.csv")) +
-                 sorted((data_dir/cls).glob("*.txt")))
-        if not files:
-            print(f"[WARNING]  No files found for class '{cls}'")
-            train_files_all[cls] = []
-            test_files_all[cls]  = []
-            continue
-        # Shuffle: recordings are independent sessions, not time-dependent.
-        # Seeded shuffle ensures reproducibility while removing ordering bias.
-        random.Random(random_seed).shuffle(files)
-        n_test = max(1, int(len(files) * test_recording_ratio))
-        train_files_all[cls] = files[:-n_test]
-        test_files_all[cls]  = files[-n_test:]
+    use_explicit_split = (
+        train_files_override is not None or test_files_override is not None
+    )
+
+    if use_explicit_split:
+        print("\n[INFO] Using explicit recording split from saved experiment metadata...")
+        train_files_override = train_files_override or {}
+        test_files_override = test_files_override or {}
+        for cls in classes:
+            train_files_all[cls] = _resolve_split_paths(
+                train_files_override.get(cls, []), data_dir
+            )
+            test_files_all[cls] = _resolve_split_paths(
+                test_files_override.get(cls, []), data_dir
+            )
+    else:
+        for cls in classes:
+            files = (sorted((data_dir/cls).glob("*.csv")) +
+                     sorted((data_dir/cls).glob("*.txt")))
+            if not files:
+                print(f"[WARNING]  No files found for class '{cls}'")
+                train_files_all[cls] = []
+                test_files_all[cls]  = []
+                continue
+            # Shuffle: recordings are independent sessions, not time-dependent.
+            # Seeded shuffle ensures reproducibility while removing ordering bias.
+            random.Random(random_seed).shuffle(files)
+            n_test = max(1, int(len(files) * test_recording_ratio))
+            train_files_all[cls] = files[:-n_test]
+            test_files_all[cls]  = files[-n_test:]
+
+    dataset_info['train_files'] = {
+        cls: _serialize_split_paths(train_files_all.get(cls, []), data_dir)
+        for cls in classes
+    }
+    dataset_info['test_files'] = {
+        cls: _serialize_split_paths(test_files_all.get(cls, []), data_dir)
+        for cls in classes
+    }
 
 
     fit_matrices = []
@@ -679,11 +754,15 @@ def build_dataset(
         raise ValueError("No valid training CSI data found.")
 
 
-    print("\n[INFO] Fitting CSIPipeline on TRAIN recordings only...")
-    pipeline = CSIPipeline(**pipeline_kwargs)
-    pipeline.fit_transform(np.vstack(fit_matrices),
-                           use_pca=True, n_components=n_pca,
-                           scaler_type='standard', cutoff=cutoff)
+    if pipeline_override is not None:
+        print("\n[INFO] Using pre-fitted CSIPipeline from saved artifacts...")
+        pipeline = pipeline_override
+    else:
+        print("\n[INFO] Fitting CSIPipeline on TRAIN recordings only...")
+        pipeline = CSIPipeline(**pipeline_kwargs)
+        pipeline.fit_transform(np.vstack(fit_matrices),
+                               use_pca=True, n_components=n_pca,
+                               scaler_type='standard', cutoff=cutoff)
 
 
     X_tr, y_tr = [], []
@@ -812,7 +891,8 @@ def build_dataset(
 
 
     return (X_train, X_train_orig, X_test,
-            y_train, y_train_orig, y_test, train_groups_orig, le, pipeline)
+            y_train, y_train_orig, y_test, train_groups_orig, le, pipeline,
+            dataset_info)
 
 
 
@@ -1179,13 +1259,15 @@ def train_and_evaluate(
 def save_models(results: dict,
                 pipeline,
                 le: LabelEncoder,
-                output_dir: str = "./models") -> None:
+                output_dir: str = "./models",
+                experiment_config: dict | None = None) -> None:
     """
     Save everything needed for inference:
       csi_pipeline.joblib    - preprocess new recordings
       label_encoder.joblib   - int -> class name
       svm.joblib, rf.joblib  - trained models
       metrics.json           - for thesis tables
+      experiment_config.json - exact split / preprocessing metadata
     """
     import joblib
     out = Path(output_dir)
@@ -1225,6 +1307,12 @@ def save_models(results: dict,
         json.dump(metrics, f, indent=2, ensure_ascii=False)
     print(f"[SAVE] {json_path}  (metrics for thesis)")
 
+    if experiment_config is not None:
+        config_path = out / "experiment_config.json"
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(experiment_config, f, indent=2, ensure_ascii=False)
+        print(f"[SAVE] {config_path}  (reproducible experiment settings)")
+
 
     best = max(results.items(), key=lambda x: x[1]['cv_mean'])[0]
     safe_best = best.replace(" ", "_").replace("(", "").replace(")", "")
@@ -1243,12 +1331,13 @@ def save_models(results: dict,
 
 
 def main():
+    import config
     parser = argparse.ArgumentParser(description="CSI HAR - ML Pipeline")
     parser.add_argument("--data_dir",    type=str,   default="./datasets")
     parser.add_argument("--classes",     nargs="+",  default=["walk", "idle"])
-    parser.add_argument("--window_size", type=int,   default=50)
-    parser.add_argument("--step",        type=int,   default=25)
-    parser.add_argument("--fs",          type=float, default=100.0)
+    parser.add_argument("--window_size", type=int,   default=config.WINDOW_SIZE)
+    parser.add_argument("--step",        type=int,   default=config.PIPELINE_STEP_SIZE)
+    parser.add_argument("--fs",          type=float, default=config.SAMPLING_RATE)
     parser.add_argument(
         "--augment",
         nargs="+",
@@ -1268,17 +1357,17 @@ def main():
         help="Disable all data augmentation."
     )
     parser.add_argument("--n_augments",  type=int,   default=4)
-    parser.add_argument("--pca",         type=int,   default=10)
+    parser.add_argument("--pca",         type=int,   default=config.N_PCA_COMPONENTS)
     parser.add_argument("--test_ratio",  type=float, default=0.2)
     parser.add_argument("--no_diff",     action="store_true")
     parser.add_argument("--simulate",    action="store_true")
     parser.add_argument("--save_model",  action="store_true")
     parser.add_argument("--tune",        action="store_true",
                         help="Run GridSearchCV hyperparameter tuning")
-    parser.add_argument("--model", type=str, default="all",
+    parser.add_argument("--model", type=str, default=config.MODELS_TO_TRAIN,
                         choices=["svm", "rf", "et", "knn", "lr", "gb", "mlp", "nb", "all"],
                         help="Specific model to train, or 'all'")
-    parser.add_argument("--seed",        type=int,   default=42)
+    parser.add_argument("--seed",        type=int,   default=config.RANDOM_SEED)
     parser.add_argument("--cv_folds",    type=int,   default=5,
                         help="Number of cross-validation folds (default: 5)")
     parser.add_argument("--cutoff",      type=float, default=10.0,
@@ -1321,7 +1410,7 @@ def main():
 
     (X_train, X_train_orig, X_test,
      y_train, y_train_orig, y_test,
-     train_groups_orig, le, pipeline) = build_dataset(
+     train_groups_orig, le, pipeline, dataset_info) = build_dataset(
         data_dir=args.data_dir,
         classes=args.classes,
         pipeline_kwargs={'fs': args.fs, 'use_diff': not args.no_diff},
@@ -1364,7 +1453,20 @@ def main():
 
 
     if args.save_model:
-        save_models(results, pipeline, le, output_dir=args.models_dir)
+        experiment_config = dict(dataset_info)
+        experiment_config.update({
+            'augment_techniques': list(augment_techniques),
+            'n_augments': int(args.n_augments),
+            'cv_folds': int(args.cv_folds),
+            'target_model': args.model,
+        })
+        save_models(
+            results,
+            pipeline,
+            le,
+            output_dir=args.models_dir,
+            experiment_config=experiment_config,
+        )
 
 
 

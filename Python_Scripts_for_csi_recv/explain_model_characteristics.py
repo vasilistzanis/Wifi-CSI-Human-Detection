@@ -415,7 +415,6 @@ def plot_per_class_importance(
     Shows which features are most discriminative for each activity.
     """
     from sklearn.inspection import permutation_importance
-    from sklearn.metrics import make_scorer, accuracy_score
 
     n_classes = len(class_names)
     if n_classes < 2:
@@ -435,7 +434,6 @@ def plot_per_class_importance(
     for cls_idx, cls_name in enumerate(class_names):
         ax = axes[cls_idx]
 
-        # Create a binary scorer: accuracy only for this class
         mask = y_test == cls_idx
         if mask.sum() < 2:
             ax.text(0.5, 0.5, f"Not enough\nsamples for\n{cls_name}",
@@ -443,10 +441,18 @@ def plot_per_class_importance(
             ax.set_title(cls_name, fontweight="bold")
             continue
 
+        def class_recall_scorer(estimator, X, y, target_label=cls_idx):
+            """Permutation scorer for one class only."""
+            target_mask = y == target_label
+            if target_mask.sum() == 0:
+                return 0.0
+            y_pred = estimator.predict(X)
+            return float(np.mean(y_pred[target_mask] == target_label))
+
         result = permutation_importance(
             model, X_test, y_test,
             n_repeats=n_repeats, random_state=random_state,
-            n_jobs=-1, scoring='accuracy',
+            n_jobs=-1, scoring=class_recall_scorer,
         )
 
         sorted_idx = result.importances_mean.argsort()[::-1][:top_n]
@@ -459,7 +465,7 @@ def plot_per_class_importance(
         ax.set_yticks(range(len(names)))
         ax.set_yticklabels(names, fontsize=8)
         ax.invert_yaxis()
-        ax.set_xlabel("Importance", fontsize=9)
+        ax.set_xlabel("Recall Importance", fontsize=9)
         ax.set_title(f"{cls_name}", fontweight="bold", fontsize=12,
                      color=PALETTE[cls_idx % len(PALETTE)])
 
@@ -486,6 +492,7 @@ def plot_per_class_importance(
 # ========================================================================
 
 def parse_args():
+    import config
     p = argparse.ArgumentParser(
         description="XAI - Explain Model Feature Importance for CSI HAR"
     )
@@ -500,7 +507,7 @@ def parse_args():
                    help="Activity classes")
     p.add_argument("--top", type=int, default=15,
                    help="Number of top features to show (default: 15)")
-    p.add_argument("--repeats", type=int, default=10,
+    p.add_argument("--repeats", type=int, default=config.XAI_N_REPEATS,
                    help="Permutation repeats (default: 10, more = slower but more stable)")
     p.add_argument("--save", action="store_true",
                    help="Save figures as PNG (300 DPI)")
@@ -508,11 +515,11 @@ def parse_args():
                    help="Output directory for saved figures (default: models/plots/)")
     p.add_argument("--simulate", action="store_true",
                    help="Use synthetic data (no real dataset needed)")
-    p.add_argument("--window_size", type=int, default=50)
-    p.add_argument("--step", type=int, default=25)
-    p.add_argument("--pca", type=int, default=10)
-    p.add_argument("--fs", type=float, default=100.0)
-    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--window_size", type=int, default=config.WINDOW_SIZE)
+    p.add_argument("--step", type=int, default=config.PIPELINE_STEP_SIZE)
+    p.add_argument("--pca", type=int, default=config.N_PCA_COMPONENTS)
+    p.add_argument("--fs", type=float, default=config.SAMPLING_RATE)
+    p.add_argument("--seed", type=int, default=config.RANDOM_SEED)
     p.add_argument("--cutoff", type=float, default=10.0)
     return p.parse_args()
 
@@ -535,6 +542,28 @@ def _load_model_from_disk(models_dir: Path, model_key: str):
     return None
 
 
+def _load_experiment_config(models_dir: Path):
+    path = models_dir / "experiment_config.json"
+    if not path.exists():
+        return None
+
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def _load_support_artifacts(models_dir: Path):
+    import joblib
+
+    pipeline_path = models_dir / "csi_pipeline.joblib"
+    label_encoder_path = models_dir / "label_encoder.joblib"
+    if not pipeline_path.exists() or not label_encoder_path.exists():
+        return None, None
+
+    print(f"  [LOAD] {pipeline_path}")
+    print(f"  [LOAD] {label_encoder_path}")
+    return joblib.load(pipeline_path), joblib.load(label_encoder_path)
+
+
 def main():
     args = parse_args()
     _apply_style()
@@ -553,26 +582,87 @@ def main():
     print("=" * 60)
 
     # ----------------------------------------------------------------
-    # STEP 1: Build dataset to get X_test, y_test and feature names
+    # STEP 1: Decide whether to explain saved models or train fresh
     # ----------------------------------------------------------------
-    print("\n[STEP 1] Building dataset...")
+    print("\n[STEP 1] Resolving experiment context...")
 
-    (X_train, X_train_orig, X_test,
-     y_train, y_train_orig, y_test,
-     train_groups_orig, le, pipeline) = build_dataset(
-        data_dir=args.data_dir,
-        classes=args.classes,
-        pipeline_kwargs={'fs': args.fs, 'use_diff': True},
-        window_size=args.window_size,
-        step=args.step,
-        augment_techniques=[],      # No augmentation for XAI
-        n_augments=0,
-        simulation_mode=args.simulate,
-        test_recording_ratio=0.2,
-        random_seed=args.seed,
-        n_pca=args.pca,
-        cutoff=args.cutoff,
-    )
+    models_to_explain = {}
+    missing_model_keys = []
+
+    if args.model == 'all':
+        model_keys = ['svm', 'rf', 'et', 'knn', 'lr', 'gb', 'mlp', 'nb']
+    else:
+        model_keys = [args.model]
+
+    for key in model_keys:
+        loaded = _load_model_from_disk(models_dir, key)
+        if loaded is not None:
+            models_to_explain[key] = loaded
+        else:
+            missing_model_keys.append(key)
+            print(f"  [INFO] {key}.joblib not found in {models_dir}")
+
+    saved_config = None
+    saved_pipeline = None
+    saved_le = None
+    effective_seed = args.seed
+
+    if models_to_explain:
+        saved_config = _load_experiment_config(models_dir)
+        saved_pipeline, saved_le = _load_support_artifacts(models_dir)
+        if saved_config is None or saved_pipeline is None or saved_le is None:
+            print("\n  [WARNING] Saved model artifacts are incomplete.")
+            print("  [WARNING] Ignoring saved models and rebuilding everything fresh for XAI consistency.")
+            models_to_explain = {}
+            missing_model_keys = model_keys
+        else:
+            print("\n  [INFO] Saved models found. Rebuilding the exact dataset split from experiment_config.json...")
+
+    # ----------------------------------------------------------------
+    # STEP 2: Build dataset to get X_test, y_test and feature names
+    # ----------------------------------------------------------------
+    print("\n[STEP 2] Building dataset...")
+
+    if models_to_explain:
+        pipeline_kwargs = saved_config.get('pipeline_kwargs', {'fs': args.fs, 'use_diff': True})
+        (X_train, X_train_orig, X_test,
+         y_train, y_train_orig, y_test,
+         train_groups_orig, le, pipeline, dataset_info) = build_dataset(
+            data_dir=saved_config.get('data_dir', args.data_dir),
+            classes=saved_config.get('classes', args.classes),
+            pipeline_kwargs=pipeline_kwargs,
+            window_size=int(saved_config.get('window_size', args.window_size)),
+            step=int(saved_config.get('step', args.step)),
+            augment_techniques=[],
+            n_augments=0,
+            simulation_mode=bool(saved_config.get('simulation_mode', args.simulate)),
+            test_recording_ratio=float(saved_config.get('test_recording_ratio', 0.2)),
+            random_seed=int(saved_config.get('random_seed', args.seed)),
+            n_pca=int(saved_config.get('n_pca', args.pca)),
+            cutoff=float(saved_config.get('cutoff', args.cutoff)),
+            train_files_override=saved_config.get('train_files'),
+            test_files_override=saved_config.get('test_files'),
+            pipeline_override=saved_pipeline,
+            label_encoder_override=saved_le,
+        )
+        effective_seed = int(saved_config.get('random_seed', args.seed))
+    else:
+        (X_train, X_train_orig, X_test,
+         y_train, y_train_orig, y_test,
+         train_groups_orig, le, pipeline, dataset_info) = build_dataset(
+            data_dir=args.data_dir,
+            classes=args.classes,
+            pipeline_kwargs={'fs': args.fs, 'use_diff': True},
+            window_size=args.window_size,
+            step=args.step,
+            augment_techniques=[],      # No augmentation for XAI
+            n_augments=0,
+            simulation_mode=args.simulate,
+            test_recording_ratio=0.2,
+            random_seed=args.seed,
+            n_pca=args.pca,
+            cutoff=args.cutoff,
+        )
 
     if X_test.shape[0] < 5:
         print("[ERROR] Not enough test samples for reliable importance estimation.")
@@ -588,37 +678,35 @@ def main():
     print(f"  Classes: {class_names}")
 
     # ----------------------------------------------------------------
-    # STEP 2: Load or train model(s)
+    # STEP 3: Load or train model(s)
     # ----------------------------------------------------------------
-    print("\n[STEP 2] Loading model(s)...")
+    print("\n[STEP 3] Loading / training model(s)...")
 
-    models_to_explain = {}
-
-    if args.model == 'all':
-        model_keys = ['svm', 'rf', 'et', 'knn', 'lr', 'gb', 'mlp', 'nb']
-    else:
-        model_keys = [args.model]
-
-    for key in model_keys:
-        loaded = _load_model_from_disk(models_dir, key)
-        if loaded is not None:
-            models_to_explain[key] = loaded
-        else:
-            print(f"  [INFO] {key}.joblib not found in {models_dir} - will train fresh")
-
-    # If no models loaded from disk, train fresh
     if not models_to_explain:
-        print("\n  [INFO] No saved models found. Training fresh models for XAI analysis...")
+        print("\n  [INFO] No valid saved models found. Training fresh models for XAI analysis...")
         from csi_ml_pipeline import train_and_evaluate
         results = train_and_evaluate(
             X_train, X_train_orig, X_test,
             y_train, y_train_orig, y_test,
             train_groups_orig, le, best_params=None,
-            random_seed=args.seed,
+            random_seed=effective_seed,
             target_model=args.model,
         )
         for name, res in results.items():
             models_to_explain[name] = res['model']
+    elif missing_model_keys:
+        print(f"\n  [INFO] Training missing models on the exact saved split: {missing_model_keys}")
+        from csi_ml_pipeline import train_and_evaluate
+        for key in missing_model_keys:
+            results = train_and_evaluate(
+                X_train, X_train_orig, X_test,
+                y_train, y_train_orig, y_test,
+                train_groups_orig, le, best_params=None,
+                random_seed=effective_seed,
+                target_model=key,
+            )
+            for name, res in results.items():
+                models_to_explain[name] = res['model']
 
     if not models_to_explain:
         print("[ERROR] No models available for analysis.")
@@ -640,7 +728,7 @@ def main():
             model, X_test, y_test, feature_names,
             model_name=display_name, top_n=args.top,
             save_dir=save_dir, save=args.save,
-            n_repeats=args.repeats, random_state=args.seed,
+            n_repeats=args.repeats, random_state=effective_seed,
         )
         all_figs.append(fig1)
 
@@ -657,7 +745,7 @@ def main():
             model, X_test, y_test, feature_names,
             model_name=display_name,
             save_dir=save_dir, save=args.save,
-            n_repeats=args.repeats, random_state=args.seed,
+            n_repeats=args.repeats, random_state=effective_seed,
         )
         all_figs.append(fig3)
 
@@ -667,7 +755,7 @@ def main():
                 model, X_test, y_test, feature_names, class_names,
                 model_name=display_name, top_n=min(args.top, 10),
                 save_dir=save_dir, save=args.save,
-                n_repeats=args.repeats, random_state=args.seed,
+                n_repeats=args.repeats, random_state=effective_seed,
             )
             if fig4:
                 all_figs.append(fig4)

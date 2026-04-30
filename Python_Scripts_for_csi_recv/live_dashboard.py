@@ -68,14 +68,15 @@ TEXT_DIM = "#484f58"
 GRID_CLR = "#30363d66"
 
 # Dimensions
-WAVEFORM_LEN = 160
-MAX_SC       = 128
-REFRESH_MS   = 20
-BAUD         = 2_000_000
+import config
+WAVEFORM_LEN = config.DASHBOARD_WAVEFORM_LEN
+MAX_SC       = config.MAX_SUBCARRIERS
+REFRESH_MS   = config.DASHBOARD_REFRESH_MS
+BAUD         = config.BAUD_RATE
 
 # Logic
-MOTION_THRESHOLD = 0.05
-COLOR_SMOOTH     = 0.15
+MOTION_THRESHOLD = config.DASHBOARD_MOTION_THRESHOLD
+COLOR_SMOOTH     = config.DASHBOARD_COLOR_SMOOTH
 
 # ========================================================================
 # HELPERS
@@ -119,7 +120,7 @@ def create_stat_panel(key: str, unit: str):
     
     return frame, v_lbl
 
-def create_waveform_plot():
+def create_waveform_plot(window_size):
     """Main waveform plot with subtle glow effect."""
     pw = pg.PlotWidget(background=BG)
     pw.setMenuEnabled(False)
@@ -139,6 +140,7 @@ def create_waveform_plot():
     ax_l.setTextPen(pg.mkPen(TEXT_DIM))
     ax_l.setTickFont(QtGui.QFont("Courier New", 7))
     
+    pw.setXRange(0, max(0, window_size - 1), padding=0.01)
     pw.setYRange(0, 3.5, padding=0)
     return pw
 
@@ -413,16 +415,16 @@ class WaveformMonitor(QWidget):
         wf_panel.setObjectName("panel")
         wf_lay = QVBoxLayout(wf_panel)
         wf_lay.setContentsMargins(1, 1, 1, 1)
-        self.plot = create_waveform_plot()
+        self.plot = create_waveform_plot(reader.window_size)
         wf_lay.addWidget(self.plot)
         
-        self._x    = np.arange(WAVEFORM_LEN)
-        self._line = self.plot.plot(self._x, np.zeros(WAVEFORM_LEN), pen=pg.mkPen(ACCENT, width=2))
+        self._x    = np.arange(reader.window_size)
+        self._line = self.plot.plot(self._x, np.zeros(reader.window_size), pen=pg.mkPen(ACCENT, width=2))
         
         # Glow / Fill
         self._fill = pg.FillBetweenItem(
-            pg.PlotDataItem(self._x, np.zeros(WAVEFORM_LEN)),
-            pg.PlotDataItem(self._x, np.zeros(WAVEFORM_LEN)),
+            pg.PlotDataItem(self._x, np.zeros(reader.window_size)),
+            pg.PlotDataItem(self._x, np.zeros(reader.window_size)),
             brush=pg.mkBrush(88, 166, 255, 30)
         )
         self.plot.addItem(self._fill)
@@ -462,7 +464,7 @@ class WaveformMonitor(QWidget):
         # Timer
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.update_ui)
-        self.timer.start(REFRESH_MS)
+        self.timer.start(self.refresh_ms)
 
     def update_ui(self):
         data = self.reader.get_snapshot()
@@ -503,16 +505,16 @@ class WaveformMonitor(QWidget):
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("-p", "--port",      default="COM6", help="Serial port (e.g. COM6). Optional for --demo.")
+    p.add_argument("-p", "--port",      default=config.SERIAL_PORT, help="Serial port (e.g. COM6). Optional for --demo.")
     p.add_argument("--baud",      type=int,   default=BAUD)
     p.add_argument("--window",    type=int,   default=WAVEFORM_LEN)
     p.add_argument("--refresh",   type=int,   default=REFRESH_MS)
     p.add_argument("--threshold", type=float, default=MOTION_THRESHOLD)
     p.add_argument("--smooth",    type=float, default=COLOR_SMOOTH)
     p.add_argument("--max-sc",    type=int,   default=MAX_SC)
-    p.add_argument("--rx-buf",    type=int,   default=2_000_000, help="Windows RX buffer size")
+    p.add_argument("--rx-buf",    type=int,   default=config.RX_BUFFER_SIZE, help="Windows RX buffer size")
     p.add_argument("--demo",      action="store_true", help="Run with synthetic data")
-    p.add_argument("--fs",        type=float, default=100.0, help="Expected sampling frequency (Hz)")
+    p.add_argument("--fs",        type=float, default=config.SAMPLING_RATE, help="Expected sampling frequency (Hz)")
     return p.parse_args()
 
 def main():

@@ -69,15 +69,16 @@ except ImportError:
 
 
 # --- Defaults -----------------------------------------------------------------
+import config
 _IS_WIN        = os.name == "nt"
-DEFAULT_PORT   = "COM6" if _IS_WIN else "/dev/ttyUSB0"
-DEFAULT_BAUD   = 2_000_000
-WINDOW_SIZE    = 50      # frames per inference window (must match training)
-STEP           = 10      # predict every N new frames (lower = more frequent)
+DEFAULT_PORT   = config.SERIAL_PORT if _IS_WIN else "/dev/ttyUSB0"
+DEFAULT_BAUD   = config.BAUD_RATE
+WINDOW_SIZE    = config.WINDOW_SIZE      # frames per inference window (must match training)
+STEP           = config.PREDICTION_STEP_SIZE      # predict every N new frames (lower = more frequent)
 # Extra frames kept beyond window_size so the Butterworth filter has enough
 # edge context.  padlen for 4th-order SOS ~ 3*(2*n_sections+1) ~ 27.
 FILTER_WARMUP  = 50
-SERIAL_BUF_MB  = 2_000_000
+SERIAL_BUF_MB  = config.RX_BUFFER_SIZE
 # Rolling FPS window: measure rate over the last N frames
 FPS_WINDOW     = 60
 

@@ -64,16 +64,17 @@ except ImportError:
 # ========================================================================
 
 
-BAUD             = 2_000_000
-WAVEFORM_LEN     = 60
-REFRESH_MS       = 50
-MOTION_THRESHOLD = 0.18   # normalized motion energy threshold
+import config
+BAUD             = config.BAUD_RATE
+WAVEFORM_LEN     = config.LIVE_SENSING_WAVEFORM_LEN
+REFRESH_MS       = config.LIVE_SENSING_REFRESH_MS
+MOTION_THRESHOLD = config.LIVE_SENSING_MOTION_THRESHOLD
 
 
 # Color response speed (smoothing factor 0-1)
 # 1.0 = instant, 0.05 = slow / inertia
-COLOR_SMOOTH     = 0.12
-MAX_SC           = 64
+COLOR_SMOOTH     = config.LIVE_SENSING_COLOR_SMOOTH
+MAX_SC           = config.LIVE_SENSING_MAX_SUBCARRIERS
 
 
 # ========================================================================
@@ -351,16 +352,16 @@ class WaveformMonitor(QWidget):
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("-p", "--port",      default="COM6", help="Serial port (e.g. COM6).")
+    p.add_argument("-p", "--port",      default=config.SERIAL_PORT, help="Serial port (e.g. COM6).")
     p.add_argument("--baud",      type=int,   default=BAUD)
     p.add_argument("--window",    type=int,   default=WAVEFORM_LEN)
     p.add_argument("--refresh",   type=int,   default=REFRESH_MS)
     p.add_argument("--threshold", type=float, default=MOTION_THRESHOLD)
     p.add_argument("--smooth",    type=float, default=COLOR_SMOOTH)
     p.add_argument("--max-sc",    type=int,   default=MAX_SC)
-    p.add_argument("--rx-buf",    type=int,   default=2_000_000, help="Windows RX buffer size")
+    p.add_argument("--rx-buf",    type=int,   default=config.RX_BUFFER_SIZE, help="Windows RX buffer size")
     p.add_argument("--demo",      action="store_true", help="Run with synthetic data")
-    p.add_argument("--fs",        type=float, default=100.0, help="Expected sampling frequency (Hz)")
+    p.add_argument("--fs",        type=float, default=config.SAMPLING_RATE, help="Expected sampling frequency (Hz)")
     return p.parse_args()
 
 
