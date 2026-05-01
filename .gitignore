@@ -38,3 +38,11 @@ Thumbs.db
 *.gif
 *.docx
 *.pdf
+
+# Python / Machine Learning Models & Artifacts
+__pycache__/
+*.py[cod]
+*.joblib
+*.pkl
+metrics.json
+Python_Scripts_for_csi_recv/models/
