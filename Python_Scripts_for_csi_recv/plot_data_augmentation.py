@@ -59,12 +59,30 @@ def augment_scale(window: np.ndarray,
     """
     Scale signal magnitude to simulate varying transmitter-receiver distance.
 
-
     Args:
         window:       1-D signal array.
         scale_factor: Multiplier applied to all samples (default 0.6 = 60%).
     """
     return window * scale_factor
+
+
+def augment_shift(window: np.ndarray,
+                  shift_steps: int = 15,
+                  direction: int = 1) -> np.ndarray:
+    """
+    Non-circular temporal shift to simulate sensor start delay.
+
+    Args:
+        window:      1-D signal array.
+        shift_steps: Number of frames to shift.
+        direction:   1 (forward) or -1 (backward).
+    """
+    if direction == 1:
+        pad = np.repeat(window[0], shift_steps)
+        return np.concatenate([pad, window[:-shift_steps]])
+    else:
+        pad = np.repeat(window[-1], shift_steps)
+        return np.concatenate([window[shift_steps:], pad])
 
 
 
@@ -197,6 +215,8 @@ def main():
                         help=f"Subcarrier index to plot (default: {SUBCARRIER_IDX})")
     parser.add_argument('--segment-len', type=int, default=SEGMENT_LEN,
                         help=f"Length of signal segment to plot (default: {SEGMENT_LEN})")
+    parser.add_argument('--realistic', action='store_true',
+                        help="Use actual subtle ML parameters instead of exaggerated visual ones")
     args = parser.parse_args()
 
 
@@ -232,19 +252,39 @@ def main():
     if original is None:
         print("[INFO] Mode: SYNTHETIC")
         original = _make_synthetic(segment_len=args.segment_len)
+        title_prefix = "Synthetic"
+
+    # -- 2. Set Parameters ---------------------------------------------
+    if args.realistic:
+        print("[INFO] Using REALISTIC parameters (ML training equivalents)")
+        noise_param = 0.005
+        shift_param = 2
+        scale_param = 0.95
+        warp_param  = 1.05
+        filename    = f"{title_prefix}_Data_Aug_Realistic.png"
+        title_suf   = "(Realistic ML Params)"
+    else:
+        print("[INFO] Using EXAGGERATED parameters (Best for visualization)")
+        noise_param = 0.04
+        shift_param = 15
+        scale_param = 0.6
+        warp_param  = 1.5
+        filename    = f"{title_prefix}_Data_Aug_Exaggerated.png"
+        title_suf   = "(Exaggerated Params)"
+
+    # -- 3. Apply augmentations ----------------------------------------
+    noisy   = augment_noise(original,     noise_level=noise_param, rng=rng)
+    shifted = augment_shift(original,     shift_steps=shift_param, direction=1)
+    scaled  = augment_scale(original,     scale_factor=scale_param)
+    warped  = augment_time_warp(original, stretch=warp_param)
 
 
-    # -- 2. Apply augmentations ----------------------------------------
-    noisy  = augment_noise(original,     noise_level=0.04, rng=rng)
-    scaled = augment_scale(original,     scale_factor=0.6)
-    warped = augment_time_warp(original, stretch=1.5)
-
-
-    # -- 3. Plot -------------------------------------------------------
+    # -- 4. Plot -------------------------------------------------------
     sns.set_theme(style="whitegrid")
-    fig, axes = plt.subplots(2, 2, figsize=(12, 7), sharey=True)
+    fig, axes = plt.subplots(2, 3, figsize=(16, 7), sharey=True)
+    axes_flat = axes.flatten()
     fig.suptitle(
-        f"Data Augmentation Techniques - {title_prefix} CSI Signal",
+        f"Data Augmentation Techniques - {title_prefix} CSI Signal {title_suf}",
         fontsize=16, fontweight='bold', y=0.96,
     )
 
@@ -252,13 +292,14 @@ def main():
     plot_configs = [
         (original, f"Original {title_prefix} Signal",         '#00e5ff'),
         (noisy,    "Gaussian Noise (Simulated Jitter)",        '#ff3366'),
+        (shifted,  "Temporal Shift (Simulated Delay)",         '#9b59b6'),
         (scaled,   "Magnitude Scaling (Simulated Distance)",   '#26de81'),
         (warped,   "Time Warping (Simulated Speed Variation)", '#f7b731'),
     ]
 
 
     for i, (data, title, color) in enumerate(plot_configs):
-        ax = axes[i // 2, i % 2]
+        ax = axes_flat[i]
         ax.plot(data, color=color, linewidth=2)
         ax.fill_between(range(len(data)), data, alpha=0.15, color=color)
         ax.set_title(title, fontweight='bold', fontsize=12)
@@ -267,14 +308,17 @@ def main():
 
 
         # Only left column needs the Y label
-        if i % 2 == 0:
+        if i % 3 == 0:
             ax.set_ylabel("Normalised Amplitude")
+
+    # Turn off the empty 6th subplot
+    axes_flat[-1].axis('off')
 
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.93])
 
 
-    # -- 4. Save / show ------------------------------------------------
+    # -- 5. Save / show ------------------------------------------------
     if args.save:
         out_dir  = Path(args.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
