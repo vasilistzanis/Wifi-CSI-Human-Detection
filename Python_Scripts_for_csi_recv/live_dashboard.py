@@ -441,13 +441,13 @@ class WaveformMonitor(QWidget):
         wf_lay.addWidget(self.plot)
         
         self._x    = np.arange(reader.window_size)
-        self._line = self.plot.plot(self._x, np.zeros(reader.window_size), pen=pg.mkPen(ACCENT, width=2))
+        self._line = self.plot.plot(self._x, np.zeros(reader.window_size), pen=pg.mkPen(ACCENT, width=3))
         
         # Glow / Fill
         self._fill = pg.FillBetweenItem(
             pg.PlotDataItem(self._x, np.zeros(reader.window_size)),
             pg.PlotDataItem(self._x, np.zeros(reader.window_size)),
-            brush=pg.mkBrush(88, 166, 255, 30)
+            brush=pg.mkBrush(88, 166, 255, 45)
         )
         self.plot.addItem(self._fill)
         
@@ -499,13 +499,13 @@ class WaveformMonitor(QWidget):
         t = self._t_color
         
         # Color interpolation (Dark -> Cyan -> Bright Cyan)
-        r = int(88 * t + 10 * (1-t))
-        g = int(166 * t + 20 * (1-t))
-        b = int(255 * t + 40 * (1-t))
+        r = int(88 * t + 40 * (1-t))
+        g = int(166 * t + 90 * (1-t))
+        b = int(255 * t + 160 * (1-t))
         
-        self._fill.setBrush(pg.mkBrush(r, g, b, int(30 + t * 85)))
+        self._fill.setBrush(pg.mkBrush(r, g, b, int(45 + t * 85)))
         self._line.setData(self._x, wf)
-        self._line.setPen(pg.mkPen((r, g, b, 255), width=2.0))
+        self._line.setPen(pg.mkPen((r, g, b, 255), width=3.0))
 
         # Subcarrier bars
         brushes = [pg.mkBrush(*sc_color(float(v)), 200) for v in sc_mags]
