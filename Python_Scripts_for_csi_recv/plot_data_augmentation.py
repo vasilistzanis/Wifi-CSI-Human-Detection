@@ -9,7 +9,7 @@ from typing import Optional
 
 # Import the loader from your existing preprocessing script
 try:
-    from data_preprocessing import load_csi_csv
+    from data_preprocessing import load_csi_csv, CSIPipeline
 except ImportError:
     print("Error: data_preprocessing.py not found in the current directory.")
     sys.exit(1)
@@ -125,49 +125,50 @@ def _load_real(data_path: Path,
                segment_len: int = SEGMENT_LEN,
                subcarrier_idx: int = SUBCARRIER_IDX) -> tuple:
     """
-    Load a real CSI recording and return (signal_1d, info_str).
-
+    Load a real CSI recording, apply standard filtering, and return (signal_1d, info_str).
 
     Returns (None, error_str) on any failure so the caller can fall back.
     """
     complex_matrix, _ = load_csi_csv(data_path)
 
-
     if complex_matrix is None or complex_matrix.size == 0:
         return None, "Loaded matrix is empty"
 
-
     n_frames, n_sc = complex_matrix.shape
-
 
     # Guard against short recordings
     if n_frames < min_frames:
         return None, (f"Recording too short: {n_frames} frames "
                       f"(need >= {min_frames})")
 
+    # --- APPLY FILTERING (CSIPipeline) ---
+    pipeline = CSIPipeline(fs=config.SAMPLING_RATE, use_diff=False)
+    amp_active = pipeline.remove_null_subcarriers(complex_matrix, fit=True)
+    amp_clean = pipeline.apply_hampel_filter(amp_active)
+    amp_clean = pipeline.apply_lowpass_filter(amp_clean)
+    
+    n_frames_clean, n_active_sc = amp_clean.shape
+    if n_active_sc == 0:
+        return None, "No active subcarriers after filtering"
 
-    # Bounds check: clamp subcarrier index to valid range
-    sc_idx = min(subcarrier_idx, n_sc - 1)
+    # Bounds check: clamp subcarrier index to valid range of ACTIVE subcarriers
+    sc_idx = min(subcarrier_idx, n_active_sc - 1)
     if sc_idx != subcarrier_idx:
         print(f"  [WARNING]  subcarrier {subcarrier_idx} out of range "
-              f"(matrix has {n_sc} SC) - using SC {sc_idx} instead")
-
+              f"(matrix has {n_active_sc} ACTIVE SC) - using SC {sc_idx} instead")
 
     # Use max(0, ...) to guarantee non-negative start_frame
-    start = max(0, min(500, n_frames - segment_len))
+    start = max(0, min(500, n_frames_clean - segment_len))
     end   = start + segment_len
 
+    amplitude = amp_clean[start:end, sc_idx]
 
-    amplitude = np.abs(complex_matrix[start:end, sc_idx])
-
-
-    # Normalise to [0, 1]
+    # Normalise to [0, 1] for visual consistency across augmentations
     mn, mx  = amplitude.min(), amplitude.max()
     signal  = (amplitude - mn) / (mx - mn + 1e-9)
 
-
-    info = (f"SC {sc_idx}  |  frames {start}-{end}  "
-            f"|  total {n_frames} frames  |  {n_sc} subcarriers")
+    info = (f"Filtered SC {sc_idx}  |  frames {start}-{end}  "
+            f"|  total {n_frames_clean} frames  |  {n_active_sc} active SC")
     return signal, info
 
 
