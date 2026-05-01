@@ -98,7 +98,7 @@ def main():
             vals = [item['importance'] * 100 for item in importances][::-1]
             
 
-            ax = sns.barplot(x=vals, y=names, palette="viridis")
+            ax = sns.barplot(x=vals, y=names, hue=names, palette="viridis", legend=False)
             plt.title(f"Top 10 Features: {model_name}", pad=15, fontweight='bold', fontsize=14)
             plt.xlabel('Importance (%)', fontweight='bold', fontsize=12)
             plt.ylabel('Feature', fontweight='bold', fontsize=12)
