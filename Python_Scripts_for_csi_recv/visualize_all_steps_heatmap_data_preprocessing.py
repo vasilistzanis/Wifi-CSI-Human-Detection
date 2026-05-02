@@ -26,16 +26,7 @@ import matplotlib
 
 
 
-def configure_console_output() -> None:
-    """Avoid UnicodeEncodeError on legacy Windows console encodings."""
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            try:
-                stream.reconfigure(errors="replace")
-            except Exception:
-                pass
-
-
+from csi_parser import configure_console_output
 configure_console_output()
 
 
@@ -213,8 +204,8 @@ def main():
         (amp_step2, "2. Hampel Filter\n(spike / outlier removal)",        "jet"),
         (amp_step3, f"3. Butterworth Low-Pass\n({args.cutoff} Hz cutoff)", "jet"),
         (amp_step4, step4_title,                                           step4_cmap),
-        (amp_step5, f"5. PCA\n({n_components} components - {explained_var:.0f}% variance)", "viridis"),
-        (amp_step6, "6. StandardScaler (Z-score)\nFinal AI Input",         "viridis"),
+        (amp_step5, f"5. PCA\n({n_components} components - {explained_var:.0f}% variance)\n(file-local PCA — for illustration)", "viridis"),
+        (amp_step6, "6. StandardScaler (Z-score)\nFinal AI Input\n(file-local PCA — for illustration)", "viridis"),
     ]
 
     STYLE_BG    = "#1a1a2e"

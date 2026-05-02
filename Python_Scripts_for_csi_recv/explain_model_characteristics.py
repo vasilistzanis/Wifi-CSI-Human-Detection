@@ -23,19 +23,13 @@ Usage:
 import sys
 import argparse
 import json
+import functools
 from pathlib import Path
 
 import numpy as np
 
 # -- Console safety --------------------------------------------------------
-def configure_console_output() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            try:
-                stream.reconfigure(errors="replace")
-            except Exception:
-                pass
-
+from csi_parser import configure_console_output
 configure_console_output()
 
 import matplotlib
@@ -425,6 +419,14 @@ def plot_group_importance(
 # PLOT 4 - PER-CLASS IMPORTANCE
 # ========================================================================
 
+def _per_class_recall(estimator, X, y, target_label: int) -> float:
+    """Module-level scorer so functools.partial can pickle it on Windows."""
+    mask = y == target_label
+    if mask.sum() == 0:
+        return 0.0
+    return float(np.mean(estimator.predict(X)[mask] == target_label))
+
+
 def plot_per_class_importance(
     model, X_test, y_test, feature_names, class_names,
     model_name: str, top_n: int = 10,
@@ -462,18 +464,15 @@ def plot_per_class_importance(
             ax.set_title(cls_name, fontweight="bold")
             continue
 
-        def class_recall_scorer(estimator, X, y, target_label=cls_idx):
-            """Permutation scorer for one class only."""
-            target_mask = y == target_label
-            if target_mask.sum() == 0:
-                return 0.0
-            y_pred = estimator.predict(X)
-            return float(np.mean(y_pred[target_mask] == target_label))
+        # functools.partial produces a picklable callable — required on Windows
+        # where multiprocessing cannot pickle local closures.
+        # n_jobs=1 avoids spawning subprocesses for the same reason.
+        scorer = functools.partial(_per_class_recall, target_label=cls_idx)
 
         result = permutation_importance(
             model, X_test, y_test,
             n_repeats=n_repeats, random_state=random_state,
-            n_jobs=-1, scoring=class_recall_scorer,
+            n_jobs=1, scoring=scorer,
         )
 
         sorted_idx = result.importances_mean.argsort()[::-1][:top_n]

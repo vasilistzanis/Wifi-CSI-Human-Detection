@@ -43,18 +43,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 
-def configure_console_output() -> None:
-    """Avoid UnicodeEncodeError on legacy Windows console encodings."""
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            try:
-                stream.reconfigure(errors="replace")
-            except Exception:
-                pass
-
-
-
-
+from csi_parser import configure_console_output
 configure_console_output()
 
 
@@ -500,7 +489,8 @@ def main():
                      label=f"PC{i+1}  ({explained[i]:.1f}%)")
         ax5.axhline(0, color="#999999", linewidth=1.0, linestyle="--")
         style_ax(ax5,
-                 f"5. PCA  ({n_pca} components - {explained_total:.1f}% variance explained)",
+                 f"5. PCA  ({n_pca} components - {explained_total:.1f}% variance explained)"
+                 "\n(file-local PCA — for illustration)",
                  "Component Value")
         ax5.legend(loc="upper right", fontsize=9, ncol=min(n_pca, 5), framealpha=0.8)
         fig5.tight_layout(rect=[0, 0.05, 1, 0.92])
@@ -517,7 +507,8 @@ def main():
         ax6.axhline(0, color="#999999", linewidth=1.0, linestyle="--")
         style_ax(ax6,
                  f"6. StandardScaler (Z-score)  -  mean~{amp_step6.mean():.3f}"
-                 f"  std~{amp_step6.std():.3f}  -  Final AI Input",
+                 f"  std~{amp_step6.std():.3f}  -  Final AI Input"
+                 "\n(file-local PCA — for illustration)",
                  "Z-score")
         ax6.legend(loc="upper right", fontsize=9, ncol=min(n_pca, 5), framealpha=0.8)
         fig6.tight_layout(rect=[0, 0.05, 1, 0.92])
