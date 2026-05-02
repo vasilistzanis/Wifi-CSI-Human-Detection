@@ -399,9 +399,13 @@ def _make_group_cv(y: np.ndarray,
 
     if StratifiedGroupKFold is not None and max_stratified_folds >= 2:
         n_splits = min(requested_folds, max_stratified_folds, len(group_to_label))
-        splitter = StratifiedGroupKFold(
-            n_splits=n_splits, shuffle=True, random_state=random_seed
-        )
+        try:
+            # shuffle + random_state supported from sklearn 1.3
+            splitter = StratifiedGroupKFold(
+                n_splits=n_splits, shuffle=True, random_state=random_seed
+            )
+        except TypeError:
+            splitter = StratifiedGroupKFold(n_splits=n_splits)
         splitter_name = "StratifiedGroupKFold"
     else:
         n_splits = min(requested_folds, len(group_to_label))

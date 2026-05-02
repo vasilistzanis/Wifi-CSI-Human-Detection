@@ -82,6 +82,7 @@ def _apply_style():
     })
 
 def _save_fig(fig, save_dir: Path, name: str):
+    save_dir.mkdir(parents=True, exist_ok=True)
     out = save_dir / f"{name}.png"
     fig.savefig(out, dpi=300, bbox_inches="tight", facecolor=STYLE["bg"])
     print(f"  [SAVE] {out.name}")

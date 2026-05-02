@@ -5,6 +5,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 
+from csi_parser import configure_console_output
+configure_console_output()
+
 
 def main():
     parser = argparse.ArgumentParser(description="Plot ML metrics from metrics.json for Thesis")
@@ -104,11 +107,14 @@ def main():
             plt.ylabel('Feature', fontweight='bold', fontsize=12)
             
 
-            # Add value labels to bars
-            for i, p in enumerate(ax.patches):
-                ax.annotate(f"{vals[i]:.1f}%", 
-                            (p.get_width() + 0.5, p.get_y() + p.get_height() / 2.), 
-                            ha='left', va='center', fontweight='bold', color='#333333', fontsize=10)
+            # Add value labels to bars — zip truncates to the shorter list,
+            # guarding against extra ghost patches that seaborn >= 0.12 may add.
+            for p, val in zip(ax.patches, vals):
+                if p.get_width() > 0:
+                    ax.annotate(f"{val:.1f}%",
+                                (p.get_width() + 0.5, p.get_y() + p.get_height() / 2.),
+                                ha='left', va='center', fontweight='bold',
+                                color='#333333', fontsize=10)
             
 
             sns.despine()

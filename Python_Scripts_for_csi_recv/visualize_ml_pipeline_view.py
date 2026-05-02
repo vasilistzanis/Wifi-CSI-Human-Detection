@@ -348,7 +348,7 @@ def plot_compare_classes(
 
         # Slide windows and transform each through the saved pipeline
         pca_windows = []
-        for s in range(0, n - window_size, step):
+        for s in range(0, n - window_size + 1, step):
             win = complex_matrix[s:s + window_size]
             # Use pipeline.transform which applies the full chain
             processed = pipeline.transform(win, use_pca=True).astype(np.float64)
@@ -375,6 +375,10 @@ def plot_compare_classes(
         all_pc1.extend(pts[:, 0].tolist())
         all_pc2.extend(pts[:, 1].tolist())
 
+    if pipeline.pca is None:
+        print("[ERROR] Pipeline has no fitted PCA — re-run csi_ml_pipeline.py first.")
+        plt.close(fig)
+        return
     ev = pipeline.pca.explained_variance_ratio_ * 100
     axes[0].set_xlabel(f"PC1  ({ev[0]:.1f}% var)", fontsize=10, fontweight="bold")
     axes[0].set_ylabel(f"PC2  ({ev[1]:.1f}% var)", fontsize=10, fontweight="bold")

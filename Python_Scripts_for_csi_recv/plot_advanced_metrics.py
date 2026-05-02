@@ -185,10 +185,18 @@ def _build_test_set(cfg: dict, models_dir: Path, data_dir: Path,
             except Exception as e:
                 print(f"  [SKIP] {fpath}: {e}")
                 continue
-            n = complex_matrix.shape[0]
-            for s in range(0, n - window_size, step):
-                win  = complex_matrix[s:s + window_size]
-                proc = pipeline.transform(win, use_pca=True).astype(np.float64)
+            # Transform the full recording first (matching training: temporal diff
+            # reduces length by 1, then PCA+scaler are applied to the full sequence).
+            # Slide windows over the already-processed data so each window is
+            # (window_size, n_pca) — exactly what the classifier was trained on.
+            try:
+                proc_full = pipeline.transform(complex_matrix, use_pca=True).astype(np.float64)
+            except Exception as e:
+                print(f"  [SKIP] {fpath}: transform failed — {e}")
+                continue
+            n_proc = proc_full.shape[0]
+            for s in range(0, n_proc - window_size + 1, step):
+                proc = proc_full[s:s + window_size]
                 feat = extract_features_from_window(proc)
                 if np.isfinite(feat).all():
                     X_parts.append(feat)
@@ -484,6 +492,10 @@ def plot_roc_curves(
 
     classes   = list(le.classes_)
     n_classes = len(classes)
+
+    if n_classes < 2:
+        print("[SKIP] ROC curves: need at least 2 classes in the test set.")
+        return
 
     # Determine which models to plot
     all_model_keys = {

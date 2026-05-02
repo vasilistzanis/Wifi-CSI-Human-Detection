@@ -12,6 +12,9 @@ from pathlib import Path
 
 import joblib
 
+from csi_parser import configure_console_output
+configure_console_output()
+
 # ML Models (used as fallback when saved .joblib is not found)
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, GradientBoostingClassifier
@@ -234,6 +237,14 @@ def main():
             print(f"          → Re-train to fix: python csi_ml_pipeline.py "
                   f"--classes walk idle --save_model")
             loaded_models[name] = (_MODEL_REGISTRY[name][1](args.seed), "fallback (stale)")
+
+    # Warn if every model ended up as a fallback (no saved models found at all)
+    n_saved = sum(1 for _, src in loaded_models.values() if src == "saved")
+    if n_saved == 0:
+        print("\n  [WARN] *** ALL models are fallbacks (untrained) ***")
+        print("         Latency numbers reflect blank models, NOT real inference.")
+        print("         Re-train first: python csi_ml_pipeline.py "
+              "--classes walk idle --save_model\n")
 
     # Fit fallback models on dummy data so they can predict
     for name, (model, source) in loaded_models.items():
