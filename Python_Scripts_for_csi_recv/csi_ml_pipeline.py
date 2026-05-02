@@ -1139,9 +1139,10 @@ def train_and_evaluate(
 
 
         model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
-        acc    = accuracy_score(y_test, y_pred)
-        f1_mac = f1_score(y_test, y_pred, average='macro')
+        y_pred     = model.predict(X_test)
+        acc        = accuracy_score(y_test, y_pred)
+        f1_mac     = f1_score(y_test, y_pred, average='macro')
+        train_acc  = accuracy_score(y_train_orig, model.predict(X_train_orig))
 
 
         print(f"  Hold-out Test Accuracy : {acc*100:.2f}%")
@@ -1167,14 +1168,16 @@ def train_and_evaluate(
 
 
         results[name] = {
-            'model': model,
-            'cv_mean': cv_scores.mean(),
-            'cv_std': cv_scores.std(),
-            'test_accuracy': acc,
-            'test_f1_macro': f1_mac,
+            'model':          model,
+            'cv_mean':        cv_scores.mean(),
+            'cv_std':         cv_scores.std(),
+            'cv_scores':      cv_scores.tolist(),
+            'train_accuracy': train_acc,
+            'test_accuracy':  acc,
+            'test_f1_macro':  f1_mac,
             'confusion_matrix': cm,
-            'y_pred': y_pred,
-            'y_test': y_test,
+            'y_pred':         y_pred,
+            'y_test':         y_test,
             'feature_importances': []
         }
 
@@ -1259,6 +1262,8 @@ def save_models(results: dict,
         metrics[name] = {
             'cv_accuracy_mean': round(res['cv_mean'], 4),
             'cv_accuracy_std':  round(res['cv_std'],  4),
+            'cv_scores':        [round(s, 4) for s in res.get('cv_scores', [])],
+            'train_accuracy':   round(res.get('train_accuracy', 0.0), 4),
             'test_accuracy':    round(res['test_accuracy'], 4),
             'test_f1_macro':    round(res['test_f1_macro'],  4),
             'confusion_matrix': res['confusion_matrix'].tolist(),
