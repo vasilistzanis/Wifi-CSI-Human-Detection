@@ -81,7 +81,6 @@ PALETTE = [STYLE["accent1"], STYLE["accent2"], STYLE["accent3"],
 GROUP_COLORS = {
     "Statistical":  "#2563eb",
     "FFT":          "#f59e0b",
-    "DWT":          "#10b981",
     "Other":        "#8b5cf6",
 }
 
@@ -148,9 +147,6 @@ _STAT_TO_GROUP = {
     'zcr': 'Statistical',
     'fft_mean': 'FFT', 'fft_std': 'FFT',
     'fft_peak_idx': 'FFT', 'spectral_entropy': 'FFT',
-    'dwt_d1_energy': 'DWT', 'dwt_d1_std': 'DWT',
-    'dwt_d2_energy': 'DWT', 'dwt_d2_std': 'DWT',
-    'dwt_d3_energy': 'DWT', 'dwt_d3_std': 'DWT',
 }
 
 
@@ -167,7 +163,7 @@ def _classify_feature(feature_name: str) -> str:
 
 
 def _aggregate_group_importance(feature_names, importances):
-    """Sum importance per feature group (Statistical / FFT / DWT)."""
+    """Sum importance per feature group (Statistical / FFT)."""
     groups = {}
     for name, imp in zip(feature_names, importances):
         g = _classify_feature(name)
@@ -320,7 +316,7 @@ def plot_group_importance(
     n_repeats: int = 10, random_state: int = 42,
 ):
     """
-    Aggregate feature importance by category: Statistical, FFT, DWT.
+    Aggregate feature importance by category: Statistical, FFT.
     Shows which signal processing domain the model relies on most.
     """
     from sklearn.inspection import permutation_importance

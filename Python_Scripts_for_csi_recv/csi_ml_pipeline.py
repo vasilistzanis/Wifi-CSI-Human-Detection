@@ -53,10 +53,19 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-# 14 classical stats + 6 DWT (energy+std x 3 levels with db4 wavelet)
-# DWT_LEVELS = 3  ->  detail coeff d1,d2,d3  (approx a3 excluded - slow drift)
-_DWT_STATS_PER_COMPONENT = 6          # energy_d1, std_d1, ... energy_d3, std_d3
-N_STATS = 14 + _DWT_STATS_PER_COMPONENT   # = 20
+# 14 classical statistics per PCA component.
+#
+# DWT NOTE: DWT features have been intentionally removed.
+# Reason 1 — frequency mismatch: the Butterworth filter cuts off at 10 Hz.
+#   d1 (25-50 Hz) and d2 (12.5-25 Hz) are above the cutoff → near-zero signal.
+#   d3 (6.25-12.5 Hz) partially overlaps the passband but cannot be computed
+#   at this window size (see Reason 2).
+# Reason 2 — decomposition depth: pywt.dwt_max_level(50, 'db4') = 2, so
+#   level-3 decomposition (needed for d3) is impossible at window_size=50.
+#   To re-enable DWT: increase WINDOW_SIZE to ≥100 (max_level becomes 3)
+#   AND raise the Butterworth cutoff to ≥25 Hz so the bands carry signal.
+_DWT_STATS_PER_COMPONENT = 0
+N_STATS = 14 + _DWT_STATS_PER_COMPONENT   # = 14
 
 
 try:
@@ -257,74 +266,28 @@ def augment_window(window: np.ndarray,
 def _dwt_features_for_col(col: np.ndarray, wavelet: str = 'db4',
                           level: int = 3) -> list:
     """
-    Compute DWT features for a single 1-D column (one PCA component).
+    DWT features disabled — returns empty list.
 
-
-    Decomposition: db4 wavelet, 3 levels.
-    Features extracted from DETAIL coefficients d1, d2, d3 only
-    (approximation a3 is excluded - it carries slow DC drift, already
-    captured by 'mean' in the classical stats block).
-
-
-    For window=50 frames @ 100 Hz the frequency bands are:
-      d1 : 25-50 Hz  (high-freq noise)
-      d2 : 12.5-25 Hz (rapid motion transients)
-      d3 :  6.25-12.5 Hz (fall / fast gestures)
-      a3 :  0-6.25 Hz  (walking ~2 Hz, idle ~0 Hz)  - excluded
-
-
-    Returns 6 floats: [energy_d1, std_d1, energy_d2, std_d2, energy_d3, std_d3]
+    To re-enable: increase WINDOW_SIZE to ≥100 frames AND raise the
+    Butterworth cutoff to ≥25 Hz, then set _DWT_STATS_PER_COMPONENT = 2
+    and return [energy_d3, std_d3] from the coarsest detail coefficient.
     """
-    if not _PYWT_AVAILABLE:
-        return [0.0] * _DWT_STATS_PER_COMPONENT
-
-
-    # Clamp level to what the signal length supports
-    max_level = _pywt.dwt_max_level(len(col), wavelet)
-    actual_level = min(level, max_level)
-
-
-    coeffs = _pywt.wavedec(col, wavelet, level=actual_level)
-    # coeffs = [a_n, d_n, d_{n-1}, ..., d1]  (pywt order)
-    # We want detail coefficients d1..d3 (indices [-1], [-2], [-3])
-    detail_coeffs = coeffs[1:]   # drop approximation a_n
-
-
-    feats = []
-    for lvl in range(1, level + 1):
-        # detail coeffs are stored in reversed order: coeffs[-lvl]
-        if lvl <= len(detail_coeffs):
-            d = detail_coeffs[-lvl].astype(np.float64)
-            energy = float(np.sum(d ** 2))
-            std    = float(np.std(d))
-        else:
-            energy, std = 0.0, 0.0
-        feats.extend([energy, std])
-
-
-    return feats
+    return []
 
 
 
 
 def extract_features_from_window(window: np.ndarray) -> np.ndarray:
     """
-    20 features per PCA component -> flat feature vector.
-
+    14 features per PCA component -> flat feature vector.
 
     Input:  (window_size, n_pca_components)  e.g. (50, 10)
-    Output: (200,)  [20 features x 10 components]
+    Output: (140,)  [14 features x 10 components]
 
-
-    Feature breakdown (20 per component):
-      [0-13]  Classical stats (14):
-              mean, std, max, min, range, median, energy,
-              skewness, kurtosis, fft_mean, fft_std, zcr,
-              fft_peak_idx, spectral_entropy
-      [14-19] DWT features (6) - db4 wavelet, 3 detail levels:
-              energy_d1, std_d1,   (d1: 25-50 Hz)
-              energy_d2, std_d2,   (d2: 12.5-25 Hz)
-              energy_d3, std_d3    (d3: 6.25-12.5 Hz)
+    Feature breakdown (14 per component):
+      mean, std, max, min, range, median, energy,
+      skewness, kurtosis, fft_mean, fft_std, zcr,
+      fft_peak_idx, spectral_entropy
     """
     feats = []
     for c in range(window.shape[1]):
@@ -386,10 +349,8 @@ def _get_feature_names(n_pca_components: int) -> list[str]:
     classical = ['mean', 'std', 'max', 'min', 'range', 'median',
                  'energy', 'skewness', 'kurtosis', 'fft_mean', 'fft_std',
                  'zcr', 'fft_peak_idx', 'spectral_entropy']
-    dwt = ['dwt_d1_energy', 'dwt_d1_std',
-           'dwt_d2_energy', 'dwt_d2_std',
-           'dwt_d3_energy', 'dwt_d3_std']
-    all_stats = classical + dwt   # 20 total
+    # DWT removed — see _DWT_STATS_PER_COMPONENT comment at top of file
+    all_stats = classical   # 14 total
     return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in all_stats]
 
 
@@ -662,6 +623,8 @@ def build_dataset(
                                 techniques=augment_techniques,
                                 seed=random_seed + global_window_idx,
                                 class_label=cls_name):
+                            if not np.isfinite(aw_raw).all():
+                                continue
                             if pp:
                                 aw_proj = pp.pca.transform(aw_raw)
                                 aw_proj = pp.scaler.transform(aw_proj)
@@ -823,6 +786,8 @@ def build_dataset(
                             techniques=augment_techniques,
                             seed=random_seed + global_window_idx,
                             class_label=cls):
+                        if not np.isfinite(aw_raw).all():
+                            continue
                         aw_proj = pipeline.pca.transform(aw_raw)
                         aw_proj = pipeline.scaler.transform(aw_proj)
                         X_tr.append(extract_features_from_window(aw_proj))
