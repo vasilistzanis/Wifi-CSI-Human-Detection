@@ -110,20 +110,7 @@ static void wifi_init(void)
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   3. ESP-NOW SEND CALLBACK — Silent (100Hz, UART bottleneck prevention)
-   ════════════════════════════════════════════════════════════════════════ */
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-static void __attribute__((unused)) esp_now_send_cb(const esp_now_send_info_t *send_info,
-                            esp_now_send_status_t status)
-#else
-static void __attribute__((unused)) esp_now_send_cb(const uint8_t *mac, esp_now_send_status_t status)
-#endif
-{
-    /* Σκόπιμα κενό — έλεγχος γίνεται μέσω fail_count στο loop */
-}
-
-/* ════════════════════════════════════════════════════════════════════════
-   4. ESP-NOW INIT
+   3. ESP-NOW INIT
    ════════════════════════════════════════════════════════════════════════ */
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
 static void esp_now_send_stats_cb(const esp_now_send_info_t *send_info,

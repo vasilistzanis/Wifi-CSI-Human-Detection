@@ -386,8 +386,8 @@ void app_main(void)
         .channel = WIFI_CHANNEL,
         .ifidx = WIFI_IF_STA,
         .encrypt = false,
-        .peer_addr = {0x1a, 0x00, 0x00, 0x00, 0x00, 0x00},
     };
+    memcpy(peer.peer_addr, KNOWN_SENDER_MAC, 6);
     wifi_esp_now_init(peer);
     wifi_csi_init();
 
