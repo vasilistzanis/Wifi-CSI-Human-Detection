@@ -23,6 +23,9 @@ N_PCA_COMPONENTS = 10
 MODELS_TO_TRAIN = "all"
 RANDOM_SEED = 42
 XAI_N_REPEATS = 10
+# Extra frames kept beyond WINDOW_SIZE for Butterworth edge-transient absorption.
+# live_predict.py and benchmark_latency.py must always use this same value.
+FILTER_WARMUP = 50
 
 
 # ------------------------------------------------------------------------------

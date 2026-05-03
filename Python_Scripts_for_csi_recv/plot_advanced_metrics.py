@@ -154,7 +154,14 @@ def _build_test_set(cfg: dict, models_dir: Path, data_dir: Path,
     """
     Rebuild X_test / y_test from saved pipeline + experiment config.
     Used for ROC computation without re-fitting anything.
+    Window size and step are read from experiment_config.json when available
+    so they always match the original training evaluation exactly.
     """
+    # Prefer saved experiment settings over CLI defaults so ROC windows
+    # match the exact test set used during training.
+    window_size = int(cfg.get("window_size", window_size)) if cfg else window_size
+    step        = int(cfg.get("step",        step))        if cfg else step
+
     pipeline_path = models_dir / "csi_pipeline.joblib"
     le_path       = models_dir / "label_encoder.joblib"
 
@@ -361,8 +368,12 @@ def plot_cv_fold_scores(
                        ha="right")
     ax.set_ylabel("CV Accuracy (%)", fontsize=11, fontweight="bold")
     ax.set_ylim(max(0, ax.get_ylim()[0] - 5), min(105, ax.get_ylim()[1] + 8))
+    # Prefer the stored splitter name from metrics.json; fall back gracefully.
+    splitter_names = {v.get("cv_splitter") for v in metrics.values()
+                      if v.get("cv_splitter")}
+    splitter_label = splitter_names.pop() if len(splitter_names) == 1 else "GroupKFold"
     ax.set_title(
-        f"Cross-Validation Fold Scores  ({n_folds}-Fold StratifiedGroupKFold)\n"
+        f"Cross-Validation Fold Scores  ({n_folds}-Fold {splitter_label})\n"
         "Dots = individual folds  |  Bar = mean  |  Error bar = ±1 std",
         fontsize=12, fontweight="bold",
     )
@@ -422,7 +433,7 @@ def plot_train_cv_test_gap(
         train_accs = np.array([metrics[m].get("train_accuracy", 0) * 100
                                for m in model_names])
         b_tr = ax.bar(x + offsets[0], train_accs, width,
-                      label="Train Accuracy",
+                      label="Train Accuracy (non-aug)",
                       color=STYLE["a3"], edgecolor="white", alpha=0.9)
         bar_sets.append((b_tr, train_accs))
 

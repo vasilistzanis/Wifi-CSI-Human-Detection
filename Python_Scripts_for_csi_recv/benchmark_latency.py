@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 
+import json
 import joblib
 
 from csi_parser import configure_console_output
@@ -34,7 +35,7 @@ warnings.filterwarnings("ignore")
 
 try:
     from data_preprocessing import CSIPipeline, load_csi_csv
-    from csi_ml_pipeline import extract_features_from_window
+    from csi_ml_pipeline import extract_features_from_window, FEATURE_VECTOR_VERSION
     import sklearn
 except ImportError:
     print("Cannot import modules. Run this in the correct directory.")
@@ -181,47 +182,95 @@ def main():
     np.random.seed(args.seed)
     print_system_info()
 
+    models_dir = Path(args.models_dir)
 
     # -- 1. Setup Data -------------------------------------------------
-    pipeline = CSIPipeline()
+    # live_predict.py uses window_size + FILTER_WARMUP frames per inference call;
+    # the benchmark must match that to measure realistic latency.
+    FILTER_WARMUP = config.FILTER_WARMUP   # authoritative value from config.py
+    buf_size = args.window_size + FILTER_WARMUP
+
+    pipeline_path = models_dir / "csi_pipeline.joblib"
 
     if args.simulate:
         print("[INFO] Mode: SIMULATE (Using synthetic waves)")
         rng = np.random.default_rng(seed=args.seed)
-        # Use 500 frames for fitting (statistically meaningful for PCA)
         fit_data = (rng.random((500, 128)) + 1j * rng.random((500, 128))).astype(np.complex64)
-        window_data = fit_data[:args.window_size, :]
-    else:
+        window_data = fit_data[:buf_size, :]
+        pipeline = CSIPipeline()
+        pipeline.fit_transform(fit_data, use_pca=True, n_components=args.pca)
+    elif pipeline_path.exists():
+        print(f"[LOAD] Using saved pipeline: {pipeline_path}")
+        pipeline = joblib.load(pipeline_path)
         data_path = Path(args.file)
-        if not data_path.exists():
-            print(f"[WARNING] Real data not found at {data_path}. Falling back to simulation...")
-            rng = np.random.default_rng(seed=args.seed)
-            fit_data = (rng.random((500, 128)) + 1j * rng.random((500, 128))).astype(np.complex64)
-            window_data = fit_data[:args.window_size, :]
-        else:
+        if data_path.exists():
             print(f"[FILE] Mode: REAL DATA (Loading {data_path})")
             complex_matrix, _ = load_csi_csv(data_path)
-            # Use all available data for fitting (statistically meaningful PCA)
+            start = min(args.start_frame,
+                        max(0, complex_matrix.shape[0] - buf_size))
+            window_data = complex_matrix[start:start + buf_size, :]
+        else:
+            print(f"[WARNING] Real data not found at {args.file}. Using random window.")
+            rng = np.random.default_rng(seed=args.seed)
+            n_sub = getattr(pipeline, "_fitted_n_subcarriers", 128)
+            window_data = (rng.random((buf_size, n_sub))
+                           + 1j * rng.random((buf_size, n_sub))).astype(np.complex64)
+    else:
+        print(f"[WARNING] Saved pipeline not found at {pipeline_path}. Fitting fresh pipeline.")
+        print("          Run: python csi_ml_pipeline.py --classes walk idle --save_model")
+        data_path = Path(args.file)
+        if data_path.exists():
+            print(f"[FILE] Mode: REAL DATA (Loading {data_path})")
+            complex_matrix, _ = load_csi_csv(data_path)
             fit_data = complex_matrix
-            # Bounds check for benchmark window
-            start = min(args.start_frame, max(0, complex_matrix.shape[0] - args.window_size))
-            window_data = complex_matrix[start:start+args.window_size, :]
+            start = min(args.start_frame,
+                        max(0, complex_matrix.shape[0] - buf_size))
+            window_data = complex_matrix[start:start + buf_size, :]
+        else:
+            print(f"[WARNING] Real data not found at {args.file}. Falling back to simulation.")
+            rng = np.random.default_rng(seed=args.seed)
+            fit_data = (rng.random((500, 128)) + 1j * rng.random((500, 128))).astype(np.complex64)
+            window_data = fit_data[:buf_size, :]
+        pipeline = CSIPipeline()
+        pipeline.fit_transform(fit_data, use_pca=True, n_components=args.pca)
 
-    # Fit pipeline on large data for statistical validity
-    pipeline.fit_transform(fit_data, use_pca=True, n_components=args.pca)
-    # Benchmark uses the small window (actual inference path)
+    # Reference feature vector — mirrors the live_predict.py inference path:
+    # transform the full buf_size buffer, then take the last window_size rows.
     processed_ref = pipeline.transform(window_data, use_pca=True).astype(np.float64)
-    dummy_feat = extract_features_from_window(processed_ref).reshape(1, -1)
+    dummy_feat = extract_features_from_window(
+        processed_ref[-args.window_size:]
+    ).reshape(1, -1)
     X_dummy = np.tile(dummy_feat, (10, 1))
     y_dummy = np.array([0, 1] * 5)
 
 
     # -- 2. Load models ------------------------------------------------
-    models_dir = Path(args.models_dir)
     print(f"\n[INFO] Loading models from: {models_dir.resolve()}")
     loaded_models = load_or_build_models(models_dir, seed=args.seed)
 
-    # Validate feature-count compatibility for saved models.
+    # -- Feature vector version check ------------------------------------
+    # n_features_in_ only catches dimensional changes; a version tag also
+    # catches semantic changes (kurtosis formula, fft_peak_idx scale, etc.)
+    try:
+        _metrics_path = models_dir / "metrics.json"
+        if _metrics_path.exists():
+            with open(_metrics_path, "r", encoding="utf-8") as _f:
+                _saved_metrics = json.load(_f)
+            _saved_versions = {
+                v.get("feature_vector_version")
+                for v in _saved_metrics.values()
+                if v.get("feature_vector_version")
+            }
+            if _saved_versions and FEATURE_VECTOR_VERSION not in _saved_versions:
+                print(f"\n  [WARN] *** FEATURE VECTOR VERSION MISMATCH ***")
+                print(f"         Saved models were trained with version : {_saved_versions}")
+                print(f"         Current pipeline feature version       : {FEATURE_VECTOR_VERSION}")
+                print(f"         Model predictions will be WRONG — retrain first:")
+                print(f"           python csi_ml_pipeline.py --classes walk idle --save_model\n")
+    except Exception:
+        pass   # missing or malformed metrics.json — non-fatal
+
+    # -- Validate feature-count compatibility for saved models. ----------
     # A mismatch means the model was trained before a feature-space change
     # (e.g. DWT removal).  Replace stale models with fresh fallbacks and warn.
     n_feat = dummy_feat.shape[1]
@@ -268,7 +317,7 @@ def main():
         # Warm-up
         for _ in range(args.n_warmup):
             proc = pipeline.transform(window_data, use_pca=True).astype(np.float64)
-            feat = extract_features_from_window(proc).reshape(1, -1)
+            feat = extract_features_from_window(proc[-args.window_size:]).reshape(1, -1)
             model.predict(feat)
 
         # Benchmark
@@ -276,7 +325,7 @@ def main():
         for _ in range(args.n_benchmark):
             t_start = time.perf_counter()
             proc = pipeline.transform(window_data, use_pca=True).astype(np.float64)
-            feat = extract_features_from_window(proc).reshape(1, -1)
+            feat = extract_features_from_window(proc[-args.window_size:]).reshape(1, -1)
             model.predict(feat)
             t_end = time.perf_counter()
 

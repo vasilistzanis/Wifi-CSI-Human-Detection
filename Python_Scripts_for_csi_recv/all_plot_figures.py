@@ -332,7 +332,11 @@ def plot_fft_spectrogram(complex_matrix, fs, title_base, save_dir, save, f_max=2
 # ========================================================================
 
 def plot_phase_vs_time(complex_matrix, fs, title_base, save_dir, save):
-    # Phase analysis relies on the raw complex values, so we do not use amplitude filters here.
+    # Phase analysis uses raw complex values before amplitude filtering.
+    # Raw CSI phase contains CFO (Carrier Frequency Offset) and STO (Sampling
+    # Time Offset) hardware artifacts that dominate the unwrapped phase.
+    # A per-subcarrier linear detrend (polyfit degree-1) removes the bulk
+    # CFO/STO drift to expose the residual motion-induced phase variation.
     amp = np.abs(complex_matrix)
     mask = np.any(amp > 0, axis=0)
     phase = np.angle(complex_matrix[:, mask])
@@ -348,21 +352,35 @@ def plot_phase_vs_time(complex_matrix, fs, title_base, save_dir, save):
                      vmin=-np.pi, vmax=np.pi, extent=extent)
     ax1.set_xlabel("Time (s)", fontweight="bold")
     ax1.set_ylabel("Active Subcarrier", fontweight="bold")
-    ax1.set_title(f"6. CSI Phase vs Time (Raw)\n{title_base}", fontweight="bold", pad=12)
+    ax1.set_title(
+        f"6. CSI Raw Phase (CFO/STO hardware artifacts present)\n{title_base}",
+        fontweight="bold", pad=12,
+    )
     fig.colorbar(im1, ax=ax1, label="Phase (rad)", shrink=0.8)
 
+    # Unwrap then remove linear trend per subcarrier (standard CFO/STO removal)
     phase_unwrap = np.unwrap(phase, axis=0)
+    t = np.arange(n_frames, dtype=np.float64)
+    phase_sanitised = phase_unwrap.copy()
+    for i in range(phase_unwrap.shape[1]):
+        slope, intercept = np.polyfit(t, phase_unwrap[:, i], 1)
+        phase_sanitised[:, i] = phase_unwrap[:, i] - (slope * t + intercept)
+
     n_sc = phase.shape[1]
     active_indices = np.flatnonzero(mask)
-    t = np.arange(n_frames) / fs
+    t_sec = np.arange(n_frames) / fs
     for i, sc_idx in enumerate([n_sc // 4, n_sc // 2, 3 * n_sc // 4]):
         if sc_idx < n_sc:
-            ax2.plot(t, phase_unwrap[:, sc_idx], linewidth=1.0, alpha=0.8,
-                     color=PALETTE[i % len(PALETTE)], label=f"SC {active_indices[sc_idx]}")
+            ax2.plot(t_sec, phase_sanitised[:, sc_idx], linewidth=1.0, alpha=0.8,
+                     color=PALETTE[i % len(PALETTE)],
+                     label=f"SC {active_indices[sc_idx]}")
 
     ax2.set_xlabel("Time (s)", fontweight="bold")
-    ax2.set_ylabel("Unwrapped Phase (rad)", fontweight="bold")
-    ax2.set_title("Unwrapped Phase (selected subcarriers)", fontweight="bold")
+    ax2.set_ylabel("Sanitised Phase Residual (rad)", fontweight="bold")
+    ax2.set_title(
+        "Linear-detrended Phase Residual (CFO/STO removed per subcarrier)",
+        fontweight="bold",
+    )
     ax2.legend(loc="upper right", fontsize=9)
 
     fig.tight_layout()

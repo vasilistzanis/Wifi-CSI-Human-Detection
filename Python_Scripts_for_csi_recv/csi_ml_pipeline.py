@@ -12,7 +12,7 @@ Compatible with: CSIPipeline from data_preprocessing.py
 Features:
   - Advanced Feature Extraction (Statistical + FFT Doppler analysis)
   - Augmented Windowing to prevent data scarcity
-  - GroupKFold Validation to completely eliminate data leakage 
+  - GroupKFold Validation to completely eliminate data leakage
   - Probability-based voting for robust continuous inference
   - Hyperparameter tuning via GridSearchCV
   - Export of Feature Importances and Metrics
@@ -23,6 +23,14 @@ Usage:
   python csi_ml_pipeline.py --classes walk sit fall idle --save_model --tune
 """
 
+# FEATURE VECTOR CHANGE NOTICE:
+# Kurtosis now uses excess kurtosis (value - 3); fft_peak_idx is normalised to (0,1].
+# All saved .joblib model files must be retrained before deployment.
+
+# Increment this string whenever the feature extraction semantics change
+# (formula, normalisation, added/removed features).  It is written to
+# metrics.json at save time and checked by benchmark_latency.py at load time.
+FEATURE_VECTOR_VERSION = "2"
 
 import sys
 import json
@@ -50,7 +58,10 @@ from sklearn.preprocessing import LabelEncoder
 
 
 import warnings
-warnings.filterwarnings("ignore")
+# Suppress only well-understood non-actionable warnings; leave convergence
+# warnings visible so MLP/LR training failures are not silently ignored.
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*solver.*lbfgs.*", module="sklearn")
 
 
 # 14 classical statistics per PCA component.
@@ -76,8 +87,9 @@ except ImportError:
     _PYWT_AVAILABLE = False
     import warnings as _warnings
     _warnings.warn(
-        "PyWavelets (pywt) not installed - DWT features will be zero-padded. "
-        "Run: pip install PyWavelets",
+        "PyWavelets (pywt) not installed. DWT features are currently disabled "
+        "(_DWT_STATS_PER_COMPONENT = 0). To re-enable: install PyWavelets and "
+        "set _DWT_STATS_PER_COMPONENT > 0.",
         RuntimeWarning, stacklevel=1
     )
 
@@ -286,7 +298,7 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
 
     Feature breakdown (14 per component):
       mean, std, max, min, range, median, energy,
-      skewness, kurtosis, fft_mean, fft_std, zcr,
+      skewness, excess_kurtosis, fft_mean, fft_std, zcr,
       fft_peak_idx, spectral_entropy
     """
     feats = []
@@ -309,7 +321,8 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
 
         # -- Dominant Frequency index (exclude DC bin) ---------------------
         fft_vals_no_dc = fft_vals[1:]  # DC carries static offset, not motion
-        fft_peak_idx = float(np.argmax(fft_vals_no_dc) + 1)  # +1 restores original index
+        n_bins = len(fft_vals_no_dc)
+        fft_peak_idx = float(np.argmax(fft_vals_no_dc) + 1) / n_bins  # normalised (0, 1]
 
 
         # -- Spectral Entropy (exclude DC bin) -----------------------------
@@ -327,7 +340,7 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
             float(np.median(col)),
             float(np.sum(col ** 2)),
             float(np.mean(((col - mean_val) / std_val) ** 3)),
-            float(np.mean(((col - mean_val) / std_val) ** 4)),
+            float(np.mean(((col - mean_val) / std_val) ** 4)) - 3.0,
             fft_mean,
             fft_std,
             zcr,
@@ -347,7 +360,7 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
 
 def _get_feature_names(n_pca_components: int) -> list[str]:
     classical = ['mean', 'std', 'max', 'min', 'range', 'median',
-                 'energy', 'skewness', 'kurtosis', 'fft_mean', 'fft_std',
+                 'energy', 'skewness', 'excess_kurtosis', 'fft_mean', 'fft_std',
                  'zcr', 'fft_peak_idx', 'spectral_entropy']
     # DWT removed — see _DWT_STATS_PER_COMPONENT comment at top of file
     all_stats = classical   # 14 total
@@ -576,8 +589,8 @@ def build_dataset(
             print("   Fitting single CSIPipeline for simulation...")
             train_cms = [r[0] for r in rec_data if not r[2]]
             if train_cms:
-                pp.fit_transform(np.vstack(train_cms), use_pca=True, n_components=n_pca,
-                                 scaler_type='standard', cutoff=cutoff)
+                pp.fit_from_recordings(train_cms, use_pca=True, n_components=n_pca,
+                                      scaler_type='standard', cutoff=cutoff)
 
 
         for cm, label_idx, is_test in rec_data:
@@ -725,11 +738,13 @@ def build_dataset(
         print("\n[INFO] Using pre-fitted CSIPipeline from saved artifacts...")
         pipeline = pipeline_override
     else:
-        print("\n[INFO] Fitting CSIPipeline on TRAIN recordings only...")
+        print("\n[INFO] Fitting CSIPipeline on TRAIN recordings only (per-recording DSP)...")
         pipeline = CSIPipeline(**pipeline_kwargs)
-        pipeline.fit_transform(np.vstack(fit_matrices),
-                               use_pca=True, n_components=n_pca,
-                               scaler_type='standard', cutoff=cutoff)
+        pipeline.fit_from_recordings(
+            fit_matrices,
+            use_pca=True, n_components=n_pca,
+            scaler_type="standard", cutoff=cutoff,
+        )
 
 
     X_tr, y_tr = [], []
@@ -751,6 +766,7 @@ def build_dataset(
 
 
         tr_wins = 0
+        aug_count_cls = 0
         for fpath in train_files:
             try:
                 cm, _ = load_csi_csv(fpath)
@@ -796,6 +812,7 @@ def build_dataset(
                         aw_proj = pipeline.scaler.transform(aw_proj)
                         X_tr.append(extract_features_from_window(aw_proj))
                         y_tr.append(label_idx)
+                        aug_count_cls += 1
                 global_window_idx += 1
             recording_group_id += 1
 
@@ -817,8 +834,7 @@ def build_dataset(
                 te_wins += 1
 
 
-        aug_count = tr_wins * n_augments if do_augment else 0
-        print(f"   -> train: {tr_wins} orig + {aug_count} augmented | "
+        print(f"   -> train: {tr_wins} orig + {aug_count_cls} augmented | "
               f"test: {te_wins} windows")
 
 
@@ -1133,6 +1149,11 @@ def train_and_evaluate(
         print(f"{'-'*50}")
 
 
+        # CV NOTE: cross_val_score runs on X_train_orig (non-augmented, N windows).
+        # The final model is trained on X_train (augmented, ~N_augments×N windows).
+        # CV accuracy is therefore a conservative lower-bound, not an estimate of
+        # the deployed model's training regime.  Use hold-out test accuracy as the
+        # primary performance measure.
         cv_scores = cross_val_score(
             model, X_train_orig, y_train_orig,
             cv=cv, scoring='accuracy', n_jobs=-1,
@@ -1146,11 +1167,15 @@ def train_and_evaluate(
         y_pred     = model.predict(X_test)
         acc        = accuracy_score(y_test, y_pred)
         f1_mac     = f1_score(y_test, y_pred, average='macro')
+        # Measured on non-augmented original training windows (not the augmented
+        # X_train the model was fit on).  This avoids a near-100% trivial value
+        # while remaining comparable to the CV and test distributions.
         train_acc  = accuracy_score(y_train_orig, model.predict(X_train_orig))
 
 
-        print(f"  Hold-out Test Accuracy : {acc*100:.2f}%")
-        print(f"  Hold-out F1 (macro)    : {f1_mac*100:.2f}%")
+        print(f"  Train Accuracy (non-aug): {train_acc*100:.2f}%")
+        print(f"  Hold-out Test Accuracy  : {acc*100:.2f}%")
+        print(f"  Hold-out F1 (macro)     : {f1_mac*100:.2f}%")
         print(f"\n  Classification Report:")
         print(classification_report(y_test, y_pred,
                                     target_names=le.classes_, digits=3))
@@ -1182,7 +1207,8 @@ def train_and_evaluate(
             'confusion_matrix': cm,
             'y_pred':         y_pred,
             'y_test':         y_test,
-            'feature_importances': []
+            'feature_importances': [],
+            'cv_splitter': splitter_name,
         }
 
 
@@ -1272,7 +1298,9 @@ def save_models(results: dict,
             'test_f1_macro':    round(res['test_f1_macro'],  4),
             'confusion_matrix': res['confusion_matrix'].tolist(),
             'classes':          list(le.classes_),
-            'feature_importances': res.get('feature_importances', [])
+            'feature_importances': res.get('feature_importances', []),
+            'cv_splitter': res.get('cv_splitter', 'GroupKFold'),
+            'feature_vector_version': FEATURE_VECTOR_VERSION,
         }
 
 

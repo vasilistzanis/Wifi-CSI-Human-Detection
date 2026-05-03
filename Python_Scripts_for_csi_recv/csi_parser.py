@@ -164,7 +164,8 @@ def extract_seq(line: str) -> int | None:
     return int(parts[1]) if parts is not None else None
 
 
-def parse_csi_line(line: str, expected_subcarriers: int | None = None) -> np.ndarray | None:
+def parse_csi_line(line: str, expected_subcarriers: int | None = None,
+                   _parts: list | None = None) -> np.ndarray | None:
     """
     Parse one CSI_DATA text line into a complex64 array.
 
@@ -179,8 +180,11 @@ def parse_csi_line(line: str, expected_subcarriers: int | None = None) -> np.nda
     expected_subcarriers : int or None
         If provided, only accept frames with exactly this many subcarriers.
         Used by live_data_visualization for strict validation.
+    _parts : list or None
+        Pre-split fields from split_recv_fields().  When the caller already
+        holds a valid parts list, passing it avoids a second field-split.
     """
-    parts = split_recv_fields(line)
+    parts = _parts if _parts is not None else split_recv_fields(line)
     if parts is None:
         return None
 

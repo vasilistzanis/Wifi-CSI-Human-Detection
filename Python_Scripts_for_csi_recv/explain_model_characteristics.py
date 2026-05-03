@@ -143,7 +143,7 @@ def _center_figure(fig):
 _STAT_TO_GROUP = {
     'mean': 'Statistical', 'std': 'Statistical', 'max': 'Statistical',
     'min': 'Statistical', 'range': 'Statistical', 'median': 'Statistical',
-    'energy': 'Statistical', 'skewness': 'Statistical', 'kurtosis': 'Statistical',
+    'energy': 'Statistical', 'skewness': 'Statistical', 'excess_kurtosis': 'Statistical',
     'zcr': 'Statistical',
     'fft_mean': 'FFT', 'fft_std': 'FFT',
     'fft_peak_idx': 'FFT', 'spectral_entropy': 'FFT',

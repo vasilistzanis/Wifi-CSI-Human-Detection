@@ -22,7 +22,6 @@ IQ convention (ESP32 CSI buf layout):
   complex(i) = real[i] + j*imag[i]  =  complex(raw[2i+1], raw[2i])
 """
 
-import json
 import sys
 import numpy as np
 import pandas as pd
@@ -33,74 +32,9 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 from csi_parser import SeqStats
 
-DATA_COLUMNS = [
-    'type', 'seq', 'mac', 'rssi', 'rate', 'noise_floor',
-    'fft_gain', 'agc_gain', 'channel', 'local_timestamp',
-    'sig_len', 'rx_state', 'len', 'first_word', 'data'
-]
-
 
 from csi_parser import configure_console_output
 configure_console_output()
-
-
-# ----------------------------------------------------------------------------
-# INTERNAL HELPERS
-# ----------------------------------------------------------------------------
-
-def _safe_json(s: str):
-    """Parse JSON string -> list, or None on failure."""
-    try:
-        result = json.loads(s)
-        return result if isinstance(result, list) else None
-    except (json.JSONDecodeError, ValueError, TypeError):
-        return None
-
-
-def _build_complex_frame(raw: list, first_word_invalid: bool):
-    """
-    Convert raw [imag0, real0, imag1, real1, ...] to complex64 array.
-    Applies HT40 first_word_invalid hardware bug fix.
-    Returns None if malformed.
-    """
-    n = len(raw)
-    if n < 2 or n % 2 != 0:
-        return None
-
-    # Apply HT40 hardware bug fix if flagged
-    if first_word_invalid and n >= 4:
-        raw = list(raw)  # explicit copy
-        raw[0] = 0
-        raw[1] = 0
-        raw[2] = 0
-        raw[3] = 0
-
-    arr = np.array(raw, dtype=np.float32)
-    real = arr[1::2]   # odd  indices -> real
-    imag = arr[0::2]   # even indices -> imaginary
-    return (real + 1j * imag).astype(np.complex64)
-
-
-def _parse_recv_row(line: str) -> dict[str, str] | None:
-    """
-    Parse one CSI recv/logger line into the expected metadata columns.
-
-    The CSI payload contains many commas, so we split only the first
-    14 separators and keep the full payload as the final field.
-    """
-    line = line.strip()
-    if not line or line.startswith("type,"):
-        return None
-    if not line.startswith("CSI_DATA"):
-        return None
-
-    parts = line.split(",", len(DATA_COLUMNS) - 1)
-    if len(parts) != len(DATA_COLUMNS):
-        return None
-
-    row = dict(zip(DATA_COLUMNS, (part.strip() for part in parts)))
-    row["data"] = row["data"].strip().strip('"')
-    return row
 
 
 # ----------------------------------------------------------------------------
@@ -111,49 +45,64 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
     """
     Load CSV or TXT file from the recv (Magic Header format).
 
+    Uses csi_parser.parse_csi_line for frame parsing so training and live
+    inference share identical IQ-decoding logic.
+
     Returns:
       complex_matrix : (N_frames, N_subcarriers) complex64
       metadata_df    : DataFrame with rssi, agc_gain, fft_gain, seq, etc.
     """
+    from csi_parser import (
+        parse_csi_line as _parse_csi_line,
+        split_recv_fields as _split_recv_fields,
+    )
+
     filepath = Path(filepath)
     if not filepath.exists():
         raise FileNotFoundError(f"File not found: {filepath}")
 
-    # Load - names=DATA_COLUMNS + default header=0 skips the logger header row
-    rows = []
+    rows: list[dict] = []
+    frames: list[np.ndarray] = []
+    seq_stats = SeqStats()
+
     with filepath.open("r", encoding="utf-8", errors="ignore") as fh:
         for line in fh:
-            row = _parse_recv_row(line)
-            if row is not None:
-                rows.append(row)
+            line = line.strip()
+            parts = _split_recv_fields(line)
+            if parts is None:
+                continue
 
-    df = pd.DataFrame(rows, columns=DATA_COLUMNS)
+            # Pass pre-split parts so parse_csi_line skips a second field-split.
+            frame = _parse_csi_line(line, _parts=parts)
+            if frame is None:
+                continue
 
-    if df.empty:
-        print("[WARNING] No CSI_DATA rows found.")
-        return np.zeros((0, 0), dtype=np.complex64), df
+            try:
+                seq_stats.update(int(parts[1]))
+            except (ValueError, IndexError):
+                pass
 
-    # Numeric conversion
-    for col in ['seq', 'rssi', 'fft_gain', 'agc_gain', 'len', 'first_word']:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
+            rows.append({
+                "seq":        parts[1],
+                "rssi":       parts[3],
+                "fft_gain":   parts[6],
+                "agc_gain":   parts[7],
+                "len":        parts[12],
+                "first_word": parts[13],
+            })
+            frames.append(frame)
 
-    # Handle NaN in first_word to prevent conversion crash
-    df['first_word'] = df['first_word'].fillna(0).astype(int)
+    if not frames:
+        print("[WARNING] No valid CSI frames found.")
+        return np.zeros((0, 0), dtype=np.complex64), pd.DataFrame()
 
-    df = df.dropna(subset=['seq', 'len']).reset_index(drop=True)
+    df = pd.DataFrame(rows)
+    for col in ["seq", "rssi", "fft_gain", "agc_gain", "len", "first_word"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    if df.empty:
-        print("[WARNING] No valid rows after dropna.")
-        return np.zeros((0, 0), dtype=np.complex64), df
-
-    # Sequence diagnostics aligned with the shared parser logic
-    seq_stats = SeqStats()
-    for seq in df['seq'].astype(int).tolist():
-        seq_stats.update(seq)
-
-    if (seq_stats.missing_count > 0 or
-            seq_stats.reset_count > 0 or
-            seq_stats.duplicate_count > 0):
+    if (seq_stats.missing_count > 0
+            or seq_stats.reset_count > 0
+            or seq_stats.duplicate_count > 0):
         summary_parts = []
         if seq_stats.missing_count > 0:
             summary_parts.append(
@@ -168,69 +117,41 @@ def load_csi_csv(filepath: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
             f"out of {seq_stats.received_count} received"
         )
 
-    # Vectorized JSON parsing for better performance
-    parsed = df['data'].apply(_safe_json)
-    valid_mask = parsed.notna()
-
-    n_invalid = int((~valid_mask).sum())
-    if n_invalid > 0:
-        print(f"[WARNING] {n_invalid} rows with unparseable data - skipped")
-
-    df = df[valid_mask].copy().reset_index(drop=True)
-    parsed = parsed[valid_mask].reset_index(drop=True)
-
-    if df.empty:
-        print("[WARNING] No frames could be parsed.")
-        return np.zeros((0, 0), dtype=np.complex64), df
-
-    first_words = df['first_word'].tolist()
-    frames = []
-    valid_idx = []
-
-    for i, (raw, fw) in enumerate(zip(parsed.tolist(), first_words)):
-        frame = _build_complex_frame(raw, bool(fw))
-        if frame is not None:
-            frames.append(frame)
-            valid_idx.append(i)
-
-    if not frames:
-        print("[WARNING] No frames converted to complex.")
-        return np.zeros((0, 0), dtype=np.complex64), df
-
-    # Consistency: keep only frames with the most common length
-    lengths = [len(f) for f in frames]
+    lengths = [f.shape[0] for f in frames]
     if len(set(lengths)) > 1:
         from collections import Counter
         most_common_len = Counter(lengths).most_common(1)[0][0]
-        kept = [(f, i) for f, i, l in zip(frames, valid_idx, lengths)
-                if l == most_common_len]
-        frames, valid_idx = zip(*kept)
-        frames, valid_idx = list(frames), list(valid_idx)
-        print(f"[WARNING] Mixed frame lengths - kept {len(frames)} "
-              f"frames with len={most_common_len}")
+        pairs = [
+            (f, r) for f, r, ln in zip(frames, rows, lengths)
+            if ln == most_common_len
+        ]
+        frames_kept, rows_kept = zip(*pairs)
+        frames = list(frames_kept)
+        df = pd.DataFrame(rows_kept)
+        for col in ["seq", "rssi", "fft_gain", "agc_gain", "len", "first_word"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        print(f"[WARNING] Mixed frame lengths — kept {len(frames)} frames "
+              f"with len={most_common_len}")
 
     complex_matrix = np.vstack(frames).astype(np.complex64)
-    metadata_df = df.iloc[valid_idx].reset_index(drop=True)
+    df = df.reset_index(drop=True)
 
     print(f"[OK] Loaded {complex_matrix.shape[0]} frames "
           f"x {complex_matrix.shape[1]} subcarriers")
     summary_parts = []
-    rssi_values = metadata_df['rssi'].dropna()
+    rssi_values = df["rssi"].dropna()
     if not rssi_values.empty:
         summary_parts.append(f"RSSI: {rssi_values.mean():.1f} dBm")
-
-    agc_mode = metadata_df['agc_gain'].dropna().mode()
+    agc_mode = df["agc_gain"].dropna().mode()
     if not agc_mode.empty:
         summary_parts.append(f"AGC: {int(agc_mode.iloc[0])}")
-
-    fft_mode = metadata_df['fft_gain'].dropna().mode()
+    fft_mode = df["fft_gain"].dropna().mode()
     if not fft_mode.empty:
         summary_parts.append(f"FFT: {int(fft_mode.iloc[0])}")
-
     if summary_parts:
         print("   " + " | ".join(summary_parts))
 
-    return complex_matrix, metadata_df
+    return complex_matrix, df
 
 
 # ----------------------------------------------------------------------------
@@ -289,18 +210,25 @@ class CSIPipeline:
     # -- 2. Hampel Filter (Vectorized) ---------------------------------------
     def apply_hampel_filter(self, data: np.ndarray, window_size: int = 11,
                             n_sigmas: float = 3.0) -> np.ndarray:
+        from numpy.lib.stride_tricks import sliding_window_view
+
+        half = window_size // 2
+        # Reflect-pad so the sliding window is centred at every frame
+        padded = np.pad(data, ((half, half), (0, 0)), mode="reflect")
+        # windows: (n_frames, n_subcarriers, window_size)  — zero-copy view
+        windows = sliding_window_view(padded, window_shape=window_size, axis=0)
+
+        rolling_median = np.median(windows, axis=2)                      # (N, SC)
+        # deviations creates a full (N, SC, W) copy; ~N*SC*W*4 bytes peak.
+        # For window_size=11 and a 5 000-frame recording this is ~25 MB — acceptable.
+        deviations = np.abs(windows - rolling_median[:, :, np.newaxis])  # (N, SC, W)
+        rolling_mad = np.median(deviations, axis=2)                      # (N, SC)
+
+        threshold = np.clip(n_sigmas * 1.4826 * rolling_mad, 1e-6, None)
+        outlier_mask = np.abs(data - rolling_median) > threshold
+
         filtered = data.copy()
-
-        for sc in range(data.shape[1]):
-            s = pd.Series(data[:, sc])
-            rolling_median = s.rolling(window_size, center=True, min_periods=1).median()
-            deviation = (s - rolling_median).abs()
-            rolling_mad = deviation.rolling(window_size, center=True, min_periods=1).median()
-            threshold = n_sigmas * 1.4826 * rolling_mad
-            threshold = threshold.clip(lower=1e-6)  # Prevent zero-MAD from flagging everything
-            outlier_mask = deviation > threshold
-            filtered[outlier_mask.values, sc] = rolling_median[outlier_mask].values
-
+        filtered[outlier_mask] = rolling_median[outlier_mask]
         return filtered
 
     # -- 3. Butterworth Low-Pass (Vectorized) --------------------------------
@@ -394,13 +322,100 @@ class CSIPipeline:
         self.is_fitted = True
         return data
 
+    # -- fit_from_recordings (Training — per-recording DSP) ------------------
+    def fit_from_recordings(
+        self,
+        recordings: list,
+        use_pca: bool = True,
+        n_components: int = 10,
+        scaler_type: str = "standard",
+        cutoff: float | None = None,
+    ) -> "CSIPipeline":
+        """
+        Fit the pipeline on a list of complex CSI matrices (one per recording).
+
+        Each recording passes independently through Hampel → Butterworth →
+        temporal-diff so that filter transients and temporal-diff boundary
+        artifacts never cross recording boundaries.  PCA and scaler are then
+        fitted on the concatenated per-recording outputs.
+
+        This replaces the previous fit_transform(np.vstack(recordings)) pattern.
+        """
+        if cutoff is not None:
+            self.cutoff = cutoff
+        if not recordings:
+            raise ValueError("recordings list is empty")
+
+        print(f"[SETUP] fit_from_recordings — {len(recordings)} recordings")
+
+        # Step 1: null mask from all training frames combined (more robust than
+        # single recording; no DSP applied yet so boundaries are irrelevant here)
+        combined_raw = np.vstack(recordings)
+        self._fitted_n_subcarriers = combined_raw.shape[1]
+        self.remove_null_subcarriers(combined_raw, fit=True)
+        n_active = int(self.active_mask.sum())
+        print(f"   [1] Null mask: {combined_raw.shape[1]} → {n_active} active subcarriers")
+        del combined_raw
+
+        # Steps 2–4: per-recording DSP (no cross-boundary artifacts)
+        pre_pca_blocks: list[np.ndarray] = []
+        skipped = 0
+        for cm in recordings:
+            amp = self.remove_null_subcarriers(cm, fit=False)
+            amp = self.apply_hampel_filter(amp)
+            amp = self.apply_lowpass_filter(amp, cutoff=self.cutoff)
+            if self.use_diff:
+                amp = self.apply_temporal_diff(amp)
+            if amp.shape[0] < 2:
+                skipped += 1
+                continue
+            pre_pca_blocks.append(amp)
+
+        if skipped:
+            print(f"   [WARNING] {skipped}/{len(recordings)} recordings too short — skipped")
+        if not pre_pca_blocks:
+            raise ValueError("No recordings produced valid frames after per-recording DSP.")
+
+        combined = np.vstack(pre_pca_blocks)
+        print(f"   [2–4] Per-recording DSP: {len(pre_pca_blocks)} recordings "
+              f"→ {combined.shape[0]} frames x {combined.shape[1]} features")
+
+        # Step 5: PCA
+        if use_pca:
+            if combined.shape[0] < 2:
+                raise ValueError("PCA requires at least 2 frames after preprocessing.")
+            actual_n = min(n_components, combined.shape[0] - 1, combined.shape[1])
+            if actual_n < n_components:
+                print(f"   [WARNING] PCA: limited to {actual_n} by data shape {combined.shape}")
+            self.pca = PCA(n_components=actual_n)
+            self.pca.fit(combined)
+            explained = self.pca.explained_variance_ratio_.sum() * 100
+            print(f"   [5] PCA: {actual_n} components, {explained:.1f}% variance [OK]")
+        else:
+            self.pca = None
+            print(f"   [5] PCA: skipped")
+
+        # Step 6: scaler
+        pca_out = self.pca.transform(combined) if (use_pca and self.pca is not None) else combined
+        if scaler_type == "minmax":
+            self.scaler = MinMaxScaler()
+        elif scaler_type == "standard":
+            self.scaler = StandardScaler()
+        else:
+            raise ValueError(f"Unknown scaler_type '{scaler_type}'")
+        self.scaler.fit(pca_out)
+        print(f"   [6] {scaler_type} scaler fitted on {pca_out.shape[0]} frames [OK]")
+
+        self.is_fitted = True
+        return self
+
     # -- transform (Inference) -----------------------------------------------
     def transform(self, complex_matrix: np.ndarray,
                   use_pca: bool = True,
                   cutoff: float | None = None) -> np.ndarray:
         eff_cutoff = cutoff if cutoff is not None else self.cutoff
         if not self.is_fitted:
-            raise RuntimeError("Pipeline not fitted. Call fit_transform() first.")
+            raise RuntimeError("Pipeline not fitted. Call fit_transform() or fit_from_recordings() first.")
 
         if complex_matrix.shape[1] != self._fitted_n_subcarriers:
             raise ValueError(

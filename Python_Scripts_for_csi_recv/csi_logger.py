@@ -19,21 +19,7 @@ from pathlib import Path
 import serial
 from serial.tools import list_ports
 
-
-
-
-def configure_console_output() -> None:
-    """Avoid UnicodeEncodeError on legacy Windows console encodings."""
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            try:
-                stream.reconfigure(errors="replace")
-            except Exception:
-                pass
-
-
-
-
+from csi_parser import configure_console_output
 configure_console_output()
 
 
