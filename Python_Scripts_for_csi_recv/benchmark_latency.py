@@ -56,13 +56,6 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------
-# CONFIG
-# ---------------------------------------------------------------------
-
-
-
-
-# ---------------------------------------------------------------------
 # HELPERS
 # ---------------------------------------------------------------------
 
@@ -169,7 +162,7 @@ def main():
     parser = argparse.ArgumentParser(description="Multi-Model CSI Latency Benchmark")
     parser.add_argument('--simulate', action='store_true', help="Use synthetic data")
     parser.add_argument('--save', action='store_true', help="Save results (CSV and Plot)")
-    parser.add_argument('--output-csv', type=str, default="multi_model_latency.csv")
+    parser.add_argument('--output-csv', type=str, default="models/multi_model_latency.csv")
     parser.add_argument('--output-plot', type=str, default="models/plots/Latency_Comparison.png")
     parser.add_argument('--models-dir', type=str, default="models",
                         help="Directory containing saved .joblib model files (default: models)")
@@ -382,6 +375,7 @@ def main():
     if args.save:
         # Save CSV
         df_raw = pd.DataFrame(all_results)
+        Path(args.output_csv).parent.mkdir(parents=True, exist_ok=True)
         df_raw.to_csv(args.output_csv, index=False)
         print(f"[SAVE] Raw timings exported to: {args.output_csv}")
         

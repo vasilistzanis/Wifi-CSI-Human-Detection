@@ -466,11 +466,12 @@ if __name__ == "__main__":
     print(f"\n[STATS] Input: {complex_matrix.shape}")
 
     pipeline = CSIPipeline(fs=100.0, use_diff=True)
-    processed = pipeline.fit_transform(
-        complex_matrix,
+    pipeline.fit_from_recordings(
+        [complex_matrix],
         use_pca=True,
         n_components=10,
-        scaler_type='standard'
+        scaler_type='standard',
     )
+    processed = pipeline.transform(complex_matrix, use_pca=True)
     print(f"\n[OK] Output: {processed.shape}")
     print(f"   Mean={processed.mean():.4f} | Std={processed.std():.4f}")
