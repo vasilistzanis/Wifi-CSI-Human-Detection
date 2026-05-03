@@ -1,3 +1,16 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+CSI HAR - Multi-Model Latency Benchmark
+========================================
+Measures end-to-end inference latency (preprocessing + PCA + features + model.predict)
+for all trained classifiers. Saves results as CSV and a comparison bar chart.
+
+Usage:
+  python benchmark_latency.py --simulate
+  python benchmark_latency.py --file datasets/walk/walk_01.txt --save
+"""
+
 import time
 import numpy as np
 import pandas as pd

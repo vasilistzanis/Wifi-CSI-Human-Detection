@@ -50,6 +50,8 @@ The system is designed with a strict pipeline architecture, ensuring zero data l
 - **`visualize_all_steps_heatmap_data_preprocessing.py`**: Generates 7 separate heatmap windows showing the spatial-temporal transformations of the pipeline.
 - **`plot_data_augmentation.py`**: Visualizes the effects of the physics-based augmentations (Noise, Shift, Scale, Time-Warp) on the filtered CSI waveforms. Supports `--realistic` flag to toggle between educational and ML-equivalent parameters.
 - **`plot_ml_results.py`**: Plots the output metrics and confusion matrices of the ML models. *(Note: Requires running `csi_ml_pipeline.py --save_model` first)*
+- **`plot_advanced_metrics.py`**: Generates ROC curves, per-class accuracy bar charts, and advanced evaluation figures from saved model artifacts.
+- **`visualize_ml_pipeline_view.py`**: Loads the saved `csi_pipeline.joblib` and visualises each DSP step, PCA scatter plots, and the final feature vector — for thesis illustration.
 
 ---
 
@@ -99,6 +101,6 @@ python all_plot_figures.py --file datasets/walk/walk_01.txt
 - `matplotlib`, `seaborn`
 - `pyqtgraph`, `PyQt5`
 - `pyserial`
-- `pywavelets` *(optional but recommended for DWT features)*
+- `pywavelets` *(optional — DWT features are currently disabled; install only if you plan to re-enable them)*
 
 *(Install via `pip install -r requirements.txt`)*

@@ -7,11 +7,12 @@ CSI Parser - Shared Parsing & Loading Utilities
 Central module for all CSI data parsing, loading, and path resolution.
 
 Used by:
-  * csi_plotter_heatmap.py   (plotting)
-  * live_predict.py           (real-time inference)
+  * all_plot_figures.py        (thesis DSP plots)
+  * live_predict.py            (real-time inference)
   * live_data_visualization.py (live PyQt viewer)
   * plot_lines_data_preprocessing.py
   * visualize_all_steps_heatmap_data_preprocessing.py
+  * data_preprocessing.py, csi_ml_pipeline.py, and all other scripts (configure_console_output)
 """
 
 from __future__ import annotations
