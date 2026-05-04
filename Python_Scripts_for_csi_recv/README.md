@@ -41,14 +41,14 @@ The system is designed with a strict pipeline architecture, ensuring zero data l
 - **`live_data_visualization.py`**: A basic waterfall/heatmap monitor for raw CSI streams.
 
 ### 4. Explainable AI (XAI) & Profiling
-- **`explain_model_characteristics.py`**: Generates publication-ready XAI charts (Feature Group Importance, Permutation Importance) to explain exactly *why* the model makes its decisions. Evaluates FFT, Statistical, and DWT domains.
+- **`explain_model_characteristics.py`**: Generates publication-ready XAI charts (Feature Group Importance, Permutation Importance) to explain exactly *why* the model makes its decisions. Evaluates FFT and Statistical feature domains.
 - **`benchmark_latency.py`**: Profiles the end-to-end latency of the DSP and ML inference steps to guarantee real-time performance capabilities.
 
 ### 5. Thesis & Publication Plotting
 - **`all_plot_figures.py`**: Generates 7 core scientific figures (Amplitude, Heatmap, SC Profile, Energy/Variance, Spectrogram, Phase, Synchronized Motion Analysis). Integrates the exact `CSIPipeline` to mirror the ML data state, and includes a `--compare` mode for side-by-side class analysis.
 - **`plot_lines_data_preprocessing.py`**: Generates 7 separate 2D line windows visualizing the exact effect of every single DSP step on the signal.
 - **`visualize_all_steps_heatmap_data_preprocessing.py`**: Generates 7 separate heatmap windows showing the spatial-temporal transformations of the pipeline.
-- **`plot_data_augmentation.py`**: Visualizes the effects of the physics-based augmentations (Noise, Shift, Scale, Time-Warp) on the filtered CSI waveforms. Supports `--realistic` flag to toggle between educational and ML-equivalent parameters.
+- **`plot_data_augmentation.py`**: Visualizes the exact augmentation functions used during training (Noise, Shift, Scale, Time-Warp) on filtered CSI waveforms. Supports `--class-label` to show class-aware parameter constraints (walk/idle/sit/fall).
 - **`plot_ml_results.py`**: Plots the output metrics and confusion matrices of the ML models. *(Note: Requires running `csi_ml_pipeline.py --save_model` first)*
 - **`plot_advanced_metrics.py`**: Generates ROC curves, per-class accuracy bar charts, and advanced evaluation figures from saved model artifacts.
 - **`visualize_ml_pipeline_view.py`**: Loads the saved `csi_pipeline.joblib` and visualises each DSP step, PCA scatter plots, and the final feature vector — for thesis illustration.
