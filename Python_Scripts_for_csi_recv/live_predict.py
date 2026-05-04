@@ -48,7 +48,7 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from csi_ml_pipeline import extract_features_from_window
+    from csi_ml_pipeline import extract_features_from_window, FEATURE_VECTOR_VERSION
 except ImportError:
     print("[ERROR]  csi_ml_pipeline.py not found in the same directory.")
     sys.exit(1)
@@ -186,6 +186,28 @@ def load_models(models_dir: str, model_choice: str):
     pipeline = joblib.load(files["pipeline"])
     le       = joblib.load(files["le"])
     model    = joblib.load(files["model"])
+
+    # Feature vector version check — catches stale models before first prediction.
+    metrics_path = d / "metrics.json"
+    if metrics_path.exists():
+        try:
+            import json
+            with open(metrics_path, "r", encoding="utf-8") as _f:
+                _saved = json.load(_f)
+            _saved_versions = {
+                v.get("feature_vector_version")
+                for v in _saved.values()
+                if v.get("feature_vector_version")
+            }
+            if _saved_versions and FEATURE_VECTOR_VERSION not in _saved_versions:
+                print(f"\n  [WARN] *** FEATURE VECTOR VERSION MISMATCH ***")
+                print(f"         Saved models : version {_saved_versions}")
+                print(f"         Current code : version {FEATURE_VECTOR_VERSION}")
+                print(f"         Predictions will be WRONG — retrain first:")
+                print(f"           python csi_ml_pipeline.py --save_model\n")
+        except Exception:
+            pass
+
     return pipeline, le, model
 
 

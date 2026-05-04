@@ -85,13 +85,12 @@ try:
 except ImportError:
     _pywt = None
     _PYWT_AVAILABLE = False
-    import warnings as _warnings
-    _warnings.warn(
-        "PyWavelets (pywt) not installed. DWT features are currently disabled "
-        "(_DWT_STATS_PER_COMPONENT = 0). To re-enable: install PyWavelets and "
-        "set _DWT_STATS_PER_COMPONENT > 0.",
-        RuntimeWarning, stacklevel=1
-    )
+    if _DWT_STATS_PER_COMPONENT > 0:
+        warnings.warn(
+            "PyWavelets (pywt) not installed but _DWT_STATS_PER_COMPONENT > 0. "
+            "DWT features will not be computed. Install with: pip install PyWavelets",
+            RuntimeWarning, stacklevel=1,
+        )
 
 
 try:
