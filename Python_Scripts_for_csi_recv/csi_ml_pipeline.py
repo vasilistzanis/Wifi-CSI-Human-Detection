@@ -1335,7 +1335,7 @@ def main():
     import config
     parser = argparse.ArgumentParser(description="CSI HAR - ML Pipeline")
     parser.add_argument("--data_dir",    type=str,   default="./datasets")
-    parser.add_argument("--classes",     nargs="+",  default=["walk", "idle"])
+    parser.add_argument("--classes",     nargs="+",  default=config.TARGET_CLASSES)
     parser.add_argument("--window_size", type=int,   default=config.WINDOW_SIZE)
     parser.add_argument("--step",        type=int,   default=config.PIPELINE_STEP_SIZE)
     parser.add_argument("--fs",          type=float, default=config.SAMPLING_RATE)

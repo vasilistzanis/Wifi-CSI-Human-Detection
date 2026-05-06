@@ -173,8 +173,9 @@ def main():
                         help=f"Subcarrier index to visualize (default: {SUBCARRIER_IDX})")
     parser.add_argument("--segment-len", type=int, default=SEGMENT_LEN,
                         help=f"Signal segment length in frames (default: {SEGMENT_LEN})")
+    _aug_choices = sorted(set(config.TARGET_CLASSES) | {"walk", "idle", "sit", "fall"})
     parser.add_argument("--class-label", type=str, default="walk",
-                        choices=["walk", "idle", "fall", "sit"],
+                        choices=_aug_choices,
                         help="Activity class — controls class-aware aug constraints (default: walk)")
     args = parser.parse_args()
 

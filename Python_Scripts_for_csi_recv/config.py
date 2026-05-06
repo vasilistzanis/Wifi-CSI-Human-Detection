@@ -14,6 +14,8 @@ MAX_SUBCARRIERS = 128
 # ------------------------------------------------------------------------------
 # Shared ML defaults
 # ------------------------------------------------------------------------------
+TARGET_CLASSES = ["empty", "idle", "walk"]
+
 WINDOW_SIZE = 50
 PIPELINE_STEP_SIZE = 25
 PREDICTION_STEP_SIZE = 10

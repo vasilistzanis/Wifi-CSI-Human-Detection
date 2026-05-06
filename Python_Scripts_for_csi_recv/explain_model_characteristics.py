@@ -519,7 +519,7 @@ def parse_args():
                    help="Directory containing saved .joblib models")
     p.add_argument("--data_dir", type=str, default="./datasets",
                    help="Dataset directory")
-    p.add_argument("--classes", nargs="+", default=["walk", "idle"],
+    p.add_argument("--classes", nargs="+", default=config.TARGET_CLASSES,
                    help="Activity classes")
     p.add_argument("--top", type=int, default=15,
                    help="Number of top features to show (default: 15)")
