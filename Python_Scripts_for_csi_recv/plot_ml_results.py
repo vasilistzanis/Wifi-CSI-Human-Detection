@@ -4,15 +4,17 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import config
 
 from csi_parser import configure_console_output
 configure_console_output()
 
 
 def main():
+    defaults = config.get_script_defaults("plot_ml_results")
     parser = argparse.ArgumentParser(description="Plot ML metrics from metrics.json for Thesis")
-    parser.add_argument("--json_path", type=str, default="./models/metrics.json")
-    parser.add_argument("--out_dir", type=str, default="./models/plots")
+    parser.add_argument("--json_path", type=str, default=defaults["json_path"])
+    parser.add_argument("--out_dir", type=str, default=defaults["out_dir"])
     args = parser.parse_args()
 
 

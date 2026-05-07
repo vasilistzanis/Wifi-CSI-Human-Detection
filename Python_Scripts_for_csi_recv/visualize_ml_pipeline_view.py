@@ -483,29 +483,54 @@ def plot_feature_vector(
 # -----------------------------------------------------------------------
 
 def main():
+    defaults = config.get_script_defaults("visualize_ml_pipeline_view")
     parser = argparse.ArgumentParser(
         description="Visualize CSI ML pipeline using ACTUAL saved model transforms"
     )
-    parser.add_argument("--models-dir",  type=str, default="models",
+    parser.add_argument("--models-dir",  type=str, default=defaults["models_dir"],
                         help="Directory with saved .joblib files (default: models)")
-    parser.add_argument("--file", type=str, default=None,
+    parser.add_argument("--file", type=str, default=defaults["file"],
                         help="CSI data file to visualize (default: first test file from experiment_config.json)")
-    parser.add_argument("--start-frame", type=int, default=500,
+    parser.add_argument("--start-frame", type=int, default=defaults["start_frame"],
                         help="Frame index to start the analysis window (default: 500)")
-    parser.add_argument("--window-size", type=int, default=config.WINDOW_SIZE,
+    parser.add_argument("--window-size", type=int, default=defaults["window_size"],
                         help=f"Frames per window (default: {config.WINDOW_SIZE})")
-    parser.add_argument("--step",        type=int, default=config.PIPELINE_STEP_SIZE,
+    parser.add_argument("--step",        type=int, default=defaults["step"],
                         help=f"Sliding-window step for --compare (default: {config.PIPELINE_STEP_SIZE})")
-    parser.add_argument("--compare",     action="store_true",
-                        help="Overlay all classes in the trained PCA space")
-    parser.add_argument("--features",    action="store_true",
-                        help="Show extracted feature vector for the given file")
-    parser.add_argument("--save",        action="store_true",
-                        help="Save figures to --out-dir (default: models/plots/)")
-    parser.add_argument("--out-dir",     type=str, default=None,
+    config.add_bool_argument(
+        parser,
+        dest="compare",
+        default=defaults["compare"],
+        help="Overlay all classes in the trained PCA space",
+        positive_flags=["--compare"],
+        negative_flags=["--no-compare"],
+    )
+    config.add_bool_argument(
+        parser,
+        dest="features",
+        default=defaults["features"],
+        help="Show extracted feature vector for the given file",
+        positive_flags=["--features"],
+        negative_flags=["--no-features"],
+    )
+    config.add_bool_argument(
+        parser,
+        dest="save",
+        default=defaults["save"],
+        help="Save figures to --out-dir (default: models/plots/)",
+        positive_flags=["--save"],
+        negative_flags=["--no-save"],
+    )
+    parser.add_argument("--out-dir",     type=str, default=defaults["out_dir"],
                         help="Output directory for saved figures")
-    parser.add_argument("--no-show",     action="store_true",
-                        help="Do not open any plot windows")
+    config.add_bool_argument(
+        parser,
+        dest="show",
+        default=defaults["show"],
+        help="Open plot windows when possible.",
+        positive_flags=["--show"],
+        negative_flags=["--no-show"],
+    )
     args = parser.parse_args()
 
     models_dir = Path(args.models_dir)
@@ -518,7 +543,7 @@ def main():
     pipeline, le, cfg = load_artifacts(models_dir)
 
     # Resolve data directory from config or default
-    data_dir = Path(cfg["data_dir"]) if cfg else Path("datasets")
+    data_dir = Path(cfg["data_dir"]) if cfg else Path(config.DATASETS_DIR)
 
     # Resolve default data file
     if args.file:
@@ -547,7 +572,7 @@ def main():
         plot_compare_classes(
             pipeline, le, cfg, data_dir,
             args.window_size, args.step,
-            args.save, save_dir, args.no_show,
+            args.save, save_dir, not args.show,
         )
     elif args.features:
         if data_path is None or not data_path.exists():
@@ -556,7 +581,7 @@ def main():
         plot_feature_vector(
             pipeline, data_path,
             args.window_size, args.start_frame,
-            args.save, save_dir, args.no_show,
+            args.save, save_dir, not args.show,
         )
     else:
         if data_path is None or not data_path.exists():
@@ -566,7 +591,7 @@ def main():
         plot_pipeline_steps(
             pipeline, data_path,
             args.window_size, args.start_frame,
-            args.save, save_dir, args.no_show,
+            args.save, save_dir, not args.show,
         )
 
 

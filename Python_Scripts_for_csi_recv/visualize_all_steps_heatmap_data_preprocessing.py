@@ -67,28 +67,37 @@ except ImportError as e:
 
 
 def parse_args():
+    defaults = config.get_script_defaults("visualize_all_steps_heatmap_data_preprocessing")
     parser = argparse.ArgumentParser(
         description="CSI Step-by-Step Filter Visualization (Separate Windows)"
     )
     parser.add_argument(
-        "file", nargs="?", default=None,
+        "file", nargs="?", default=defaults["file"],
         help="TXT or CSV file (default: latest in datasets/)"
     )
-    parser.add_argument(
-        "--save", action="store_true",
-        help="Save output PNG next to the dataset file (Will save 7 files!)"
+    config.add_bool_argument(
+        parser,
+        dest="save",
+        default=defaults["save"],
+        help="Save output PNG next to the dataset file (Will save 7 files!)",
+        positive_flags=["--save"],
+        negative_flags=["--no-save"],
     )
     parser.add_argument(
-        "--pca-components", type=int, default=config.N_PCA_COMPONENTS,
+        "--pca-components", type=int, default=defaults["pca_components"],
         help=f"Number of PCA components (default: {config.N_PCA_COMPONENTS})"
     )
     parser.add_argument(
-        "--cutoff", type=float, default=10.0,
+        "--cutoff", type=float, default=defaults["cutoff"],
         help="Butterworth cutoff frequency in Hz (default: 10)"
     )
-    parser.add_argument(
-        "--no-diff", action="store_true",
-        help="Disable temporal difference step"
+    config.add_bool_argument(
+        parser,
+        dest="use_diff",
+        default=defaults["use_diff"],
+        help="Enable temporal difference step",
+        positive_flags=["--diff"],
+        negative_flags=["--no-diff"],
     )
     return parser.parse_args()
 
@@ -103,7 +112,7 @@ def main():
             print(f"[ERROR] File not found: {file_path}")
             sys.exit(1)
     else:
-        default_dir = resolve_path("datasets")
+        default_dir = resolve_path(config.DATASETS_DIR)
         if not default_dir.exists():
             print(f"[ERROR] Directory not found: {default_dir}")
             print("   Create a 'datasets/' directory or specify a file with: python script.py <file.txt>")
@@ -133,7 +142,7 @@ def main():
     # -- Pipeline step-by-step ---------------------------------------------
     pipeline = CSIPipeline(
         fs=config.SAMPLING_RATE,
-        use_diff=not args.no_diff,
+        use_diff=args.use_diff,
     )
 
     # Improved: Validate each step
@@ -178,7 +187,7 @@ def main():
     # -- Stats -------------------------------------------------------------
     active_count   = amp_step1.shape[1]
     null_count     = n_sub - active_count
-    diff_enabled   = not args.no_diff
+    diff_enabled   = args.use_diff
     print(f"\n[STATS] Pipeline results:")
     print(f"   [0] Raw:            {amp_step0.shape}")
     print(f"   [1] Null removed:   {amp_step1.shape} ({null_count} nulls)")

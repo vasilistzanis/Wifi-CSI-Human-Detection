@@ -27,16 +27,16 @@ configure_console_output()
 
 # Cross-platform defaults
 import config
-DEFAULT_PORT = config.SERIAL_PORT if os.name == "nt" else "/dev/ttyUSB0"
+DEFAULT_PORT = config.SERIAL_PORT
 
 
 # Mismatch causes garbled output and zero valid frames.
 DEFAULT_BAUD = config.BAUD_RATE
-DEFAULT_IDLE_SLEEP = 0.001
-DEFAULT_FLUSH_INTERVAL = 0.5
-DEFAULT_STATUS_INTERVAL = 0.25
+DEFAULT_IDLE_SLEEP = config.LOGGER_IDLE_SLEEP
+DEFAULT_FLUSH_INTERVAL = config.LOGGER_FLUSH_INTERVAL
+DEFAULT_STATUS_INTERVAL = config.LOGGER_STATUS_INTERVAL
 DEFAULT_SERIAL_BUFFER_SIZE = config.RX_BUFFER_SIZE
-MAX_FILE_SIZE_MB = 500  # Safety limit to prevent filling disk
+MAX_FILE_SIZE_MB = config.LOGGER_MAX_FILE_SIZE_MB  # Safety limit to prevent filling disk
 CSV_HEADER = (
     "type,seq,mac,rssi,rate,noise_floor,fft_gain,agc_gain,"
     "channel,local_timestamp,sig_len,rx_state,len,first_word,data\n"
@@ -49,56 +49,57 @@ BASE_DIR = Path(__file__).resolve().parent
 
 
 def parse_args():
+    defaults = config.get_script_defaults("csi_logger")
     parser = argparse.ArgumentParser(description="High-speed ESP32 CSI logger")
-    parser.add_argument("-p", "--port", default=DEFAULT_PORT, help="Serial port, e.g. COM6")
-    parser.add_argument("-b", "--baud", type=int, default=DEFAULT_BAUD, help="Baud rate")
-    parser.add_argument("-l", "--label", help="Dataset label. If omitted, you will be prompted.")
+    parser.add_argument("-p", "--port", default=defaults["port"], help="Serial port, e.g. COM6")
+    parser.add_argument("-b", "--baud", type=int, default=defaults["baud"], help="Baud rate")
+    parser.add_argument("-l", "--label", default=defaults["label"], help="Dataset label. If omitted, you will be prompted.")
     parser.add_argument(
         "-o",
         "--output-dir",
-        default="datasets",
+        default=defaults["output_dir"],
         help="Output directory. Relative paths are resolved from this script.",
     )
     parser.add_argument(
         "--idle-sleep",
         type=float,
-        default=DEFAULT_IDLE_SLEEP,
+        default=defaults["idle_sleep"],
         help="Sleep time when the serial buffer is empty.",
     )
     parser.add_argument(
         "--flush-interval",
         type=float,
-        default=DEFAULT_FLUSH_INTERVAL,
+        default=defaults["flush_interval"],
         help="Seconds between file flushes.",
     )
     parser.add_argument(
         "--status-interval",
         type=float,
-        default=DEFAULT_STATUS_INTERVAL,
+        default=defaults["status_interval"],
         help="Seconds between progress updates.",
     )
     parser.add_argument(
         "--serial-buffer-size",
         type=int,
-        default=DEFAULT_SERIAL_BUFFER_SIZE,
+        default=defaults["serial_buffer_size"],
         help="Windows RX buffer size in bytes.",
     )
     parser.add_argument(
         "--max-size-mb",
         type=int,
-        default=MAX_FILE_SIZE_MB,
+        default=defaults["max_size_mb"],
         help="Maximum file size in MB (safety limit).",
     )
     parser.add_argument(
         "-w", "--wait",
         type=int,
-        default=5,
+        default=defaults["wait"],
         help="Countdown in seconds before recording starts. Set to 0 to disable. (default: 5)",
     )
     parser.add_argument(
         "-d", "--duration",
         type=int,
-        default=0,
+        default=defaults["duration"],
         help="Auto-stop recording after N seconds. Set to 0 to record continuously until Ctrl+C. (default: 0)",
     )
     return parser.parse_args()

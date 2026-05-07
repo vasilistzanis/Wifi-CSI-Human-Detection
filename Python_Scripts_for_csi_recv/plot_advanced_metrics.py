@@ -645,27 +645,46 @@ def plot_roc_curves(
 # -----------------------------------------------------------------------
 
 def main():
+    defaults = config.get_script_defaults("plot_advanced_metrics")
     parser = argparse.ArgumentParser(
         description="Advanced ML metrics plots for CSI HAR thesis"
     )
     parser.add_argument("--json-path",   type=str,
-                        default="./models/metrics.json")
-    parser.add_argument("--models-dir",  type=str, default="./models")
-    parser.add_argument("--out-dir",     type=str, default=None)
+                        default=defaults["json_path"])
+    parser.add_argument("--models-dir",  type=str, default=defaults["models_dir"])
+    parser.add_argument("--out-dir",     type=str, default=defaults["out_dir"])
     parser.add_argument("--window-size", type=int,
-                        default=config.WINDOW_SIZE)
+                        default=defaults["window_size"])
     parser.add_argument("--step",        type=int,
-                        default=config.PIPELINE_STEP_SIZE)
+                        default=defaults["step"])
     parser.add_argument("--model",       nargs="+",
-                        default=["all"],
+                        default=defaults["model"],
                         help="Models for ROC: rf svm et knn lr gb mlp nb  "
                              "(default: all)")
-    parser.add_argument("--no-roc",      action="store_true",
-                        help="Skip ROC curves (fast mode, no model loading)")
-    parser.add_argument("--save",        action="store_true",
-                        help="Save all figures as PNG (300 DPI)")
-    parser.add_argument("--no-show",     action="store_true",
-                        help="Do not open plot windows (headless mode)")
+    config.add_bool_argument(
+        parser,
+        dest="roc",
+        default=defaults["roc"],
+        help="Generate ROC curves (disabling this skips model loading).",
+        positive_flags=["--roc"],
+        negative_flags=["--no-roc"],
+    )
+    config.add_bool_argument(
+        parser,
+        dest="save",
+        default=defaults["save"],
+        help="Save all figures as PNG (300 DPI)",
+        positive_flags=["--save"],
+        negative_flags=["--no-save"],
+    )
+    config.add_bool_argument(
+        parser,
+        dest="show",
+        default=defaults["show"],
+        help="Open plot windows when a GUI backend is available.",
+        positive_flags=["--show"],
+        negative_flags=["--no-show"],
+    )
     args = parser.parse_args()
 
     models_dir = Path(args.models_dir)
@@ -679,10 +698,10 @@ def main():
     metrics = _load_metrics(json_path)
     cfg     = _load_cfg(models_dir)
 
-    data_dir_str = cfg.get("data_dir", "./datasets")
+    data_dir_str = cfg.get("data_dir", config.DATASETS_DIR)
     data_dir     = Path(data_dir_str)
     if not data_dir.exists():
-        data_dir = Path("./datasets")
+        data_dir = Path(config.DATASETS_DIR)
 
     print(f"  Models   : {list(metrics.keys())}")
     print(f"  Classes  : {cfg.get('classes', '?')}")
@@ -694,19 +713,19 @@ def main():
     print("[PLOT 1] Class Distribution")
     plot_class_distribution(
         cfg, data_dir, args.window_size, args.step,
-        args.save, save_dir, args.no_show,
+        args.save, save_dir, not args.show,
     )
 
     # -- 2. CV Fold Scores --------------------------------------------
     print("[PLOT 2] CV Fold Scores")
-    plot_cv_fold_scores(metrics, args.save, save_dir, args.no_show)
+    plot_cv_fold_scores(metrics, args.save, save_dir, not args.show)
 
     # -- 3. Train / CV / Test Gap ------------------------------------
     print("[PLOT 3] Train / CV / Test Gap")
-    plot_train_cv_test_gap(metrics, args.save, save_dir, args.no_show)
+    plot_train_cv_test_gap(metrics, args.save, save_dir, not args.show)
 
     # -- 4. ROC Curves -----------------------------------------------
-    if args.no_roc:
+    if not args.roc:
         print("[SKIP] ROC curves (--no-roc flag set)")
     else:
         print("[PLOT 4] ROC Curves")
@@ -714,7 +733,7 @@ def main():
             metrics, models_dir, data_dir, cfg,
             args.window_size, args.step,
             args.model,
-            args.save, save_dir, args.no_show,
+            args.save, save_dir, not args.show,
         )
 
     print("\n[DONE] All plots generated.")

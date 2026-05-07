@@ -38,44 +38,45 @@ DEFAULT_BAUD = config.BAUD_RATE
 DEFAULT_BUFFER_SIZE = config.LIVE_DATA_BUFFER_SIZE
 DEFAULT_SUBCARRIERS = config.LIVE_DATA_SUBCARRIERS
 DEFAULT_REFRESH_MS = config.LIVE_DATA_REFRESH_MS
-DEFAULT_SERIAL_TIMEOUT = 0.25
+DEFAULT_SERIAL_TIMEOUT = config.LIVE_DATA_SERIAL_TIMEOUT
 DEFAULT_SERIAL_BUFFER_SIZE = config.RX_BUFFER_SIZE
 
 
 
 
 def parse_args():
+    defaults = config.get_script_defaults("live_data_visualization")
     parser = argparse.ArgumentParser(description="Live CSI viewer for ESP32 CSI frames")
-    parser.add_argument("-p", "--port", default=config.SERIAL_PORT, help="Serial port, e.g. COM6")
-    parser.add_argument("-b", "--baud", type=int, default=DEFAULT_BAUD, help="Baud rate")
+    parser.add_argument("-p", "--port", default=defaults["port"], help="Serial port, e.g. COM6")
+    parser.add_argument("-b", "--baud", type=int, default=defaults["baud"], help="Baud rate")
     parser.add_argument(
         "--buffer-size",
         type=int,
-        default=DEFAULT_BUFFER_SIZE,
+        default=defaults["buffer_size"],
         help="Number of frames kept in the circular buffer.",
     )
     parser.add_argument(
         "--subcarriers",
         type=int,
-        default=DEFAULT_SUBCARRIERS,
+        default=defaults["subcarriers"],
         help="Expected number of complex subcarriers per CSI frame.",
     )
     parser.add_argument(
         "--refresh-ms",
         type=int,
-        default=DEFAULT_REFRESH_MS,
+        default=defaults["refresh_ms"],
         help="UI refresh interval in milliseconds.",
     )
     parser.add_argument(
         "--serial-timeout",
         type=float,
-        default=DEFAULT_SERIAL_TIMEOUT,
+        default=defaults["serial_timeout"],
         help="Serial readline timeout in seconds.",
     )
     parser.add_argument(
         "--serial-buffer-size",
         type=int,
-        default=DEFAULT_SERIAL_BUFFER_SIZE,
+        default=defaults["serial_buffer_size"],
         help="Windows RX buffer size in bytes.",
     )
     return parser.parse_args()

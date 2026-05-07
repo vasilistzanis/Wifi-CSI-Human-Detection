@@ -512,7 +512,7 @@ def plot_motion_analysis(complex_matrix, fs, title_base, save_dir, save,
 
 def run_compare(class_names, fs, save_dir, save, fft_max, rolling_window):
     """Generate all 7 plots for each class for side-by-side comparison."""
-    datasets_root = resolve_path("datasets")
+    datasets_root = resolve_path(config.DATASETS_DIR)
 
     for class_name in class_names:
         class_path = datasets_root / class_name
@@ -557,22 +557,30 @@ def run_compare(class_names, fs, save_dir, save, fft_max, rolling_window):
 # ========================================================================
 
 def parse_args():
+    defaults = config.get_script_defaults("all_plot_figures")
     p = argparse.ArgumentParser(
         description="CSI Thesis Figures - 7 Publication-Ready Plots"
     )
-    p.add_argument("file", nargs="?", default=None,
+    p.add_argument("file", nargs="?", default=defaults["file"],
                    help="Dataset .txt or .csv (default: latest in datasets/)")
-    p.add_argument("--save", action="store_true",
-                   help="Save all figures as PNG (300 DPI)")
+    config.add_bool_argument(
+        p,
+        dest="save",
+        default=defaults["save"],
+        help="Save all figures as PNG (300 DPI)",
+        positive_flags=["--save"],
+        negative_flags=["--no-save"],
+    )
     p.add_argument("--compare", nargs="+", metavar="CLASS",
+                   default=defaults["compare"],
                    help="Compare multiple classes (e.g. --compare walk idle)")
-    p.add_argument("--fs", type=float, default=config.SAMPLING_RATE,
+    p.add_argument("--fs", type=float, default=defaults["fs"],
                    help="Sampling frequency in Hz (default: 100)")
-    p.add_argument("--fft-max", type=float, default=25.0,
+    p.add_argument("--fft-max", type=float, default=defaults["fft_max"],
                    help="Max frequency (Hz) to show in FFT/Spectrogram (default: 25)")
-    p.add_argument("--rolling-window", type=int, default=50,
+    p.add_argument("--rolling-window", type=int, default=defaults["rolling_window"],
                    help="Window for smoothing variance/energy plots")
-    p.add_argument("--out_dir", default=None,
+    p.add_argument("--out_dir", default=defaults["out_dir"],
                    help="Output directory for saved figures (default: next to dataset)")
     return p.parse_args()
 
@@ -582,7 +590,7 @@ def main():
 
     # -- Compare Mode --------------------------------------------------
     if args.compare:
-        save_dir = Path(args.out_dir) if args.out_dir else resolve_path("datasets") / "compare_plots"
+        save_dir = Path(args.out_dir) if args.out_dir else resolve_path(config.DATASETS_DIR) / "compare_plots"
         run_compare(args.compare, args.fs, save_dir, args.save, args.fft_max, args.rolling_window)
         
         print(f"\n{'=' * 55}")
@@ -601,7 +609,7 @@ def main():
         if not file_path.exists():
             file_path = resolve_path(args.file)
     else:
-        datasets_dir = resolve_path("datasets")
+        datasets_dir = resolve_path(config.DATASETS_DIR)
         file_path = get_latest_dataset(datasets_dir)
 
     if file_path is None or not file_path.exists():

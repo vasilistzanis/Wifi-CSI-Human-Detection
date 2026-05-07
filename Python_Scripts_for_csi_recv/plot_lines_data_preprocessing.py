@@ -89,35 +89,44 @@ except ImportError as e:
 
 
 def parse_args():
+    defaults = config.get_script_defaults("plot_lines_data_preprocessing")
     p = argparse.ArgumentParser(
         description="CSI Line Plotter - Thesis / Paper Grade (7 Separate Windows)"
     )
     p.add_argument(
-        "file", nargs="?", default=None,
+        "file", nargs="?", default=defaults["file"],
         help="TXT or CSV file (default: latest in datasets/)"
     )
-    p.add_argument(
-        "--save", action="store_true",
-        help="Save figures as PNG next to the dataset file (creates 7 files)"
+    config.add_bool_argument(
+        p,
+        dest="save",
+        default=defaults["save"],
+        help="Save figures as PNG next to the dataset file (creates 7 files)",
+        positive_flags=["--save"],
+        negative_flags=["--no-save"],
     )
     p.add_argument(
-        "--n-subcarriers", type=int, default=config.MAX_SUBCARRIERS,
+        "--n-subcarriers", type=int, default=defaults["n_subcarriers"],
         help=f"Number of subcarriers to overlay (default: {config.MAX_SUBCARRIERS})"
     )
     p.add_argument(
-        "--pca-components", type=int, default=config.N_PCA_COMPONENTS,
+        "--pca-components", type=int, default=defaults["pca_components"],
         help=f"Number of PCA components to show (default: {config.N_PCA_COMPONENTS})"
     )
     p.add_argument(
-        "--cutoff", type=float, default=10.0,
+        "--cutoff", type=float, default=defaults["cutoff"],
         help="Butterworth cutoff in Hz (default: 10)"
     )
-    p.add_argument(
-        "--no-diff", action="store_true",
-        help="Disable temporal difference"
+    config.add_bool_argument(
+        p,
+        dest="use_diff",
+        default=defaults["use_diff"],
+        help="Enable temporal difference",
+        positive_flags=["--diff"],
+        negative_flags=["--no-diff"],
     )
     p.add_argument(
-        "--fs", type=float, default=config.SAMPLING_RATE,
+        "--fs", type=float, default=defaults["fs"],
         help=f"Sampling frequency in Hz (default: {config.SAMPLING_RATE})"
     )
     return p.parse_args()
@@ -188,7 +197,7 @@ def main():
             print(f"[ERROR] File not found: {file_path}")
             sys.exit(1)
     else:
-        default_dir = resolve_path("datasets")
+        default_dir = resolve_path(config.DATASETS_DIR)
         if not default_dir.exists():
             print(f"[ERROR] datasets/ directory not found - pass a file explicitly")
             print("   Use: python plot_lines_data_preprocessing.py <file.txt>")
@@ -222,7 +231,7 @@ def main():
     # -- Pipeline - step by step (mirrors CSIPipeline.fit_transform) -------
     pipeline = CSIPipeline(
         fs=args.fs,
-        use_diff=not args.no_diff,
+        use_diff=args.use_diff,
     )
 
 
@@ -251,7 +260,7 @@ def main():
 
         # [4] Temporal difference
         amp_step4 = pipeline.apply_temporal_diff(amp_step3)
-        diff_enabled = not args.no_diff
+        diff_enabled = args.use_diff
 
 
         # [5] PCA

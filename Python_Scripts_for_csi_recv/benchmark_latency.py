@@ -25,6 +25,7 @@ from pathlib import Path
 
 import json
 import joblib
+import config
 
 from csi_parser import configure_console_output
 configure_console_output()
@@ -158,24 +159,38 @@ def plot_comparison(df_comp, output_path):
 
 
 def main():
-    import config
+    defaults = config.get_script_defaults("benchmark_latency")
     parser = argparse.ArgumentParser(description="Multi-Model CSI Latency Benchmark")
-    parser.add_argument('--simulate', action='store_true', help="Use synthetic data")
-    parser.add_argument('--save', action='store_true', help="Save results (CSV and Plot)")
-    parser.add_argument('--output-csv', type=str, default="models/multi_model_latency.csv")
-    parser.add_argument('--output-plot', type=str, default="models/plots/Latency_Comparison.png")
-    parser.add_argument('--models-dir', type=str, default="models",
+    config.add_bool_argument(
+        parser,
+        dest="simulate",
+        default=defaults["simulate"],
+        help="Use synthetic data",
+        positive_flags=["--simulate"],
+        negative_flags=["--no-simulate"],
+    )
+    config.add_bool_argument(
+        parser,
+        dest="save",
+        default=defaults["save"],
+        help="Save results (CSV and Plot)",
+        positive_flags=["--save"],
+        negative_flags=["--no-save"],
+    )
+    parser.add_argument('--output-csv', type=str, default=defaults["output_csv"])
+    parser.add_argument('--output-plot', type=str, default=defaults["output_plot"])
+    parser.add_argument('--models-dir', type=str, default=defaults["models_dir"],
                         help="Directory containing saved .joblib model files (default: models)")
-    parser.add_argument('--pca', type=int, default=config.N_PCA_COMPONENTS, help="Number of PCA components (default: 10)")
-    parser.add_argument('--file', type=str, default="datasets/walk/walk_01.txt",
+    parser.add_argument('--pca', type=int, default=defaults["pca"], help="Number of PCA components (default: 10)")
+    parser.add_argument('--file', type=str, default=defaults["file"],
                         help="Path to real CSI data file (default: datasets/walk/walk_01.txt)")
-    parser.add_argument('--start-frame', type=int, default=500,
+    parser.add_argument('--start-frame', type=int, default=defaults["start_frame"],
                         help="Start frame index for benchmarking (default: 500)")
-    parser.add_argument('--window-size', type=int, default=config.WINDOW_SIZE,
+    parser.add_argument('--window-size', type=int, default=defaults["window_size"],
                         help="Number of frames per inference window (default: 50)")
-    parser.add_argument('--n_warmup', type=int, default=10, help="Warm-up runs (default: 10)")
-    parser.add_argument('--n_benchmark', type=int, default=50, help="Benchmark runs (default: 50)")
-    parser.add_argument('--seed', type=int, default=config.RANDOM_SEED, help="Random seed (default: 42)")
+    parser.add_argument('--n_warmup', type=int, default=defaults["n_warmup"], help="Warm-up runs (default: 10)")
+    parser.add_argument('--n_benchmark', type=int, default=defaults["n_benchmark"], help="Benchmark runs (default: 50)")
+    parser.add_argument('--seed', type=int, default=defaults["seed"], help="Random seed (default: 42)")
     args = parser.parse_args()
 
 

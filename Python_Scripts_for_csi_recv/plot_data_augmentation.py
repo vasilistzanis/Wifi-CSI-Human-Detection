@@ -39,9 +39,9 @@ except ImportError:
 import config
 
 RANDOM_SEED    = config.RANDOM_SEED
-MIN_FRAMES     = 200
+MIN_FRAMES     = config.PLOT_DATA_AUGMENTATION_MIN_FRAMES
 SEGMENT_LEN    = config.WINDOW_SIZE
-SUBCARRIER_IDX = 30
+SUBCARRIER_IDX = config.PLOT_DATA_AUGMENTATION_SUBCARRIER
 
 # -----------------------------------------------------------------------
 # Parameter annotation strings — mirrors the logic in the _aug_* functions
@@ -154,27 +154,46 @@ def _load_real(data_path: Path,
 # -----------------------------------------------------------------------
 
 def main():
+    defaults = config.get_script_defaults("plot_data_augmentation")
     parser = argparse.ArgumentParser(
         description="Visualize the exact augmentation techniques used during training"
     )
-    parser.add_argument("--simulate", action="store_true",
-                        help="Use synthetic data instead of real")
-    parser.add_argument("--save", action="store_true",
-                        help="Save the plot as PNG (300 DPI)")
-    parser.add_argument("--output-dir", type=str, default="models/plots",
+    config.add_bool_argument(
+        parser,
+        dest="simulate",
+        default=defaults["simulate"],
+        help="Use synthetic data instead of real",
+        positive_flags=["--simulate"],
+        negative_flags=["--no-simulate"],
+    )
+    config.add_bool_argument(
+        parser,
+        dest="save",
+        default=defaults["save"],
+        help="Save the plot as PNG (300 DPI)",
+        positive_flags=["--save"],
+        negative_flags=["--no-save"],
+    )
+    parser.add_argument("--output-dir", type=str, default=defaults["output_dir"],
                         help="Directory to save plots (default: models/plots)")
-    parser.add_argument("--no-show", action="store_true",
-                        help="Do not open a plot window")
-    parser.add_argument("--min-frames", type=int, default=MIN_FRAMES,
+    config.add_bool_argument(
+        parser,
+        dest="show",
+        default=defaults["show"],
+        help="Open a plot window when possible.",
+        positive_flags=["--show"],
+        negative_flags=["--no-show"],
+    )
+    parser.add_argument("--min-frames", type=int, default=defaults["min_frames"],
                         help=f"Minimum frames required (default: {MIN_FRAMES})")
-    parser.add_argument("--file", type=str, default="datasets/walk/walk_01.txt",
+    parser.add_argument("--file", type=str, default=defaults["file"],
                         help="Path to real CSI data file")
-    parser.add_argument("--subcarrier", type=int, default=SUBCARRIER_IDX,
+    parser.add_argument("--subcarrier", type=int, default=defaults["subcarrier"],
                         help=f"Subcarrier index to visualize (default: {SUBCARRIER_IDX})")
-    parser.add_argument("--segment-len", type=int, default=SEGMENT_LEN,
+    parser.add_argument("--segment-len", type=int, default=defaults["segment_len"],
                         help=f"Signal segment length in frames (default: {SEGMENT_LEN})")
-    _aug_choices = sorted(set(config.TARGET_CLASSES) | {"walk", "idle", "sit", "fall"})
-    parser.add_argument("--class-label", type=str, default="walk",
+    _aug_choices = sorted(set(config.get_known_training_classes()))
+    parser.add_argument("--class-label", type=str, default=defaults["class_label"],
                         choices=_aug_choices,
                         help="Activity class — controls class-aware aug constraints (default: walk)")
     args = parser.parse_args()
@@ -271,7 +290,7 @@ def main():
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         print(f"[SAVE] → {save_path}")
 
-    if not args.no_show:
+    if args.show:
         plt.show()
 
     plt.close(fig)

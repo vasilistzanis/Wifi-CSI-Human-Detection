@@ -63,14 +63,14 @@ except ImportError:
 # --- Defaults -----------------------------------------------------------------
 import config
 _IS_WIN        = os.name == "nt"
-DEFAULT_PORT   = config.SERIAL_PORT if _IS_WIN else "/dev/ttyUSB0"
+DEFAULT_PORT   = config.SERIAL_PORT
 DEFAULT_BAUD   = config.BAUD_RATE
 WINDOW_SIZE    = config.WINDOW_SIZE          # frames per inference window (must match training)
 STEP           = config.PREDICTION_STEP_SIZE  # predict every N new frames (lower = more frequent)
 FILTER_WARMUP  = config.FILTER_WARMUP         # extra frames for Butterworth edge context
 SERIAL_BUF_MB  = config.RX_BUFFER_SIZE
 # Rolling FPS window: measure rate over the last N frames
-FPS_WINDOW     = 60
+FPS_WINDOW     = config.LIVE_PREDICT_FPS_WINDOW
 
 
 # --- ANSI helpers -------------------------------------------------------------
@@ -121,36 +121,49 @@ def _bar(value: float, width: int = 20) -> str:
 
 # --- Argument parsing ---------------------------------------------------------
 def parse_args() -> argparse.Namespace:
+    defaults = config.get_script_defaults("live_predict")
     p = argparse.ArgumentParser(
         description="ESP32 CSI - Live HAR Prediction",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("-p", "--port",       default=DEFAULT_PORT,
+    p.add_argument("-p", "--port",       default=defaults["port"],
                    help="Serial port (e.g. COM6). Optional for --demo.")
-    p.add_argument("-b", "--baud",       type=int, default=DEFAULT_BAUD,
+    p.add_argument("-b", "--baud",       type=int, default=defaults["baud"],
                    help="Baud rate")
-    p.add_argument("--models_dir",       default="./models",
+    p.add_argument("--models_dir",       default=defaults["models_dir"],
                    help="Directory containing joblib model files")
-    p.add_argument("--model",            default="rf", 
-                   choices=["rf", "svm", "et", "knn", "lr", "gb", "mlp", "nb"],
+    p.add_argument("--model",            default=defaults["model"], 
+                   choices=config.MODEL_KEYS,
                    help="Which classifier to load (rf, svm, et, knn, lr, gb, mlp, nb)")
-    p.add_argument("--window",           type=int, default=WINDOW_SIZE,
+    p.add_argument("--window",           type=int, default=defaults["window"],
                    help="Frames per inference window (must match training)")
-    p.add_argument("--step",             type=int, default=STEP,
+    p.add_argument("--step",             type=int, default=defaults["step"],
                    help="Run inference every N new frames")
-    p.add_argument("--history",          type=int, default=3,
+    p.add_argument("--history",          type=int, default=defaults["history"],
                    help="Smoothing: majority vote over last N raw predictions")
-    p.add_argument("--verbose", "-v",    action="store_true",
-                   help="Show per-class probability breakdown each prediction")
-    p.add_argument("--no-color",         action="store_true",
-                   help="Disable ANSI colors (useful for logging to file)")
-    p.add_argument("--fps-window",       type=int, default=FPS_WINDOW,
+    config.add_bool_argument(
+        p,
+        dest="verbose",
+        default=defaults["verbose"],
+        help="Show per-class probability breakdown each prediction",
+        positive_flags=["--verbose", "-v"],
+        negative_flags=["--no-verbose"],
+    )
+    config.add_bool_argument(
+        p,
+        dest="color",
+        default=defaults["color"],
+        help="Enable ANSI colors in terminal output.",
+        positive_flags=["--color"],
+        negative_flags=["--no-color"],
+    )
+    p.add_argument("--fps-window",       type=int, default=defaults["fps_window"],
                    help="Rolling FPS window: measure rate over the last N frames")
-    p.add_argument("--warmup",           type=int, default=FILTER_WARMUP,
+    p.add_argument("--warmup",           type=int, default=defaults["warmup"],
                    help="Extra frames kept for filter warmup context")
-    p.add_argument("--rx-buf",           type=int, default=SERIAL_BUF_MB,
+    p.add_argument("--rx-buf",           type=int, default=defaults["rx_buf"],
                    help="Serial RX buffer size in bytes")
-    p.add_argument("--cutoff",           type=float, default=10.0,
+    p.add_argument("--cutoff",           type=float, default=defaults["cutoff"],
                    help="Butterworth filter cutoff frequency (Hz)")
     return p.parse_args()
 
@@ -387,7 +400,7 @@ def main() -> int:
     args = parse_args()
 
     # -- Color setup ------------------------------------------------------
-    if args.no_color or not sys.stdout.isatty():
+    if not args.color or not sys.stdout.isatty():
         _USE_COLOR = False
     elif _IS_WIN:
         _USE_COLOR = _enable_win_ansi()

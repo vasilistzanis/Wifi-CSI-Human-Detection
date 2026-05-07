@@ -115,7 +115,17 @@ def tri_lerp(t):
 class ReaderThread(threading.Thread):
 
 
-    def __init__(self, port, baud, demo, stop_event, window_size=WAVEFORM_LEN, max_sc=MAX_SC, rx_buffer_size=2_000_000, fs=100.0):
+    def __init__(
+        self,
+        port,
+        baud,
+        demo,
+        stop_event,
+        window_size=WAVEFORM_LEN,
+        max_sc=MAX_SC,
+        rx_buffer_size=config.RX_BUFFER_SIZE,
+        fs=config.SAMPLING_RATE,
+    ):
         super().__init__(daemon=True)
         self.port        = port
         self.baud        = baud
@@ -341,17 +351,25 @@ class WaveformMonitor(QWidget):
 
 
 def parse_args():
+    defaults = config.get_script_defaults("live_sensing_1")
     p = argparse.ArgumentParser()
-    p.add_argument("-p", "--port",      default=config.SERIAL_PORT, help="Serial port (e.g. COM6).")
-    p.add_argument("--baud",      type=int,   default=BAUD)
-    p.add_argument("--window",    type=int,   default=WAVEFORM_LEN)
-    p.add_argument("--refresh",   type=int,   default=REFRESH_MS)
-    p.add_argument("--threshold", type=float, default=MOTION_THRESHOLD)
-    p.add_argument("--smooth",    type=float, default=COLOR_SMOOTH)
-    p.add_argument("--max-sc",    type=int,   default=MAX_SC)
-    p.add_argument("--rx-buf",    type=int,   default=config.RX_BUFFER_SIZE, help="Windows RX buffer size")
-    p.add_argument("--demo",      action="store_true", help="Run with synthetic data")
-    p.add_argument("--fs",        type=float, default=config.SAMPLING_RATE, help="Expected sampling frequency (Hz)")
+    p.add_argument("-p", "--port",      default=defaults["port"], help="Serial port (e.g. COM6).")
+    p.add_argument("--baud",      type=int,   default=defaults["baud"])
+    p.add_argument("--window",    type=int,   default=defaults["window"])
+    p.add_argument("--refresh",   type=int,   default=defaults["refresh"])
+    p.add_argument("--threshold", type=float, default=defaults["threshold"])
+    p.add_argument("--smooth",    type=float, default=defaults["smooth"])
+    p.add_argument("--max-sc",    type=int,   default=defaults["max_sc"])
+    p.add_argument("--rx-buf",    type=int,   default=defaults["rx_buf"], help="Windows RX buffer size")
+    config.add_bool_argument(
+        p,
+        dest="demo",
+        default=defaults["demo"],
+        help="Run with synthetic data",
+        positive_flags=["--demo"],
+        negative_flags=["--no-demo"],
+    )
+    p.add_argument("--fs",        type=float, default=defaults["fs"], help="Expected sampling frequency (Hz)")
     return p.parse_args()
 
 

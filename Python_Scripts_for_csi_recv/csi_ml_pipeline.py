@@ -39,6 +39,7 @@ import argparse
 import numpy as np
 from pathlib import Path
 from collections import Counter
+import config
 
 
 from sklearn.svm import SVC
@@ -120,7 +121,7 @@ except ImportError:
 # ========================================================================
 
 
-ALL_AUGMENT_TECHNIQUES = ['noise', 'shift', 'scale', 'time_warp']
+ALL_AUGMENT_TECHNIQUES = list(config.AUGMENTATION_TECHNIQUES)
 
 
 
@@ -471,15 +472,15 @@ def build_dataset(
     data_dir: str | Path,
     classes: list[str],
     pipeline_kwargs: dict = None,
-    window_size: int = 50,
-    step: int = 25,
+    window_size: int = config.WINDOW_SIZE,
+    step: int = config.PIPELINE_STEP_SIZE,
     augment_techniques: list = None,
-    n_augments: int = 4,
+    n_augments: int = config.N_AUGMENTS,
     simulation_mode: bool = False,
-    test_recording_ratio: float = 0.2,
-    random_seed: int = 42,
-    n_pca: int = 10,
-    cutoff: float = 10.0,
+    test_recording_ratio: float = config.TEST_RATIO,
+    random_seed: int = config.RANDOM_SEED,
+    n_pca: int = config.N_PCA_COMPONENTS,
+    cutoff: float = config.FILTER_CUTOFF_HZ,
     train_files_override: dict | None = None,
     test_files_override: dict | None = None,
     pipeline_override = None,
@@ -511,7 +512,7 @@ def build_dataset(
       dataset_info : exact split / preprocessing metadata
     """
     if pipeline_kwargs is None:
-        pipeline_kwargs = {'fs': 100.0, 'use_diff': True}
+        pipeline_kwargs = {'fs': config.SAMPLING_RATE, 'use_diff': True}
 
 
     do_augment = bool(augment_techniques)  # empty list / None -> no augmentation
@@ -520,16 +521,35 @@ def build_dataset(
 
 
     data_dir = Path(data_dir)
-    classes = list(classes)
+    requested_classes = list(classes)
+    classes, class_dirs = config.resolve_training_classes(
+        requested_classes,
+        data_dir=data_dir,
+        require_existing=not (simulation_mode or CSIPipeline is None),
+    )
+
+    if label_encoder_override is not None:
+        encoder_classes = set(label_encoder_override.classes_)
+        skipped_encoder = [cls for cls in classes if cls not in encoder_classes]
+        for cls in skipped_encoder:
+            print(f"[WARNING] Training class '{cls}' is not present in the loaded label encoder - skipped.")
+        classes = [cls for cls in classes if cls in encoder_classes]
+
+    if not classes:
+        raise ValueError(
+            "No training classes remain after applying config enable/disable rules "
+            "and dataset-folder validation."
+        )
+
     if label_encoder_override is not None:
         le = label_encoder_override
-        classes = list(le.classes_)
     else:
         le = LabelEncoder()
         le.fit(classes)
 
     dataset_info = {
         'data_dir': str(data_dir.resolve()),
+        'requested_classes': list(requested_classes),
         'classes': list(classes),
         'pipeline_kwargs': dict(pipeline_kwargs),
         'window_size': int(window_size),
@@ -693,8 +713,9 @@ def build_dataset(
             )
     else:
         for cls in classes:
-            files = (sorted((data_dir/cls).glob("*.csv")) +
-                     sorted((data_dir/cls).glob("*.txt")))
+            class_dir = class_dirs.get(cls, data_dir / config.get_training_class_folder(cls))
+            files = (sorted(class_dir.glob("*.csv")) +
+                     sorted(class_dir.glob("*.txt")))
             if not files:
                 print(f"[WARNING]  No files found for class '{cls}'")
                 train_files_all[cls] = []
@@ -1256,7 +1277,7 @@ def train_and_evaluate(
 def save_models(results: dict,
                 pipeline,
                 le: LabelEncoder,
-                output_dir: str = "./models",
+                output_dir: str = config.MODELS_DIR,
                 experiment_config: dict | None = None) -> None:
     """
     Save everything needed for inference:
@@ -1332,48 +1353,78 @@ def save_models(results: dict,
 
 
 def main():
-    import config
+    defaults = config.get_script_defaults("csi_ml_pipeline")
     parser = argparse.ArgumentParser(description="CSI HAR - ML Pipeline")
-    parser.add_argument("--data_dir",    type=str,   default="./datasets")
-    parser.add_argument("--classes",     nargs="+",  default=config.TARGET_CLASSES)
-    parser.add_argument("--window_size", type=int,   default=config.WINDOW_SIZE)
-    parser.add_argument("--step",        type=int,   default=config.PIPELINE_STEP_SIZE)
-    parser.add_argument("--fs",          type=float, default=config.SAMPLING_RATE)
+    parser.add_argument("--data_dir",    type=str,   default=defaults["data_dir"])
+    parser.add_argument("--classes",     nargs="+",  default=defaults["classes"])
+    parser.add_argument("--window_size", type=int,   default=defaults["window_size"])
+    parser.add_argument("--step",        type=int,   default=defaults["step"])
+    parser.add_argument("--fs",          type=float, default=defaults["fs"])
     parser.add_argument(
         "--augment",
         nargs="+",
         metavar="TECHNIQUE",
-        default=ALL_AUGMENT_TECHNIQUES,
+        default=defaults["augment"],
         help=(
             "Augmentation techniques to apply on RAW windows (BEFORE PCA). "
             f"Choices: {ALL_AUGMENT_TECHNIQUES}. "
             "Default: all 4 techniques. "
             "Use '--augment noise scale' for a subset. "
-            "To disable completely use --no_augment."
+            "To disable completely use --no-augment."
         )
     )
-    parser.add_argument(
-        "--no_augment",
-        action="store_true",
-        help="Disable all data augmentation."
+    config.add_bool_argument(
+        parser,
+        dest="use_augment",
+        default=defaults["use_augment"],
+        help="Enable RAW-window data augmentation before PCA.",
+        positive_flags=["--use-augment"],
+        negative_flags=["--no-augment", "--no_augment"],
     )
-    parser.add_argument("--n_augments",  type=int,   default=4)
-    parser.add_argument("--pca",         type=int,   default=config.N_PCA_COMPONENTS)
-    parser.add_argument("--test_ratio",  type=float, default=0.2)
-    parser.add_argument("--no_diff",     action="store_true")
-    parser.add_argument("--simulate",    action="store_true")
-    parser.add_argument("--save_model",  action="store_true")
-    parser.add_argument("--tune",        action="store_true",
-                        help="Run GridSearchCV hyperparameter tuning")
-    parser.add_argument("--model", type=str, default=config.MODELS_TO_TRAIN,
-                        choices=["svm", "rf", "et", "knn", "lr", "gb", "mlp", "nb", "all"],
+    parser.add_argument("--n_augments",  type=int,   default=defaults["n_augments"])
+    parser.add_argument("--pca",         type=int,   default=defaults["pca"])
+    parser.add_argument("--test_ratio",  type=float, default=defaults["test_ratio"])
+    config.add_bool_argument(
+        parser,
+        dest="use_diff",
+        default=defaults["use_diff"],
+        help="Enable temporal differencing in preprocessing.",
+        positive_flags=["--diff"],
+        negative_flags=["--no-diff", "--no_diff"],
+    )
+    config.add_bool_argument(
+        parser,
+        dest="simulate",
+        default=defaults["simulate"],
+        help="Use synthetic data instead of real CSI recordings.",
+        positive_flags=["--simulate"],
+        negative_flags=["--no-simulate"],
+    )
+    config.add_bool_argument(
+        parser,
+        dest="save_model",
+        default=defaults["save_model"],
+        help="Save the fitted pipeline, label encoder, models, and metrics.",
+        positive_flags=["--save_model"],
+        negative_flags=["--no-save_model", "--no_save_model"],
+    )
+    config.add_bool_argument(
+        parser,
+        dest="tune",
+        default=defaults["tune"],
+        help="Run GridSearchCV hyperparameter tuning.",
+        positive_flags=["--tune"],
+        negative_flags=["--no-tune"],
+    )
+    parser.add_argument("--model", type=str, default=defaults["model"],
+                        choices=config.MODEL_CHOICES,
                         help="Specific model to train, or 'all'")
-    parser.add_argument("--seed",        type=int,   default=config.RANDOM_SEED)
-    parser.add_argument("--cv_folds",    type=int,   default=5,
+    parser.add_argument("--seed",        type=int,   default=defaults["seed"])
+    parser.add_argument("--cv_folds",    type=int,   default=defaults["cv_folds"],
                         help="Number of cross-validation folds (default: 5)")
-    parser.add_argument("--cutoff",      type=float, default=10.0,
+    parser.add_argument("--cutoff",      type=float, default=defaults["cutoff"],
                         help="Butterworth filter cutoff frequency in Hz (default: 10)")
-    parser.add_argument("--models_dir",  type=str,   default="./models",
+    parser.add_argument("--models_dir",  type=str,   default=defaults["models_dir"],
                         help="Directory to save/load model files (default: ./models)")
     args = parser.parse_args()
 
@@ -1385,7 +1436,7 @@ def main():
 
 
     # --no_augment disables everything; otherwise use the specified (or default) list
-    if args.no_augment:
+    if not args.use_augment:
         augment_techniques = []
     else:
         augment_techniques = args.augment  # list of 1+ techniques
@@ -1398,13 +1449,13 @@ def main():
 
     print("=" * 60)
     print(" CSI HAR - ML Pipeline")
-    print(f" Classes : {args.classes}")
+    print(f" Classes : requested={args.classes}")
     print(f" Data dir: {args.data_dir}")
     print(f" Window  : {args.window_size} frames @ {args.fs} Hz = "
           f"{args.window_size/args.fs:.2f}s")
     aug_label = ', '.join(augment_techniques) if augment_techniques else 'DISABLED'
     print(f" Augment : [{aug_label}] (x{args.n_augments}) | "
-          f"PCA: {args.pca} | Diff: {not args.no_diff}")
+          f"PCA: {args.pca} | Diff: {args.use_diff}")
     print(f" Tune    : {args.tune} | Seed: {args.seed}")
     print("=" * 60)
 
@@ -1414,7 +1465,7 @@ def main():
      train_groups_orig, le, pipeline, dataset_info) = build_dataset(
         data_dir=args.data_dir,
         classes=args.classes,
-        pipeline_kwargs={'fs': args.fs, 'use_diff': not args.no_diff},
+        pipeline_kwargs={'fs': args.fs, 'use_diff': args.use_diff},
         window_size=args.window_size,
         step=args.step,
         augment_techniques=augment_techniques,
@@ -1430,6 +1481,8 @@ def main():
     if X_train.shape[0] == 0:
         print("[ERROR] No samples - check data_dir and classes")
         sys.exit(1)
+
+    print(f" Effective classes: {dataset_info.get('classes', [])}")
 
 
     print(f"\n{'-'*60}\n Step 3: Model Training\n{'-'*60}")

@@ -27,6 +27,7 @@ import functools
 from pathlib import Path
 
 import numpy as np
+import config
 
 # -- Console safety --------------------------------------------------------
 from csi_parser import configure_console_output
@@ -508,35 +509,47 @@ def plot_per_class_importance(
 # ========================================================================
 
 def parse_args():
-    import config
+    defaults = config.get_script_defaults("explain_model_characteristics")
     p = argparse.ArgumentParser(
         description="XAI - Explain Model Feature Importance for CSI HAR"
     )
-    p.add_argument("--model", type=str, default="rf",
-                   choices=["svm", "rf", "et", "knn", "lr", "gb", "mlp", "nb", "all"],
+    p.add_argument("--model", type=str, default=defaults["model"],
+                   choices=config.MODEL_CHOICES,
                    help="Which model to explain (default: rf)")
-    p.add_argument("--models_dir", type=str, default="./models",
+    p.add_argument("--models_dir", type=str, default=defaults["models_dir"],
                    help="Directory containing saved .joblib models")
-    p.add_argument("--data_dir", type=str, default="./datasets",
+    p.add_argument("--data_dir", type=str, default=defaults["data_dir"],
                    help="Dataset directory")
-    p.add_argument("--classes", nargs="+", default=config.TARGET_CLASSES,
+    p.add_argument("--classes", nargs="+", default=defaults["classes"],
                    help="Activity classes")
-    p.add_argument("--top", type=int, default=15,
+    p.add_argument("--top", type=int, default=defaults["top"],
                    help="Number of top features to show (default: 15)")
-    p.add_argument("--repeats", type=int, default=config.XAI_N_REPEATS,
+    p.add_argument("--repeats", type=int, default=defaults["repeats"],
                    help="Permutation repeats (default: 10, more = slower but more stable)")
-    p.add_argument("--save", action="store_true",
-                   help="Save figures as PNG (300 DPI)")
-    p.add_argument("--out_dir", type=str, default=None,
+    config.add_bool_argument(
+        p,
+        dest="save",
+        default=defaults["save"],
+        help="Save figures as PNG (300 DPI)",
+        positive_flags=["--save"],
+        negative_flags=["--no-save"],
+    )
+    p.add_argument("--out_dir", type=str, default=defaults["out_dir"],
                    help="Output directory for saved figures (default: models/plots/)")
-    p.add_argument("--simulate", action="store_true",
-                   help="Use synthetic data (no real dataset needed)")
-    p.add_argument("--window_size", type=int, default=config.WINDOW_SIZE)
-    p.add_argument("--step", type=int, default=config.PIPELINE_STEP_SIZE)
-    p.add_argument("--pca", type=int, default=config.N_PCA_COMPONENTS)
-    p.add_argument("--fs", type=float, default=config.SAMPLING_RATE)
-    p.add_argument("--seed", type=int, default=config.RANDOM_SEED)
-    p.add_argument("--cutoff", type=float, default=10.0)
+    config.add_bool_argument(
+        p,
+        dest="simulate",
+        default=defaults["simulate"],
+        help="Use synthetic data (no real dataset needed)",
+        positive_flags=["--simulate"],
+        negative_flags=["--no-simulate"],
+    )
+    p.add_argument("--window_size", type=int, default=defaults["window_size"])
+    p.add_argument("--step", type=int, default=defaults["step"])
+    p.add_argument("--pca", type=int, default=defaults["pca"])
+    p.add_argument("--fs", type=float, default=defaults["fs"])
+    p.add_argument("--seed", type=int, default=defaults["seed"])
+    p.add_argument("--cutoff", type=float, default=defaults["cutoff"])
     return p.parse_args()
 
 
