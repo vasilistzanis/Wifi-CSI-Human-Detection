@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 
 
 import numpy as np
+# Force pyqtgraph to use PyQt5 to avoid conflict if PyQt6/PySide6 are also installed
+os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"
 import pyqtgraph as pg
 import serial
 from PyQt5 import QtCore
