@@ -15,6 +15,22 @@ def main():
     parser = argparse.ArgumentParser(description="Plot ML metrics from metrics.json for Thesis")
     parser.add_argument("--json_path", type=str, default=defaults["json_path"])
     parser.add_argument("--out_dir", type=str, default=defaults["out_dir"])
+    config.add_bool_argument(
+        parser,
+        dest="save",
+        default=defaults["save"],
+        help="Save plots as PNG",
+        positive_flags=["--save"],
+        negative_flags=["--no-save"],
+    )
+    config.add_bool_argument(
+        parser,
+        dest="show",
+        default=defaults["show"],
+        help="Show plots interactively",
+        positive_flags=["--show"],
+        negative_flags=["--no-show"],
+    )
     args = parser.parse_args()
 
 
@@ -33,7 +49,8 @@ def main():
         metrics = json.load(f)
 
 
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if args.save:
+        out_dir.mkdir(parents=True, exist_ok=True)
     
 
     # Define aesthetic settings for thesis (clean and professional)
@@ -83,11 +100,14 @@ def main():
         plt.tight_layout()
         
 
-        safe_name = model_name.replace(" ", "_").replace("(", "").replace(")", "")
-        img_path = out_dir / f"CM_{safe_name}.png"
-        plt.savefig(img_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        print(f"  [OK] Saved {img_path.name}")
+        if args.save:
+            safe_name = model_name.replace(" ", "_").replace("(", "").replace(")", "")
+            img_path = out_dir / f"CM_{safe_name}.png"
+            plt.savefig(img_path, dpi=300, bbox_inches='tight')
+            print(f"  [OK] Saved {img_path.name}")
+        
+        if not args.show:
+            plt.close()
         
 
         # ----------------------------------------------------
@@ -109,8 +129,7 @@ def main():
             plt.ylabel('Feature', fontweight='bold', fontsize=12)
             
 
-            # Add value labels to bars — zip truncates to the shorter list,
-            # guarding against extra ghost patches that seaborn >= 0.12 may add.
+            # Add value labels to bars
             for p, val in zip(ax.patches, vals):
                 if p.get_width() > 0:
                     ax.annotate(f"{val:.1f}%",
@@ -123,10 +142,13 @@ def main():
             plt.tight_layout()
             
 
-            feat_img_path = out_dir / f"Features_{safe_name}.png"
-            plt.savefig(feat_img_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            print(f"  [OK] Saved {feat_img_path.name}")
+            if args.save:
+                feat_img_path = out_dir / f"Features_{safe_name}.png"
+                plt.savefig(feat_img_path, dpi=300, bbox_inches='tight')
+                print(f"  [OK] Saved {feat_img_path.name}")
+            
+            if not args.show:
+                plt.close()
 
 
     # ----------------------------------------------------
@@ -163,13 +185,21 @@ def main():
 
 
         fig.tight_layout()
-        comp_path = out_dir / "Model_Comparison.png"
-        plt.savefig(comp_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        print(f"  [OK] Saved {comp_path.name}")
+        if args.save:
+            comp_path = out_dir / "Model_Comparison.png"
+            plt.savefig(comp_path, dpi=300, bbox_inches='tight')
+            print(f"  [OK] Saved {comp_path.name}")
+        
+        if not args.show:
+            plt.close()
 
 
-    print(f"\n[OK]  Plots saved in: {out_dir.absolute()}\n")
+    if args.save:
+        print(f"\n[OK]  Plots saved in: {out_dir.absolute()}\n")
+
+    if args.show:
+        print("[INFO] Showing plots. Close all windows to exit.")
+        plt.show()
 
 
 if __name__ == "__main__":

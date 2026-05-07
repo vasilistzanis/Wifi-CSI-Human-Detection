@@ -396,6 +396,8 @@ SCRIPT_DEFAULTS = {
     "plot_ml_results": {
         "json_path": METRICS_JSON_PATH,
         "out_dir": PLOT_ML_RESULTS_OUT_DIR,
+        "save": False,
+        "show": True,
     },
     "visualize_all_steps_heatmap_data_preprocessing": {
         "file": None,
