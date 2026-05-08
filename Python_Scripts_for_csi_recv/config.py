@@ -201,6 +201,15 @@ LIVE_SENSING_DEMO = False
 
 
 # ------------------------------------------------------------------------------
+# live_csi_dual_view.py defaults
+# ------------------------------------------------------------------------------
+LIVE_CDV_BUFFER_SIZE     = 200
+LIVE_CDV_REFRESH_MS      = 33
+LIVE_CDV_MAX_SUBCARRIERS = 128
+LIVE_CDV_DEMO            = False
+
+
+# ------------------------------------------------------------------------------
 # live_data_visualization.py defaults
 # ------------------------------------------------------------------------------
 LIVE_DATA_BUFFER_SIZE = 200
@@ -347,6 +356,15 @@ SCRIPT_DEFAULTS = {
         "fs": SAMPLING_RATE,
         "seed": RANDOM_SEED,
         "cutoff": FILTER_CUTOFF_HZ,
+    },
+    "live_csi_dual_view": {
+        "port":        SERIAL_PORT,
+        "baud":        BAUD_RATE,
+        "buffer_size": LIVE_CDV_BUFFER_SIZE,
+        "refresh_ms":  LIVE_CDV_REFRESH_MS,
+        "max_sc":      LIVE_CDV_MAX_SUBCARRIERS,
+        "rx_buf":      RX_BUFFER_SIZE,
+        "demo":        LIVE_CDV_DEMO,
     },
     "live_data_visualization": {
         "port": SERIAL_PORT,
