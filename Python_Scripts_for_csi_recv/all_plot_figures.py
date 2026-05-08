@@ -14,7 +14,6 @@ from pathlib import Path
 
 import numpy as np
 import config
-import matplotlib
 from scipy.signal import spectrogram, savgol_filter, stft
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import MaxNLocator
@@ -29,17 +28,8 @@ from csi_parser import (
 from data_preprocessing import CSIPipeline
 
 configure_console_output()
-
-try:
-    matplotlib.use("Qt5Agg")
-except Exception:
-    try:
-        matplotlib.use("TkAgg")
-    except Exception:
-        pass
-
+from plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
-plt.ioff()
 
 # ========================================================================
 # STYLE
@@ -87,18 +77,6 @@ def _save_fig(fig, save_dir: Path, name: str):
     fig.savefig(out, dpi=300, bbox_inches="tight", facecolor=STYLE["bg"])
     print(f"  [SAVE] {out.name}")
 
-def _move_window(fig):
-    """Force the window to open at a specific screen position to avoid stacking offsets."""
-    try:
-        manager = fig.canvas.manager
-        backend = matplotlib.get_backend()
-        if backend == 'TkAgg':
-            manager.window.wm_geometry("+50+50")
-        elif backend in ['Qt5Agg', 'QtAgg']:
-            manager.window.move(50, 50)
-    except Exception:
-        pass
-
 # ========================================================================
 # PREPROCESSING INTEGRATION
 # ========================================================================
@@ -131,8 +109,8 @@ def plot_amplitude_vs_time(complex_matrix, fs, title_base, save_dir, save):
     mean_amp = amp_clean.mean(axis=1)
     std_amp = amp_clean.std(axis=1)
 
-    fig, ax = plt.subplots(figsize=(14, 8))
-    _move_window(fig)
+    fig, ax = plt.subplots(figsize=config.ALL_PLOT_FIGURES_SIZE)
+
     ax.plot(t, mean_amp, color=STYLE["accent1"], linewidth=1.2, label="Mean Amplitude (Filtered)")
     ax.fill_between(t, mean_amp - std_amp, mean_amp + std_amp,
                     alpha=0.2, color=STYLE["accent1"], label="+/-1 sigma")
@@ -164,8 +142,8 @@ def plot_heatmap(complex_matrix, fs, title_base, save_dir, save):
     vmin = np.percentile(amp_clean, 2)
     vmax = np.percentile(amp_clean, 98)
 
-    fig, ax = plt.subplots(figsize=(14, 8))
-    _move_window(fig)
+    fig, ax = plt.subplots(figsize=config.ALL_PLOT_FIGURES_SIZE)
+
     extent = [0, n_frames / fs, 0, amp_clean.shape[1]]
     im = ax.imshow(amp_clean.T, aspect="auto", cmap="viridis",
                    interpolation="nearest", origin="lower",
@@ -191,8 +169,8 @@ def plot_subcarrier_profile(complex_matrix, fs, title_base, save_dir, save):
     std_amp = amp_clean.std(axis=0)
     median_amp = np.median(amp_clean, axis=0)
 
-    fig, ax = plt.subplots(figsize=(14, 8))
-    _move_window(fig)
+    fig, ax = plt.subplots(figsize=config.ALL_PLOT_FIGURES_SIZE)
+
     ax.plot(indices, mean_amp, color=STYLE["accent2"], linewidth=2.0,
             label="Mean", zorder=3)
     ax.fill_between(indices, mean_amp - std_amp, mean_amp + std_amp,
@@ -227,9 +205,9 @@ def plot_variance_energy(complex_matrix, fs, title_base, save_dir, save,
     energy_smooth = uniform_filter1d(energy, size=rolling_window, mode="nearest")
     variance_smooth = uniform_filter1d(variance, size=rolling_window, mode="nearest")
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), sharex=True,
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=config.ALL_PLOT_FIGURES_SIZE, sharex=True,
                                     gridspec_kw={"hspace": 0.2})
-    _move_window(fig)
+
 
     ax1.plot(t, energy, alpha=0.3, color=STYLE["accent4"], linewidth=0.5)
     ax1.plot(t, energy_smooth, color=STYLE["accent4"], linewidth=2.0,
@@ -261,9 +239,9 @@ def plot_fft_spectrogram(complex_matrix, fs, title_base, save_dir, save, f_max=2
 
     signal = mean_amp - mean_amp.mean()
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 8),
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=config.ALL_PLOT_FIGURES_SIZE,
                                     gridspec_kw={"width_ratios": [1, 1.5]})
-    _move_window(fig)
+
 
     if signal.size == 0:
         ax1.text(0.5, 0.5, "No frames available", ha="center", va="center",
@@ -342,9 +320,9 @@ def plot_phase_vs_time(complex_matrix, fs, title_base, save_dir, save):
     phase = np.angle(complex_matrix[:, mask])
     n_frames = phase.shape[0]
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8),
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=config.ALL_PLOT_FIGURES_SIZE,
                                     gridspec_kw={"hspace": 0.3})
-    _move_window(fig)
+
 
     extent = [0, n_frames / fs, 0, phase.shape[1]]
     im1 = ax1.imshow(phase.T, aspect="auto", cmap="hsv",
@@ -408,8 +386,8 @@ def plot_motion_analysis(complex_matrix, fs, title_base, save_dir, save,
     amp_norm = amp_centered / sigma
 
     # --- Figure ---
-    fig = plt.figure(figsize=(14, 8))
-    _move_window(fig)
+    fig = plt.figure(figsize=config.ALL_PLOT_FIGURES_SIZE)
+
     gs = GridSpec(3, 1, height_ratios=[1.2, 0.8, 1.2], hspace=0.45,
                   left=0.08, right=0.92, top=0.88, bottom=0.08)
 
@@ -586,6 +564,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    setup_matplotlib()
     _apply_style()
 
     # -- Compare Mode --------------------------------------------------
@@ -597,7 +576,7 @@ def main():
         print(f"  [OK] Showing all windows (close all to exit)")
         print(f"{'=' * 55}\n")
         try:
-            plt.show()
+            show_all()
         except Exception:
             pass
         plt.rcParams.update(plt.rcParamsDefault)
@@ -683,7 +662,7 @@ def main():
     print(f"{'=' * 55}\n")
 
     try:
-        plt.show()
+        show_all()
     except Exception:
         pass
 

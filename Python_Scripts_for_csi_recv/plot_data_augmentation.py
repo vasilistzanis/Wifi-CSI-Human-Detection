@@ -18,7 +18,6 @@ Usage
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import sys
@@ -37,6 +36,8 @@ except ImportError:
     sys.exit(1)
 
 import config
+from plot_window_utils import setup_matplotlib, show_figure
+import matplotlib.pyplot as plt
 
 RANDOM_SEED    = config.RANDOM_SEED
 MIN_FRAMES     = config.PLOT_DATA_AUGMENTATION_MIN_FRAMES
@@ -154,6 +155,7 @@ def _load_real(data_path: Path,
 # -----------------------------------------------------------------------
 
 def main():
+    setup_matplotlib()
     defaults = config.get_script_defaults("plot_data_augmentation")
     parser = argparse.ArgumentParser(
         description="Visualize the exact augmentation techniques used during training"
@@ -239,7 +241,7 @@ def main():
 
     # -- 3. Plot -------------------------------------------------------
     sns.set_theme(style="whitegrid")
-    fig, axes = plt.subplots(2, 3, figsize=(16, 7), sharey=True)
+    fig, axes = plt.subplots(2, 3, figsize=config.PLOT_DATA_AUGMENTATION_SIZE, sharey=True)
     axes_flat  = axes.flatten()
 
     fig.suptitle(
@@ -291,9 +293,9 @@ def main():
         print(f"[SAVE] → {save_path}")
 
     if args.show:
-        plt.show()
-
-    plt.close(fig)
+        show_figure(fig)
+    else:
+        plt.close(fig)
 
 
 if __name__ == "__main__":

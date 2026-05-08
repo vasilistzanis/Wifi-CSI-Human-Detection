@@ -158,6 +158,28 @@ def resolve_training_classes(
 TARGET_CLASSES = get_enabled_training_classes()
 
 
+# -------------------------------------------------------------------------
+# Window layout — uniform display size for all plot windows
+# -------------------------------------------------------------------------
+FIGURE_SIZE = (10.0, 7.0)    # (width_in, height_in) — matplotlib default
+FIGURE_DPI  = 100            # display dots-per-inch (save calls use dpi=300)
+
+QT_WINDOW_W = 800            # live Qt window width  (pixels)
+QT_WINDOW_H = 750            # live Qt window height (pixels)
+
+# Per-script overrides — change ONE line here to resize only that script.
+# All start equal to FIGURE_SIZE; scripts with many subplots can go larger.
+ALL_PLOT_FIGURES_SIZE          = FIGURE_SIZE
+BENCHMARK_FIGURE_SIZE          = FIGURE_SIZE
+EXPLAIN_FIGURE_SIZE            = FIGURE_SIZE
+PLOT_ADVANCED_METRICS_SIZE     = FIGURE_SIZE
+PLOT_DATA_AUGMENTATION_SIZE    = FIGURE_SIZE
+PLOT_LINES_PREPROCESSING_SIZE  = FIGURE_SIZE
+PLOT_ML_RESULTS_SIZE           = FIGURE_SIZE
+VISUALIZE_HEATMAP_SIZE         = FIGURE_SIZE
+VISUALIZE_ML_PIPELINE_SIZE     = FIGURE_SIZE
+
+
 # ------------------------------------------------------------------------------
 # live_dashboard.py defaults
 # ------------------------------------------------------------------------------

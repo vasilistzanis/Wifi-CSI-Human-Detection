@@ -28,19 +28,11 @@ import json
 from pathlib import Path
 
 import numpy as np
-import matplotlib
 
 from csi_parser import configure_console_output
 configure_console_output()
 
-try:
-    matplotlib.use("Qt5Agg")
-except Exception:
-    try:
-        matplotlib.use("TkAgg")
-    except Exception:
-        pass
-
+from plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
@@ -204,7 +196,7 @@ def plot_pipeline_steps(
     t_raw      = np.arange(window_size)
 
     _apply_style()
-    fig = plt.figure(figsize=(18, 14))
+    fig = plt.figure(figsize=config.VISUALIZE_ML_PIPELINE_SIZE)
     fig.patch.set_facecolor(STYLE["bg"])
 
     # 3-column, 3-row grid: panels 0-6 for pipeline steps, panel 7 for scree
@@ -300,7 +292,7 @@ def plot_pipeline_steps(
     if save:
         _save_fig(fig, save_dir, f"ml_pipeline_steps_{file_label}")
     if not no_show:
-        plt.show()
+        show_all(figs=[fig])
     plt.close(fig)
 
 
@@ -325,7 +317,7 @@ def plot_compare_classes(
     test_files = cfg.get("test_files", {})
 
     _apply_style()
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6.5))
+    fig, axes = plt.subplots(1, 2, figsize=config.VISUALIZE_ML_PIPELINE_SIZE)
     fig.patch.set_facecolor(STYLE["bg"])
 
     all_pc1, all_pc2 = [], []
@@ -405,7 +397,7 @@ def plot_compare_classes(
     if save:
         _save_fig(fig, save_dir, "ml_pipeline_compare_pca_space")
     if not no_show:
-        plt.show()
+        show_all(figs=[fig])
     plt.close(fig)
 
 
@@ -474,7 +466,7 @@ def plot_feature_vector(
     if save:
         _save_fig(fig, save_dir, f"ml_feature_vector_{data_path.stem}")
     if not no_show:
-        plt.show()
+        show_all(figs=[fig])
     plt.close(fig)
 
 
@@ -483,6 +475,7 @@ def plot_feature_vector(
 # -----------------------------------------------------------------------
 
 def main():
+    setup_matplotlib()
     defaults = config.get_script_defaults("visualize_ml_pipeline_view")
     parser = argparse.ArgumentParser(
         description="Visualize CSI ML pipeline using ACTUAL saved model transforms"

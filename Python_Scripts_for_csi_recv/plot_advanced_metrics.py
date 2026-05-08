@@ -31,19 +31,11 @@ import json
 from pathlib import Path
 
 import numpy as np
-import matplotlib
 
 from csi_parser import configure_console_output
 configure_console_output()
 
-try:
-    matplotlib.use("Qt5Agg")
-except Exception:
-    try:
-        matplotlib.use("TkAgg")
-    except Exception:
-        pass
-
+from plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
 
 try:
@@ -251,7 +243,7 @@ def plot_class_distribution(
     win_test  = [_win_count_for_files(test_files.get(c,  [])) for c in classes]
 
     _apply_style()
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=config.PLOT_ADVANCED_METRICS_SIZE)
     fig.patch.set_facecolor(STYLE["bg"])
 
     x     = np.arange(len(classes))
@@ -301,7 +293,7 @@ def plot_class_distribution(
     if save:
         _save_fig(fig, save_dir, "adv_01_class_distribution")
     if not no_show:
-        plt.show()
+        show_all(figs=[fig])
     plt.close(fig)
 
 
@@ -387,7 +379,7 @@ def plot_cv_fold_scores(
     if save:
         _save_fig(fig, save_dir, "adv_02_cv_fold_scores")
     if not no_show:
-        plt.show()
+        show_all(figs=[fig])
     plt.close(fig)
 
 
@@ -476,7 +468,7 @@ def plot_train_cv_test_gap(
     if save:
         _save_fig(fig, save_dir, "adv_03_train_cv_test_gap")
     if not no_show:
-        plt.show()
+        show_all(figs=[fig])
     plt.close(fig)
 
 
@@ -576,8 +568,9 @@ def plot_roc_curves(
             print(f"  [SKIP] {model_key}: score shape mismatch")
             continue
 
+        _h = config.PLOT_ADVANCED_METRICS_SIZE[1]
         fig, axes = plt.subplots(1, n_classes,
-                                  figsize=(5.5 * n_classes, 5.5))
+                                  figsize=(5.5 * n_classes, _h))
         fig.patch.set_facecolor(STYLE["bg"])
         if n_classes == 1:
             axes = [axes]
@@ -635,7 +628,7 @@ def plot_roc_curves(
             _save_fig(fig, save_dir,
                       f"adv_04_roc_{model_key}")
         if not no_show:
-            plt.show()
+            show_all(figs=[fig])
         plt.close(fig)
         print(f"  [ROC] {display_name}: mean AUC = {mean_auc:.3f}")
 
@@ -686,6 +679,7 @@ def main():
         negative_flags=["--no-show"],
     )
     args = parser.parse_args()
+    setup_matplotlib()
 
     models_dir = Path(args.models_dir)
     json_path  = Path(args.json_path)

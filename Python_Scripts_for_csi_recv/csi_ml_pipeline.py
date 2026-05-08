@@ -81,20 +81,6 @@ N_STATS = 14 + _DWT_STATS_PER_COMPONENT   # = 14
 
 
 try:
-    import pywt as _pywt
-    _PYWT_AVAILABLE = True
-except ImportError:
-    _pywt = None
-    _PYWT_AVAILABLE = False
-    if _DWT_STATS_PER_COMPONENT > 0:
-        warnings.warn(
-            "PyWavelets (pywt) not installed but _DWT_STATS_PER_COMPONENT > 0. "
-            "DWT features will not be computed. Install with: pip install PyWavelets",
-            RuntimeWarning, stacklevel=1,
-        )
-
-
-try:
     from sklearn.model_selection import StratifiedGroupKFold
 except ImportError:
     StratifiedGroupKFold = None

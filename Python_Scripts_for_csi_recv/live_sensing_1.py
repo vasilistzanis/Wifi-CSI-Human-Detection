@@ -57,6 +57,7 @@ except ImportError:
 
 
 import config
+from plot_window_utils import center_qt_window
 BAUD             = config.BAUD_RATE
 WAVEFORM_LEN     = config.LIVE_SENSING_WAVEFORM_LEN
 REFRESH_MS       = config.LIVE_SENSING_REFRESH_MS
@@ -240,7 +241,6 @@ class WaveformMonitor(QWidget):
         self.color_smooth = color_smooth
         self._t_color  = 0.0   # smoothed color parameter [0-1]
         self.setWindowTitle(f"CSI Monitor - {port}")
-        self.resize(1200, 500)
         self.setStyleSheet(QSS)
         pg.setConfigOptions(antialias=True)
 
@@ -388,8 +388,8 @@ def main():
 
     win = WaveformMonitor(reader=reader, port=args.port, refresh_ms=args.refresh, 
                           threshold=args.threshold, color_smooth=args.smooth)
+    center_qt_window(win)
     win.show()
-
 
     code = app.exec_()
     stop.set()

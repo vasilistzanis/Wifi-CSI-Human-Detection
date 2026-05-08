@@ -21,28 +21,12 @@ from pathlib import Path
 
 
 import numpy as np
-import matplotlib
-
-
-
 
 from csi_parser import configure_console_output
 configure_console_output()
 
-
-try:
-    matplotlib.use("Qt5Agg")
-except Exception:
-    print("[WARNING]  Qt5Agg backend not available, falling back to TkAgg")
-    try:
-        matplotlib.use("TkAgg")
-    except Exception:
-        print("[WARNING]  TkAgg backend not available, using default")
-        pass
-
-
+from plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
-plt.ioff()  # Disable interactive mode for faster background rendering
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
@@ -104,6 +88,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    setup_matplotlib()
 
     # -- File discovery -------------------------------------------------------
     if args.file:
@@ -242,7 +227,7 @@ def main():
     # Create a separate window (figure) for each plot
     try:
         for step_num, (data, title, cmap) in enumerate(plots_config):
-            fig, ax = plt.subplots(figsize=(10, 6))
+            fig, ax = plt.subplots(figsize=config.VISUALIZE_HEATMAP_SIZE)
             fig.patch.set_facecolor(STYLE_BG)
             ax.set_facecolor(STYLE_PANEL)
 
@@ -301,7 +286,7 @@ def main():
     print("\n[OK] Created 7 separate windows! (Close them all to end the script)")
     
     try:
-        plt.show()
+        show_all()
     except Exception as e:
         print(f"[WARNING]  Error displaying plots: {e}")
     

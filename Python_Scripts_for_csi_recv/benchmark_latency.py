@@ -124,7 +124,7 @@ def load_or_build_models(models_dir: Path, seed: int = 42) -> dict:
 
 def plot_comparison(df_comp, output_path):
     """Generates a comparison bar chart."""
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=config.BENCHMARK_FIGURE_SIZE)
     sns.set_theme(style="whitegrid")
     
 

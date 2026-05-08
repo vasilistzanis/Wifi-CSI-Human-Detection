@@ -1,10 +1,11 @@
 import json
 import argparse
 from pathlib import Path
-import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import config
+from plot_window_utils import setup_matplotlib, show_all
+import matplotlib.pyplot as plt
 
 from csi_parser import configure_console_output
 configure_console_output()
@@ -32,7 +33,7 @@ def main():
         negative_flags=["--no-show"],
     )
     args = parser.parse_args()
-
+    setup_matplotlib()
 
     json_path = Path(args.json_path)
     out_dir = Path(args.out_dir)
@@ -81,7 +82,7 @@ def main():
         # ----------------------------------------------------
         # 1. Plot Confusion Matrix
         # ----------------------------------------------------
-        plt.figure(figsize=(6, 5))
+        plt.figure(figsize=config.PLOT_ML_RESULTS_SIZE)
         ax = sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
                          cbar=False, square=True, 
                          xticklabels=classes, yticklabels=classes,
@@ -115,7 +116,7 @@ def main():
         # ----------------------------------------------------
         importances = data.get('feature_importances', [])
         if importances:
-            plt.figure(figsize=(8, 6))
+            plt.figure(figsize=config.PLOT_ML_RESULTS_SIZE)
             
 
             # Sort importances (already sorted from pipeline, but ensure ascending for barh)
@@ -159,7 +160,7 @@ def main():
         width = 0.35
 
 
-        fig, ax = plt.subplots(figsize=(8, 5))
+        fig, ax = plt.subplots(figsize=config.PLOT_ML_RESULTS_SIZE)
         rects1 = ax.bar(x - width/2, test_accs, width, label='Test Accuracy', color='#4C72B0')
         rects2 = ax.bar(x + width/2, f1_scores, width, label='F1 Macro Score', color='#DD8452')
 
@@ -199,7 +200,7 @@ def main():
 
     if args.show:
         print("[INFO] Showing plots. Close all windows to exit.")
-        plt.show()
+        show_all()
 
 
 if __name__ == "__main__":

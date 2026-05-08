@@ -33,17 +33,8 @@ import config
 from csi_parser import configure_console_output
 configure_console_output()
 
-import matplotlib
-try:
-    matplotlib.use("Qt5Agg")
-except Exception:
-    try:
-        matplotlib.use("TkAgg")
-    except Exception:
-        pass
-
+from plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
-plt.ioff()
 
 # -- Local imports ---------------------------------------------------------
 try:
@@ -112,28 +103,6 @@ def _save_fig(fig, save_dir: Path, name: str):
     fig.savefig(out, dpi=300, bbox_inches="tight", facecolor=STYLE["bg"])
     print(f"  [SAVE] {out}")
 
-
-def _center_figure(fig):
-    """Attempt to center the matplotlib window on the screen."""
-    try:
-        manager = fig.canvas.manager
-        backend = matplotlib.get_backend()
-        
-        if backend == 'TkAgg':
-            manager.window.eval('tk::PlaceWindow . center')
-        elif 'Qt' in backend:
-            # For Qt5/Qt6 backends
-            try:
-                # Try PyQt5
-                from PyQt5.QtWidgets import QDesktopWidget
-                qr = manager.window.frameGeometry()
-                cp = QDesktopWidget().availableGeometry().center()
-                qr.moveCenter(cp)
-                manager.window.move(qr.topLeft())
-            except Exception:
-                pass
-    except Exception:
-        pass
 
 
 # ========================================================================
@@ -210,7 +179,7 @@ def plot_permutation_importance(
     # Assign colors by group
     colors = [GROUP_COLORS.get(_classify_feature(n), STYLE["accent1"]) for n in names]
 
-    fig, ax = plt.subplots(figsize=(12, 6.5))
+    fig, ax = plt.subplots(figsize=config.EXPLAIN_FIGURE_SIZE)
 
     bars = ax.barh(
         range(len(names)), means, xerr=stds,
@@ -237,7 +206,6 @@ def plot_permutation_importance(
 
     ax.axvline(0, color=STYLE["grid"], linewidth=1, zorder=0)
     fig.tight_layout()
-    _center_figure(fig)
 
     if save and save_dir:
         _save_fig(fig, save_dir, f"xai_01_permutation_importance_{model_name.lower().replace(' ', '_')}")
@@ -275,7 +243,7 @@ def plot_builtin_importance(
 
     colors = [GROUP_COLORS.get(_classify_feature(n), STYLE["accent1"]) for n in names]
 
-    fig, ax = plt.subplots(figsize=(12, 6.5))
+    fig, ax = plt.subplots(figsize=config.EXPLAIN_FIGURE_SIZE)
 
     ax.barh(
         range(len(names)), values,
@@ -299,7 +267,6 @@ def plot_builtin_importance(
                   framealpha=0.9)
 
     fig.tight_layout()
-    _center_figure(fig)
 
     if save and save_dir:
         _save_fig(fig, save_dir, f"xai_02_builtin_importance_{model_name.lower().replace(' ', '_')}")
@@ -344,7 +311,7 @@ def plot_group_importance(
     pie_pcts = [val / positive_total * 100 for val in pie_vals] if positive_total > 0 else []
     pie_colors = [GROUP_COLORS.get(name, STYLE["accent5"]) for name in pie_names]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6.5),
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=config.EXPLAIN_FIGURE_SIZE,
                                     gridspec_kw={"width_ratios": [1, 1.2]})
 
     # Left: Positive-contribution pie chart
@@ -395,7 +362,6 @@ def plot_group_importance(
         fontweight="bold", fontsize=14,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.95])
-    _center_figure(fig)
 
     if save and save_dir:
         _save_fig(fig, save_dir, f"xai_03_group_importance_{model_name.lower().replace(' ', '_')}")
@@ -443,7 +409,7 @@ def plot_per_class_importance(
 
     cols = min(n_classes, 3)
     rows = (n_classes + cols - 1) // cols
-    fig, axes = plt.subplots(rows, cols, figsize=(12, 6.5))
+    fig, axes = plt.subplots(rows, cols, figsize=config.EXPLAIN_FIGURE_SIZE)
 
     # Flatten axes for easy indexing
     if n_classes == 1:
@@ -496,7 +462,6 @@ def plot_per_class_importance(
         fontweight="bold", fontsize=14,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.93])
-    _center_figure(fig)
 
     if save and save_dir:
         _save_fig(fig, save_dir, f"xai_04_per_class_{model_name.lower().replace(' ', '_')}")
@@ -595,6 +560,7 @@ def _load_support_artifacts(models_dir: Path):
 
 def main():
     args = parse_args()
+    setup_matplotlib()
     _apply_style()
 
     models_dir = Path(args.models_dir)
@@ -802,7 +768,7 @@ def main():
     print(f"{'='*60}")
 
     # Show all figures
-    plt.show()
+    show_all()
     return 0
 
 

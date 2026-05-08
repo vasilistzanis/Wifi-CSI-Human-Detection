@@ -34,34 +34,14 @@ from pathlib import Path
 
 
 import numpy as np
-import matplotlib
-
-
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
-
-
-
 
 from csi_parser import configure_console_output
 configure_console_output()
 
-
-
-
-try:
-    matplotlib.use("Qt5Agg")
-except Exception:
-    print("[WARNING]  Qt5Agg backend not available, falling back to TkAgg")
-    try:
-        matplotlib.use("TkAgg")
-    except Exception:
-        print("[WARNING]  TkAgg backend not available, using default")
-        pass
-
-
+from plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
-plt.ioff()
 
 
 try:
@@ -188,7 +168,7 @@ def get_color_palette(n_colors: int):
 
 def main():
     args = parse_args()
-
+    setup_matplotlib()
 
     # -- File resolution ---------------------------------------------------
     if args.file:
@@ -355,7 +335,7 @@ def main():
 
 
     def create_window():
-        fig, ax = plt.subplots(figsize=(12, 6))
+        fig, ax = plt.subplots(figsize=config.PLOT_LINES_PREPROCESSING_SIZE)
         fig.suptitle(global_suptitle, fontsize=12, fontweight='bold',
                      y=0.96, color="#111111")
         return fig, ax
@@ -536,7 +516,7 @@ def main():
 
 
     try:
-        plt.show()
+        show_all()
     except Exception as e:
         print(f"[WARNING]  Error displaying plots: {e}")
         print("   Plots were created but may not display properly.")
