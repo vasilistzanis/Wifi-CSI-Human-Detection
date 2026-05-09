@@ -183,10 +183,14 @@ VISUALIZE_ML_PIPELINE_SIZE     = FIGURE_SIZE
 # ------------------------------------------------------------------------------
 # live_dashboard.py defaults
 # ------------------------------------------------------------------------------
-DASHBOARD_WAVEFORM_LEN = 160
-DASHBOARD_REFRESH_MS = 20
-DASHBOARD_MOTION_THRESHOLD = 0.05
-DASHBOARD_COLOR_SMOOTH = 0.15
+DASHBOARD_WAVEFORM_LEN  = 200
+DASHBOARD_REFRESH_MS    = 40
+DASHBOARD_STEP_SIZE     = 10
+DASHBOARD_HISTORY       = 5
+DASHBOARD_MAX_LOG       = 60
+DASHBOARD_DEMO          = False
+DASHBOARD_HYST_COUNT    = 3    # consecutive same-label predictions before confirming
+DASHBOARD_ENERGY_GATE   = 0.0  # mean-amplitude threshold below which → "empty"; 0 = disabled
 
 
 # ------------------------------------------------------------------------------
@@ -356,6 +360,24 @@ SCRIPT_DEFAULTS = {
         "fs": SAMPLING_RATE,
         "seed": RANDOM_SEED,
         "cutoff": FILTER_CUTOFF_HZ,
+    },
+    "live_dashboard": {
+        "port":        SERIAL_PORT,
+        "baud":        BAUD_RATE,
+        "models_dir":  MODELS_DIR,
+        "model":       LIVE_PREDICT_MODEL,
+        "window":      WINDOW_SIZE,
+        "step":        DASHBOARD_STEP_SIZE,
+        "history":     DASHBOARD_HISTORY,
+        "waveform_len": DASHBOARD_WAVEFORM_LEN,
+        "refresh_ms":  DASHBOARD_REFRESH_MS,
+        "max_log":     DASHBOARD_MAX_LOG,
+        "rx_buf":       RX_BUFFER_SIZE,
+        "cutoff":       FILTER_CUTOFF_HZ,
+        "warmup":       FILTER_WARMUP,
+        "demo":         DASHBOARD_DEMO,
+        "hyst_count":   DASHBOARD_HYST_COUNT,
+        "energy_gate":  DASHBOARD_ENERGY_GATE,
     },
     "live_csi_dual_view": {
         "port":        SERIAL_PORT,
