@@ -65,19 +65,10 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*solver.*lbfgs.*", module="sklearn")
 
 
-# 14 classical statistics per PCA component.
-#
-# DWT NOTE: DWT features have been intentionally removed.
-# Reason 1 — frequency mismatch: the Butterworth filter cuts off at 10 Hz.
-#   d1 (25-50 Hz) and d2 (12.5-25 Hz) are above the cutoff → near-zero signal.
-#   d3 (6.25-12.5 Hz) partially overlaps the passband but cannot be computed
-#   at this window size (see Reason 2).
-# Reason 2 — decomposition depth: pywt.dwt_max_level(50, 'db4') = 2, so
-#   level-3 decomposition (needed for d3) is impossible at window_size=50.
-#   To re-enable DWT: increase WINDOW_SIZE to ≥100 (max_level becomes 3)
-#   AND raise the Butterworth cutoff to ≥25 Hz so the bands carry signal.
+# DWT removed: 10 Hz cutoff kills d1/d2; window_size=50 only allows depth-2 decomposition.
+# Re-enable by setting WINDOW_SIZE≥100 and cutoff≥25 Hz.
 _DWT_STATS_PER_COMPONENT = 0
-N_STATS = 14 + _DWT_STATS_PER_COMPONENT   # = 14
+N_STATS = 14
 
 
 try:
@@ -175,18 +166,15 @@ def _aug_time_warp(window: np.ndarray, rng: np.random.Generator, class_label: st
         
 
     src_indices = np.linspace(0, T - 1, T) / factor
-    
 
-    # Reflect Padding logic (no flat tails)
+    # Reflect padding — avoids flat tails at window boundaries
     overflow = src_indices > (T - 1)
     src_indices[overflow] = 2 * (T - 1) - src_indices[overflow]
     src_indices = np.clip(src_indices, 0, T - 1)
-    
 
     warped = np.empty_like(window, dtype=np.float64)
     for c in range(window.shape[1]):
         warped[:, c] = np.interp(src_indices, np.arange(T), window[:, c])
-        
 
     return warped.astype(np.float32)
 
@@ -226,10 +214,7 @@ def augment_window(window: np.ndarray,
     safe_techs = [t for t in techniques if t != 'time_warp'] if class_label == 'fall' else techniques
 
 
-    # If class-aware filtering left nothing, fall back to noise (safest technique)
-    # to preserve dataset size consistency - do NOT return duplicates silently
     if not safe_techs:
-        import warnings
         warnings.warn(
             f"augment_window: class_label='{class_label}' filtered out all requested "
             f"techniques {techniques}. Falling back to 'noise' to preserve dataset size.",

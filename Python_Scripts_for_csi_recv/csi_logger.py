@@ -253,14 +253,12 @@ def main() -> int:
             print("[START]  GO! (Recording started)\n")
         
 
-        # Clear buffer immediately before the file opens so we don't log the movement of pressing enter
+        # Flush serial buffer and reset timers — excludes pre-recording movement
         try:
             ser.reset_input_buffer()
         except Exception:
             pass
 
-
-        # Also reset tracking timers so they don't count the wait time
         start_time = time.monotonic()
         last_flush = start_time
         last_status = start_time
@@ -288,9 +286,6 @@ def main() -> int:
                 chunk = ser.read(waiting)
                 if not chunk:
                     continue
-
-
-                # Prevent disk overflow by checking size BEFORE writing the chunk
 
 
                 if bytes_written + len(chunk) > max_bytes:

@@ -1732,9 +1732,9 @@ class DashboardWindow(QMainWindow):
         self._ema_probs       = np.zeros(len(classes), dtype=np.float32)
         self._frames_since    = 0; self._last_seen = 0
         self._latency_ms      = 0.0; self._demo_tick = 0
+        self._pred_hist       = deque(maxlen=10)
         self._last_record_t   = 0.0
         self._last_record_lbl = ""
-        # Hysteresis state
         self._hyst_pending    = ""
         self._hyst_count      = 0
         self._log_entries: list      = []
@@ -1870,24 +1870,18 @@ class DashboardWindow(QMainWindow):
             self._latency_ms = latency
 
             if raw_cand is not None and probs_cand is not None:
-                # ── Continuous Adaptive EMA ──────────────────────────────────────
-                # Smoothly scales the update factor based on model confidence.
-                # High confidence -> faster update (closer to self.ema_alpha)
-                # Low confidence -> heavier smoothing (alpha approaches 0)
+                # Adaptive EMA: scale update speed by model confidence
                 max_prob = float(np.max(probs_cand))
                 dynamic_alpha = self.ema_alpha * max_prob
 
                 self._ema_probs = (dynamic_alpha * probs_cand +
                                    (1.0 - dynamic_alpha) * self._ema_probs)
 
-                # Get the smoothed prediction
                 best_idx = int(np.argmax(self._ema_probs))
                 smoothed_prob = float(self._ema_probs[best_idx]) * 100.0
                 smoothed_cand = self.classes[best_idx]
 
-                # ── Confidence Thresholding ──────────────────────────────────
                 if smoothed_prob < self.conf_thresh:
-                    # If uncertain, maintain previous state (if we had one)
                     if self._last_record_lbl:
                         smoothed_cand = self._last_record_lbl
                     else:

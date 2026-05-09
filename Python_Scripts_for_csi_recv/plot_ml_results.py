@@ -40,7 +40,7 @@ def main():
 
 
     if not json_path.exists():
-        print(f"[ERROR] Mising file: {json_path}")
+        print(f"[ERROR] Missing file: {json_path}")
         print("   Make sure you have run the pipeline with the --save_model flag:")
         print("   python csi_ml_pipeline.py --classes walk_activity no_activity --save_model")
         return
@@ -54,7 +54,6 @@ def main():
         out_dir.mkdir(parents=True, exist_ok=True)
     
 
-    # Define aesthetic settings for thesis (clean and professional)
     sns.set_theme(style="whitegrid")
     plt.rcParams.update({'font.size': 12})
     
