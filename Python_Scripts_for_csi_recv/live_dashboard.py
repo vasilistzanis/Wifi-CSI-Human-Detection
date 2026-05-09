@@ -89,8 +89,8 @@ _CLASS_COLORS = {
 _DISPLAY_NAMES = {
     "walk":          "walk/activity",
     "walk_activity": "walk/activity",
-    "idle":          "no activity",
-    "no_activity":   "no activity",
+    "idle":          "idle/no activity",
+    "no_activity":   "idle/no activity",
 }
 _MODEL_NAMES = {
     "rf": "Random Forest", "svm": "SVM (RBF)",    "et":  "Extra Trees",
