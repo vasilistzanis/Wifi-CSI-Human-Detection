@@ -191,7 +191,7 @@ DASHBOARD_CONF_THRESH   = 70.0    # Minimum confidence % to switch state (otherw
 DASHBOARD_MAX_LOG       = 60
 DASHBOARD_DEMO          = False
 DASHBOARD_HYST_COUNT    = 2       # Light hysteresis (e.g. 2) for state transition confirmation
-DASHBOARD_ENERGY_GATE   = 10.0    # Enabled energy gate: if amplitude is too low, defaults to "empty"
+DASHBOARD_ENERGY_GATE   = 0.005   # Enabled energy gate: if variance is too low (< 0.005), defaults to "empty"
 
 
 # ------------------------------------------------------------------------------

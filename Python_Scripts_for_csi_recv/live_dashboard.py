@@ -82,7 +82,7 @@ _ORANGE = "#f0883e"
 _PURPLE = "#a371f7"
 
 _CLASS_COLORS = {
-    "empty": _BLUE,   "idle":  _GREEN,  "walk":  _ORANGE,
+    "empty": _BLUE,   "no_activity":  _GREEN,  "walk_activity":  _ORANGE,
     "sit":   _YELLOW, "fall":  _RED,    "stand": _PURPLE, "run": "#ff7b72",
 }
 _MODEL_NAMES = {
@@ -496,12 +496,12 @@ def _inference_worker_fn(in_q, out_q, pipeline, model, le, classes,
         if msg is None:            # poison pill
             break
 
-        cm, mean_amp, frame_count = msg
+        cm, variance, frame_count = msg
         raw_cand = conf_cand = probs_cand = None
         latency = 0.0
 
-        # 1. Energy gate
-        if energy_thr > 0.0 and mean_amp < energy_thr:
+        # 1. Motion/Energy gate (detect 'empty' state based on low variance)
+        if energy_thr > 0.0 and variance < energy_thr:
             raw_cand   = "empty"
             conf_cand  = 95.0
             probs_cand = _np.zeros(len(classes), dtype=_np.float32)
@@ -574,7 +574,7 @@ class InferenceProcess:
         )
         self._proc.start()
 
-    def submit(self, infer_snap, mean_amp, frame_count):
+    def submit(self, infer_snap, variance, frame_count):
         """Pre-stack frames and send to worker (non-blocking)."""
         try:
             cm = np.vstack(infer_snap).astype(np.complex64)
@@ -586,7 +586,7 @@ class InferenceProcess:
         except Exception:
             pass
         try:
-            self._in_q.put_nowait((cm, mean_amp, frame_count))
+            self._in_q.put_nowait((cm, variance, frame_count))
         except Exception:
             pass
 
@@ -1901,7 +1901,7 @@ class DashboardWindow(QMainWindow):
             else:
                 self._infer_worker.submit(
                     snap["infer_snap"],
-                    snap.get("mean_amp", 1.0),
+                    snap.get("variance", 0.0),
                     snap["frame_count"],
                 )
 
@@ -1912,9 +1912,15 @@ class DashboardWindow(QMainWindow):
             self._latency_ms = latency
 
             if raw_cand is not None and probs_cand is not None:
-                # ── EMA Probability Smoothing ────────────────────────────────
-                self._ema_probs = (self.ema_alpha * probs_cand +
-                                   (1.0 - self.ema_alpha) * self._ema_probs)
+                # ── Continuous Adaptive EMA ──────────────────────────────────────
+                # Smoothly scales the update factor based on model confidence.
+                # High confidence -> faster update (closer to self.ema_alpha)
+                # Low confidence -> heavier smoothing (alpha approaches 0)
+                max_prob = float(np.max(probs_cand))
+                dynamic_alpha = self.ema_alpha * max_prob
+
+                self._ema_probs = (dynamic_alpha * probs_cand +
+                                   (1.0 - dynamic_alpha) * self._ema_probs)
 
                 # Get the smoothed prediction
                 best_idx = int(np.argmax(self._ema_probs))
