@@ -1755,21 +1755,22 @@ class SettingsPage(QWidget):
 class DashboardWindow(QMainWindow):
     def __init__(self, *, reader: ReaderThread,
                  pipeline, le, model, classes: list, model_key: str,
-                 window_size: int, step: int, history: int,
-                 cutoff: float, refresh_ms: int, max_log: int,
-                 port: str, baud: int, demo: bool, models_dir: str,
-                 hyst_count: int = 3, energy_gate: float = 0.0):
+                 window_size: int, step: int, ema_alpha: float,
+                 conf_thresh: float, cutoff: float, refresh_ms: int,
+                 max_log: int, port: str, baud: int, demo: bool,
+                 models_dir: str, hyst_count: int = 2, energy_gate: float = 0.0):
         super().__init__()
         self.reader      = reader
         self.pipeline    = pipeline; self.le = le; self.model = model
         self.classes     = classes; self.model_key = model_key
         self.models_dir  = models_dir
         self.window_size = window_size; self.step = step; self.cutoff = cutoff
+        self.ema_alpha   = ema_alpha; self.conf_thresh = conf_thresh
         self.max_log     = max_log; self.demo = demo
         self._hyst_min   = hyst_count
         self._energy_thr = energy_gate
 
-        self._pred_hist       = deque(maxlen=history)
+        self._ema_probs       = np.zeros(len(classes), dtype=np.float32)
         self._frames_since    = 0; self._last_seen = 0
         self._latency_ms      = 0.0; self._demo_tick = 0
         self._last_record_t   = 0.0
@@ -1851,7 +1852,7 @@ class DashboardWindow(QMainWindow):
             self.model     = model
             self.model_key = model_key
             self.classes   = list(le.classes_)
-            self._pred_hist.clear()
+            self._ema_probs       = np.zeros(len(self.classes), dtype=np.float32)
             self._last_record_lbl = ""
             self._last_record_t   = 0.0
             self._hyst_pending    = ""
@@ -1910,24 +1911,38 @@ class DashboardWindow(QMainWindow):
             raw_cand, conf_cand, probs_cand, latency, fc = result
             self._latency_ms = latency
 
-            if raw_cand is not None:
-                self._pred_hist.append(raw_cand)
-                smoothed = Counter(self._pred_hist).most_common(1)[0][0]
+            if raw_cand is not None and probs_cand is not None:
+                # ── EMA Probability Smoothing ────────────────────────────────
+                self._ema_probs = (self.ema_alpha * probs_cand +
+                                   (1.0 - self.ema_alpha) * self._ema_probs)
 
-                # Hysteresis: require N consecutive same-label before switching
-                if smoothed == self._hyst_pending:
+                # Get the smoothed prediction
+                best_idx = int(np.argmax(self._ema_probs))
+                smoothed_prob = float(self._ema_probs[best_idx]) * 100.0
+                smoothed_cand = self.classes[best_idx]
+
+                # ── Confidence Thresholding ──────────────────────────────────
+                if smoothed_prob < self.conf_thresh:
+                    # If uncertain, maintain previous state (if we had one)
+                    if self._last_record_lbl:
+                        smoothed_cand = self._last_record_lbl
+                    else:
+                        smoothed_cand = "—"
+
+                # ── Hysteresis (State Transition Delay) ──────────────────────
+                if smoothed_cand == self._hyst_pending:
                     self._hyst_count += 1
                 else:
-                    self._hyst_pending = smoothed
+                    self._hyst_pending = smoothed_cand
                     self._hyst_count   = 1
 
                 if self._hyst_count >= self._hyst_min:
                     now = time.monotonic()
-                    if (smoothed != self._last_record_lbl or
+                    if (smoothed_cand != self._last_record_lbl or
                             (now - self._last_record_t) >= 4.0):
-                        self._last_record_lbl = smoothed
+                        self._last_record_lbl = smoothed_cand
                         self._last_record_t   = now
-                        self._record(smoothed, conf_cand, probs_cand, fc)
+                        self._record(smoothed_cand, smoothed_prob, self._ema_probs, fc)
 
         state = {**snap, **self._state, "latency_ms": self._latency_ms}
 
@@ -1978,7 +1993,10 @@ def _parse_args():
     p.add_argument("--model",               default=d["model"], choices=config.MODEL_KEYS)
     p.add_argument("--window",  type=int,   default=d["window"])
     p.add_argument("--step",    type=int,   default=d["step"])
-    p.add_argument("--history", type=int,   default=d["history"])
+    p.add_argument("--ema-alpha", type=float, default=d["ema_alpha"],
+                   help="EMA factor for probability smoothing (1.0 = no smoothing)")
+    p.add_argument("--conf-thresh", type=float, default=d["conf_thresh"],
+                   help="Minimum confidence %% to switch state")
     p.add_argument("--waveform-len", type=int, default=d["waveform_len"])
     p.add_argument("--refresh", type=int,   default=d["refresh_ms"])
     p.add_argument("--max-log", type=int,   default=d["max_log"])
@@ -2044,10 +2062,10 @@ def main():
         pipeline=pipeline, le=le, model=model,
         classes=classes, model_key=args.model,
         window_size=args.window, step=args.step,
-        history=args.history, cutoff=args.cutoff,
-        refresh_ms=args.refresh, max_log=args.max_log,
-        port=args.port, baud=args.baud, demo=args.demo,
-        models_dir=args.models_dir,
+        ema_alpha=args.ema_alpha, conf_thresh=args.conf_thresh,
+        cutoff=args.cutoff, refresh_ms=args.refresh,
+        max_log=args.max_log, port=args.port, baud=args.baud,
+        demo=args.demo, models_dir=args.models_dir,
         hyst_count=args.hyst_count,
         energy_gate=args.energy_gate,
     )

@@ -185,12 +185,13 @@ VISUALIZE_ML_PIPELINE_SIZE     = FIGURE_SIZE
 # ------------------------------------------------------------------------------
 DASHBOARD_WAVEFORM_LEN  = 200
 DASHBOARD_REFRESH_MS    = 40
-DASHBOARD_STEP_SIZE     = 10
-DASHBOARD_HISTORY       = 5
+DASHBOARD_STEP_SIZE     = 15      # 15 frames = 150ms between predictions
+DASHBOARD_EMA_ALPHA     = 0.6     # EMA factor for soft probability smoothing (1.0 = no smoothing)
+DASHBOARD_CONF_THRESH   = 70.0    # Minimum confidence % to switch state (otherwise holds previous state)
 DASHBOARD_MAX_LOG       = 60
 DASHBOARD_DEMO          = False
-DASHBOARD_HYST_COUNT    = 3    # consecutive same-label predictions before confirming
-DASHBOARD_ENERGY_GATE   = 0.0  # mean-amplitude threshold below which → "empty"; 0 = disabled
+DASHBOARD_HYST_COUNT    = 2       # Light hysteresis (e.g. 2) for state transition confirmation
+DASHBOARD_ENERGY_GATE   = 10.0    # Enabled energy gate: if amplitude is too low, defaults to "empty"
 
 
 # ------------------------------------------------------------------------------
@@ -368,7 +369,8 @@ SCRIPT_DEFAULTS = {
         "model":       LIVE_PREDICT_MODEL,
         "window":      WINDOW_SIZE,
         "step":        DASHBOARD_STEP_SIZE,
-        "history":     DASHBOARD_HISTORY,
+        "ema_alpha":   DASHBOARD_EMA_ALPHA,
+        "conf_thresh": DASHBOARD_CONF_THRESH,
         "waveform_len": DASHBOARD_WAVEFORM_LEN,
         "refresh_ms":  DASHBOARD_REFRESH_MS,
         "max_log":     DASHBOARD_MAX_LOG,
