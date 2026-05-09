@@ -12,7 +12,7 @@ of what the training pipeline actually does — not an approximation.
 Usage
 -----
   python plot_data_augmentation.py
-  python plot_data_augmentation.py --file datasets/walk/walk_01.txt
+  python plot_data_augmentation.py --file datasets/walk_activity/walk_activity_01_vasilis_.txt
   python plot_data_augmentation.py --class-label fall
   python plot_data_augmentation.py --save --no-show
 """
@@ -50,26 +50,26 @@ SUBCARRIER_IDX = config.PLOT_DATA_AUGMENTATION_SUBCARRIER
 # -----------------------------------------------------------------------
 _PARAM_LABELS = {
     "noise": {
-        "walk": "σ_signal × Uniform(0.3%, 1.0%)",
-        "idle": "σ_signal × Uniform(0.3%, 1.0%)",
+        "walk_activity": "σ_signal × Uniform(0.3%, 1.0%)",
+        "no_activity": "σ_signal × Uniform(0.3%, 1.0%)",
         "sit":  "σ_signal × 0.7 × Uniform(0.3%, 1.0%)",
         "fall": "σ_signal × 0.5 × Uniform(0.3%, 1.0%)",
     },
     "shift": {
-        "walk": "1–3 frames, edge-padded",
-        "idle": "1–3 frames, edge-padded",
+        "walk_activity": "1–3 frames, edge-padded",
+        "no_activity": "1–3 frames, edge-padded",
         "sit":  "1–3 frames, edge-padded",
         "fall": "1–3 frames, edge-padded",
     },
     "scale": {
-        "walk": "× Uniform(0.90, 1.10)",
-        "idle": "× Uniform(0.90, 1.10)",
+        "walk_activity": "× Uniform(0.90, 1.10)",
+        "no_activity": "× Uniform(0.90, 1.10)",
         "sit":  "× Uniform(0.95, 1.05)",
         "fall": "× Uniform(0.97, 1.03)",
     },
     "warp": {
-        "walk": "factor ∈ Uniform(0.90, 1.10)",
-        "idle": "factor ∈ Uniform(0.98, 1.02)",
+        "walk_activity": "factor ∈ Uniform(0.90, 1.10)",
+        "no_activity": "factor ∈ Uniform(0.98, 1.02)",
         "sit":  "factor ∈ Uniform(0.95, 1.05)",
         "fall": "Disabled (fall physics constraint)",
     },
@@ -197,7 +197,7 @@ def main():
     _aug_choices = sorted(set(config.get_known_training_classes()))
     parser.add_argument("--class-label", type=str, default=defaults["class_label"],
                         choices=_aug_choices,
-                        help="Activity class — controls class-aware aug constraints (default: walk)")
+                        help="Activity class — controls class-aware aug constraints (default: walk_activity)")
     args = parser.parse_args()
 
     rng = np.random.default_rng(seed=RANDOM_SEED)

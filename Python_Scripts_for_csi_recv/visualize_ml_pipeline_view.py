@@ -16,9 +16,9 @@ Modes
 Usage
 -----
   python visualize_ml_pipeline_view.py
-  python visualize_ml_pipeline_view.py --file datasets/walk/walk_01.txt
+  python visualize_ml_pipeline_view.py --file datasets/walk_activity/walk_activity_01_vasilis_.txt
   python visualize_ml_pipeline_view.py --compare
-  python visualize_ml_pipeline_view.py --features --file datasets/idle/idle_livroom_01_1776088773.txt
+  python visualize_ml_pipeline_view.py --features --file datasets/no_activity/no_activity_livroom_01_1776088773.txt
   python visualize_ml_pipeline_view.py --save --no-show
 """
 
@@ -110,7 +110,7 @@ def load_artifacts(models_dir: Path):
 
     if not pipeline_path.exists():
         print(f"[ERROR] Pipeline not found: {pipeline_path}")
-        print("        Run: python csi_ml_pipeline.py --classes walk idle --save_model")
+        print("        Run: python csi_ml_pipeline.py --classes walk_activity no_activity --save_model")
         sys.exit(1)
 
     pipeline = joblib.load(pipeline_path)

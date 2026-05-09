@@ -48,7 +48,7 @@ The system is designed with a strict pipeline architecture, ensuring zero data l
 - **`all_plot_figures.py`**: Generates 7 core scientific figures (Amplitude, Heatmap, SC Profile, Energy/Variance, Spectrogram, Phase, Synchronized Motion Analysis). Integrates the exact `CSIPipeline` to mirror the ML data state, and includes a `--compare` mode for side-by-side class analysis.
 - **`plot_lines_data_preprocessing.py`**: Generates 7 separate 2D line windows visualizing the exact effect of every single DSP step on the signal.
 - **`visualize_all_steps_heatmap_data_preprocessing.py`**: Generates 7 separate heatmap windows showing the spatial-temporal transformations of the pipeline.
-- **`plot_data_augmentation.py`**: Visualizes the exact augmentation functions used during training (Noise, Shift, Scale, Time-Warp) on filtered CSI waveforms. Supports `--class-label` to show class-aware parameter constraints (walk/idle/sit/fall).
+- **`plot_data_augmentation.py`**: Visualizes the exact augmentation functions used during training (Noise, Shift, Scale, Time-Warp) on filtered CSI waveforms. Supports `--class-label` to show class-aware parameter constraints (walk_activity/no_activity).
 - **`plot_ml_results.py`**: Plots the output metrics and confusion matrices of the ML models. *(Note: Requires running `csi_ml_pipeline.py --save_model` first)*
 - **`plot_advanced_metrics.py`**: Generates ROC curves, per-class accuracy bar charts, and advanced evaluation figures from saved model artifacts.
 - **`visualize_ml_pipeline_view.py`**: Loads the saved `csi_pipeline.joblib` and visualises each DSP step, PCA scatter plots, and the final feature vector — for thesis illustration.
@@ -69,12 +69,12 @@ python live_dashboard.py
 
 **2. Record Dataset:**
 ```bash
-python csi_logger.py --port COM6 --label walk
+python csi_logger.py --port COM6 --label walk_activity
 ```
 
 **3. Train & Save the Model:**
 ```bash
-python csi_ml_pipeline.py --data_dir ./datasets --classes walk idle --save_model
+python csi_ml_pipeline.py --data_dir ./datasets --classes walk_activity no_activity --save_model
 ```
 
 **4. Run Live Inference:**
@@ -84,13 +84,13 @@ python live_predict.py --port COM6
 
 **5. Explain Model Decisions (XAI):**
 ```bash
-python explain_model_characteristics.py --models_dir ./models --classes walk idle
+python explain_model_characteristics.py --models_dir ./models --classes walk_activity no_activity
 ```
 
 **6. Generate Thesis Plots:**
 ```bash
 python plot_ml_results.py
-python all_plot_figures.py --file datasets/walk/walk_01.txt
+python all_plot_figures.py --file datasets/walk_activity/walk_activity_01_vasilis_.txt
 ```
 
 ---

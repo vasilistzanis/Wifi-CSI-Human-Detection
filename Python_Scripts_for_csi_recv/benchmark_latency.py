@@ -8,7 +8,7 @@ for all trained classifiers. Saves results as CSV and a comparison bar chart.
 
 Usage:
   python benchmark_latency.py --simulate
-  python benchmark_latency.py --file datasets/walk/walk_01.txt --save
+  python benchmark_latency.py --file datasets/walk_activity/walk_activity_01_vasilis_.txt --save
 """
 
 import time
@@ -183,7 +183,7 @@ def main():
                         help="Directory containing saved .joblib model files (default: models)")
     parser.add_argument('--pca', type=int, default=defaults["pca"], help="Number of PCA components (default: 10)")
     parser.add_argument('--file', type=str, default=defaults["file"],
-                        help="Path to real CSI data file (default: datasets/walk/walk_01.txt)")
+                        help="Path to real CSI data file (default: datasets/walk_activity/walk_activity_01_vasilis_.txt)")
     parser.add_argument('--start-frame', type=int, default=defaults["start_frame"],
                         help="Start frame index for benchmarking (default: 500)")
     parser.add_argument('--window-size', type=int, default=defaults["window_size"],
@@ -238,7 +238,7 @@ def main():
                            + 1j * rng.random((buf_size, n_sub))).astype(np.complex64)
     else:
         print(f"[WARNING] Saved pipeline not found at {pipeline_path}. Fitting fresh pipeline.")
-        print("          Run: python csi_ml_pipeline.py --classes walk idle --save_model")
+        print("          Run: python csi_ml_pipeline.py --classes walk_activity no_activity --save_model")
         data_path = Path(args.file)
         if data_path.exists():
             print(f"[FILE] Mode: REAL DATA (Loading {data_path})")
@@ -287,7 +287,7 @@ def main():
                 print(f"         Saved models were trained with version : {_saved_versions}")
                 print(f"         Current pipeline feature version       : {FEATURE_VECTOR_VERSION}")
                 print(f"         Model predictions will be WRONG — retrain first:")
-                print(f"           python csi_ml_pipeline.py --classes walk idle --save_model\n")
+                print(f"           python csi_ml_pipeline.py --classes walk_activity no_activity --save_model\n")
     except Exception:
         pass   # missing or malformed metrics.json — non-fatal
 
@@ -305,7 +305,7 @@ def main():
             print(f"  [STALE] {name}: saved model expects {expected} features, "
                   f"pipeline now produces {n_feat}. Using untrained fallback.")
             print(f"          → Re-train to fix: python csi_ml_pipeline.py "
-                  f"--classes walk idle --save_model")
+                  f"--classes walk_activity no_activity --save_model")
             loaded_models[name] = (_MODEL_REGISTRY[name][1](args.seed), "fallback (stale)")
 
     # Warn if every model ended up as a fallback (no saved models found at all)
@@ -314,7 +314,7 @@ def main():
         print("\n  [WARN] *** ALL models are fallbacks (untrained) ***")
         print("         Latency numbers reflect blank models, NOT real inference.")
         print("         Re-train first: python csi_ml_pipeline.py "
-              "--classes walk idle --save_model\n")
+              "--classes walk_activity no_activity --save_model\n")
 
     # Fit fallback models on dummy data so they can predict
     for name, (model, source) in loaded_models.items():

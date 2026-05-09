@@ -42,7 +42,7 @@ def main():
     if not json_path.exists():
         print(f"[ERROR] Mising file: {json_path}")
         print("   Make sure you have run the pipeline with the --save_model flag:")
-        print("   python csi_ml_pipeline.py --classes walk idle --save_model")
+        print("   python csi_ml_pipeline.py --classes walk_activity no_activity --save_model")
         return
 
 

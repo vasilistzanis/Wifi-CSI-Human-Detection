@@ -19,8 +19,8 @@ Features:
 
 
 Usage:
-  python csi_ml_pipeline.py --classes walk idle
-  python csi_ml_pipeline.py --classes walk sit fall idle --save_model --tune
+  python csi_ml_pipeline.py --classes walk_activity no_activity
+  python csi_ml_pipeline.py --classes walk_activity sit fall no_activity --save_model --tune
 """
 
 # FEATURE VECTOR CHANGE NOTICE:
@@ -166,11 +166,11 @@ def _aug_time_warp(window: np.ndarray, rng: np.random.Generator, class_label: st
     
 
     # Class-aware factor selection
-    if class_label == 'walk':
+    if class_label == 'walk_activity':
         factor = rng.uniform(0.9, 1.1)
     elif class_label == 'sit':
         factor = rng.uniform(0.95, 1.05)
-    else:  # idle/static
+    else:  # no_activity/static
         factor = rng.uniform(0.98, 1.02)
         
 

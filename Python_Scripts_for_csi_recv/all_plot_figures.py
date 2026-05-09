@@ -551,7 +551,7 @@ def parse_args():
     )
     p.add_argument("--compare", nargs="+", metavar="CLASS",
                    default=defaults["compare"],
-                   help="Compare multiple classes (e.g. --compare walk idle)")
+                   help="Compare multiple classes (e.g. --compare walk_activity no_activity)")
     p.add_argument("--fs", type=float, default=defaults["fs"],
                    help="Sampling frequency in Hz (default: 100)")
     p.add_argument("--fft-max", type=float, default=defaults["fft_max"],

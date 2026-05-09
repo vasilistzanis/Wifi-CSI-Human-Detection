@@ -83,7 +83,14 @@ _PURPLE = "#a371f7"
 
 _CLASS_COLORS = {
     "empty": _BLUE,   "no_activity":  _GREEN,  "walk_activity":  _ORANGE,
+    "idle":  _GREEN,  "walk":         _ORANGE,
     "sit":   _YELLOW, "fall":  _RED,    "stand": _PURPLE, "run": "#ff7b72",
+}
+_DISPLAY_NAMES = {
+    "walk":          "walk/activity",
+    "walk_activity": "walk/activity",
+    "idle":          "no activity",
+    "no_activity":   "no activity",
 }
 _MODEL_NAMES = {
     "rf": "Random Forest", "svm": "SVM (RBF)",    "et":  "Extra Trees",
@@ -103,6 +110,9 @@ _MODEL_DESC = {
 
 def _cc(label: str) -> str:
     return _CLASS_COLORS.get(label.lower(), _BLUE)
+
+def _disp(label: str) -> str:
+    return _DISPLAY_NAMES.get(label.lower(), label)
 
 _QSS = f"""
 QMainWindow, QWidget {{
@@ -318,46 +328,6 @@ def _load_models(models_dir: str, model_key: str):
             joblib.load(paths["model"]))
 
 
-def _infer(snap: list, pipeline, model, le, window_size: int, cutoff: float):
-    if len(snap) < window_size + 1:
-        return None
-    try:
-        cm = np.vstack(snap).astype(np.complex64)
-    except ValueError:
-        return None
-    try:
-        if cm.shape[1] != pipeline._fitted_n_subcarriers:
-            return None
-        processed = pipeline.transform(cm, use_pca=True, cutoff=cutoff)
-    except Exception:
-        return None
-    if processed.shape[0] < window_size:
-        return None
-    features = extract_features_from_window(processed[-window_size:]).reshape(1, -1)
-    if not np.all(np.isfinite(features)):
-        return None
-    # Guard: feature-count mismatch (pipeline/model trained with different settings)
-    if hasattr(model, "n_features_in_") and features.shape[1] != model.n_features_in_:
-        print(f"[WARN] Feature mismatch: got {features.shape[1]}, "
-              f"model expects {model.n_features_in_}. Retrain the model.",
-              flush=True)
-        return None
-    try:
-        if hasattr(model, "predict_proba"):
-            probs = model.predict_proba(features)[0]
-            idx   = int(np.argmax(probs))
-            conf  = float(probs[idx]) * 100.0
-        else:
-            idx   = int(model.predict(features)[0])
-            probs = np.zeros(len(le.classes_), dtype=np.float32)
-            probs[idx] = 1.0
-            conf  = 100.0
-        return str(le.inverse_transform([idx])[0]), conf, probs
-    except Exception as e:
-        print(f"[WARN] Inference error: {e}", flush=True)
-        return None
-
-
 # ============================================================================
 # READER THREAD
 # ============================================================================
@@ -478,7 +448,7 @@ class ReaderThread(threading.Thread):
 # ============================================================================
 
 def _inference_worker_fn(in_q, out_q, pipeline, model, le, classes,
-                         window_size, cutoff, energy_thr):
+                         window_size, cutoff):
     """Target for the inference child process — fully GIL-free."""
     # Re-import in child process (Windows 'spawn' requirement)
     import numpy as _np
@@ -496,21 +466,11 @@ def _inference_worker_fn(in_q, out_q, pipeline, model, le, classes,
         if msg is None:            # poison pill
             break
 
-        cm, variance, frame_count = msg
+        cm, frame_count = msg
         raw_cand = conf_cand = probs_cand = None
         latency = 0.0
 
-        # 1. Motion/Energy gate (detect 'empty' state based on low variance)
-        if energy_thr > 0.0 and variance < energy_thr:
-            raw_cand   = "empty"
-            conf_cand  = 95.0
-            probs_cand = _np.zeros(len(classes), dtype=_np.float32)
-            idx_e = next((i for i, c in enumerate(classes) if c == "empty"), -1)
-            if idx_e >= 0:
-                probs_cand[idx_e] = 1.0
-
-        # 2. Full pipeline + model inference
-        elif pipeline is not None and _extract is not None:
+        if pipeline is not None and _extract is not None:
             if cm.shape[0] >= window_size + 1:
                 try:
                     if cm.shape[1] != pipeline._fitted_n_subcarriers:
@@ -549,15 +509,13 @@ def _inference_worker_fn(in_q, out_q, pipeline, model, le, classes,
 class InferenceProcess:
     """Manages a child process for CSI inference (bypasses GIL)."""
 
-    def __init__(self, pipeline, model, le, classes,
-                 window_size, cutoff, energy_thr):
+    def __init__(self, pipeline, model, le, classes, window_size, cutoff):
         self._pipeline    = pipeline
         self._model       = model
         self._le          = le
         self._classes     = list(classes)
         self._window_size = window_size
         self._cutoff      = cutoff
-        self._energy_thr  = energy_thr
         self._in_q  = None
         self._out_q = None
         self._proc  = None
@@ -569,12 +527,12 @@ class InferenceProcess:
             target=_inference_worker_fn,
             args=(self._in_q, self._out_q,
                   self._pipeline, self._model, self._le, self._classes,
-                  self._window_size, self._cutoff, self._energy_thr),
+                  self._window_size, self._cutoff),
             daemon=True,
         )
         self._proc.start()
 
-    def submit(self, infer_snap, variance, frame_count):
+    def submit(self, infer_snap, frame_count):
         """Pre-stack frames and send to worker (non-blocking)."""
         try:
             cm = np.vstack(infer_snap).astype(np.complex64)
@@ -586,7 +544,7 @@ class InferenceProcess:
         except Exception:
             pass
         try:
-            self._in_q.put_nowait((cm, variance, frame_count))
+            self._in_q.put_nowait((cm, frame_count))
         except Exception:
             pass
 
@@ -1003,10 +961,10 @@ class MonitorPage(QWidget):
         raw   = state.get("raw_label", "—")
         conf  = state.get("confidence", 0.0)
         color = _cc(label)
-        self._activity_block.set(label, f"Raw: {raw}", color)
+        self._activity_block.set(_disp(label), f"Raw: {_disp(raw)}", color)
         self._gauge.set(conf, color)
         self._conf_lbl.setText(f"Confidence: {conf:.1f}%")
-        self._raw_lbl.setText(f"Raw: {raw}")
+        self._raw_lbl.setText(f"Raw: {_disp(raw)}")
 
         fps = state.get("fps", 0.0)
         if fps <= 0:
@@ -1054,7 +1012,7 @@ class MonitorPage(QWidget):
             self._recent.setRowCount(n_rows)
             for r, (ts, lbl, cf, _fr) in enumerate(log[:n_rows]):
                 c = _cc(lbl)
-                items = [QTableWidgetItem(ts), QTableWidgetItem(lbl.upper()),
+                items = [QTableWidgetItem(ts), QTableWidgetItem(_disp(lbl).upper()),
                          QTableWidgetItem(f"{cf:.0f}%")]
                 items[1].setForeground(pg.mkColor(c))
                 for col, item in enumerate(items):
@@ -1276,7 +1234,7 @@ class ActivityLogPage(QWidget):
         )
         if total > 0 and counts:
             dom = max(counts, key=counts.get)
-            self._v_dom.setText(dom.upper())
+            self._v_dom.setText(_disp(dom).upper())
             self._v_dom.setStyleSheet(
                 f"font-size:14px; font-weight:bold; color:{_cc(dom)};"
                 f" border:none; background:transparent;"
@@ -1308,7 +1266,7 @@ class ActivityLogPage(QWidget):
             self._table.setRowCount(len(log))
             for r, (ts, lbl, cf, fr) in enumerate(log):
                 c = _cc(lbl)
-                items = [QTableWidgetItem(ts), QTableWidgetItem(lbl.upper()),
+                items = [QTableWidgetItem(ts), QTableWidgetItem(_disp(lbl).upper()),
                          QTableWidgetItem(f"{cf:.1f}%"), QTableWidgetItem(str(fr))]
                 items[1].setForeground(pg.mkColor(c))
                 for col, item in enumerate(items):
@@ -1463,6 +1421,7 @@ class SystemInfoPage(QWidget):
         root.addLayout(r1, stretch=1)
         self._infer_latency_lbl = infer_refs.get("LATENCY")
         self._infer_classes_lbl = infer_refs.get("CLASSES")
+        self._infer_model_lbl   = infer_refs.get("MODEL")
 
         # ── Row 2: Software + Connection ──────────────────────────────────────
         r2 = QHBoxLayout(); r2.setSpacing(10)
@@ -1488,7 +1447,8 @@ class SystemInfoPage(QWidget):
             self._infer_classes_lbl.setText(str(len(classes)))
 
     def set_model_name(self, model_key: str):
-        pass  # model name is static per session for now
+        if self._infer_model_lbl:
+            self._infer_model_lbl.setText(_MODEL_NAMES.get(model_key, model_key))
 
     @staticmethod
     def _metric_style(color: str) -> str:
@@ -1758,7 +1718,7 @@ class DashboardWindow(QMainWindow):
                  window_size: int, step: int, ema_alpha: float,
                  conf_thresh: float, cutoff: float, refresh_ms: int,
                  max_log: int, port: str, baud: int, demo: bool,
-                 models_dir: str, hyst_count: int = 2, energy_gate: float = 0.0):
+                 models_dir: str, hyst_count: int = 2):
         super().__init__()
         self.reader      = reader
         self.pipeline    = pipeline; self.le = le; self.model = model
@@ -1768,7 +1728,6 @@ class DashboardWindow(QMainWindow):
         self.ema_alpha   = ema_alpha; self.conf_thresh = conf_thresh
         self.max_log     = max_log; self.demo = demo
         self._hyst_min   = hyst_count
-        self._energy_thr = energy_gate
 
         self._ema_probs       = np.zeros(len(classes), dtype=np.float32)
         self._frames_since    = 0; self._last_seen = 0
@@ -1792,7 +1751,6 @@ class DashboardWindow(QMainWindow):
         self._infer_worker = InferenceProcess(
             pipeline=pipeline, model=model, le=le, classes=classes,
             window_size=window_size, cutoff=cutoff,
-            energy_thr=energy_gate,
         )
         self._infer_worker.start()
 
@@ -1867,6 +1825,7 @@ class DashboardWindow(QMainWindow):
             })
             self._sysinfo_page.set_classes(self.classes)
             self._monitor_page.set_model_name(model_key)
+            self._sysinfo_page.set_model_name(model_key)
             return True, f"'{_MODEL_NAMES.get(model_key, model_key)}' is now active"
         except Exception as e:
             return False, str(e)
@@ -1901,7 +1860,6 @@ class DashboardWindow(QMainWindow):
             else:
                 self._infer_worker.submit(
                     snap["infer_snap"],
-                    snap.get("variance", 0.0),
                     snap["frame_count"],
                 )
 
@@ -2011,8 +1969,6 @@ def _parse_args():
     p.add_argument("--warmup",      type=int,   default=d["warmup"])
     p.add_argument("--hyst-count",  type=int,   default=d["hyst_count"],
                    help="Consecutive confirmations before label switches (hysteresis)")
-    p.add_argument("--energy-gate", type=float, default=d["energy_gate"],
-                   help="Mean-amplitude threshold below which → 'empty'; 0=disabled")
     config.add_bool_argument(
         p, dest="demo", default=d["demo"],
         help="Synthetic demo data (no hardware/model needed)",
@@ -2073,7 +2029,6 @@ def main():
         max_log=args.max_log, port=args.port, baud=args.baud,
         demo=args.demo, models_dir=args.models_dir,
         hyst_count=args.hyst_count,
-        energy_gate=args.energy_gate,
     )
     center_qt_window(win, w=1440, h=840)
     win.start_timer(args.refresh)

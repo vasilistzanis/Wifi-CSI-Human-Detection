@@ -56,7 +56,7 @@ PLOTS_DIR = "models/plots"
 METRICS_JSON_PATH = "models/metrics.json"
 LATENCY_OUTPUT_CSV = "models/multi_model_latency.csv"
 LATENCY_OUTPUT_PLOT = "models/plots/Latency_Comparison.png"
-DEFAULT_WALK_FILE = "datasets/walk/walk_01.txt"
+DEFAULT_WALK_FILE = "datasets/walk_activity/walk_activity_01_vasilis_.txt"
 
 FILTER_CUTOFF_HZ = 10.0
 WINDOW_SIZE = 100
@@ -84,8 +84,8 @@ FILTER_WARMUP = 50
 # ------------------------------------------------------------------------------
 TRAINING_CLASS_CONFIG = {
     "empty": {"enabled": True, "folder": "empty"},
-    "idle": {"enabled": True, "folder": "idle"},
-    "walk": {"enabled": True, "folder": "walk"},
+    "no_activity": {"enabled": True, "folder": "no_activity"},
+    "walk_activity": {"enabled": True, "folder": "walk_activity"},
     "sit": {"enabled": False, "folder": "sit"},
     "fall": {"enabled": False, "folder": "fall"},
     "stand": {"enabled": False, "folder": "stand"},
@@ -191,7 +191,6 @@ DASHBOARD_CONF_THRESH   = 70.0    # Minimum confidence % to switch state (otherw
 DASHBOARD_MAX_LOG       = 60
 DASHBOARD_DEMO          = False
 DASHBOARD_HYST_COUNT    = 2       # Light hysteresis (e.g. 2) for state transition confirmation
-DASHBOARD_ENERGY_GATE   = 0.005   # Enabled energy gate: if variance is too low (< 0.005), defaults to "empty"
 
 
 # ------------------------------------------------------------------------------
@@ -266,7 +265,7 @@ PLOT_DATA_AUGMENTATION_SAVE = False
 PLOT_DATA_AUGMENTATION_SHOW = True
 PLOT_DATA_AUGMENTATION_MIN_FRAMES = 200
 PLOT_DATA_AUGMENTATION_SUBCARRIER = 30
-PLOT_DATA_AUGMENTATION_CLASS_LABEL = "walk"
+PLOT_DATA_AUGMENTATION_CLASS_LABEL = "walk_activity"
 
 PLOT_ADVANCED_METRICS_ROC = True
 PLOT_ADVANCED_METRICS_SAVE = False
@@ -379,7 +378,6 @@ SCRIPT_DEFAULTS = {
         "warmup":       FILTER_WARMUP,
         "demo":         DASHBOARD_DEMO,
         "hyst_count":   DASHBOARD_HYST_COUNT,
-        "energy_gate":  DASHBOARD_ENERGY_GATE,
     },
     "live_csi_dual_view": {
         "port":        SERIAL_PORT,

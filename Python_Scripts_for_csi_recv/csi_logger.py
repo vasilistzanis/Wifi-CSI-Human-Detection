@@ -157,7 +157,7 @@ def safe_set_buffer_size(ser: serial.Serial, rx_size: int) -> None:
 
 def prompt_for_label() -> str:
     """Prompt user for capture label."""
-    return input("Enter capture label (e.g. walk_1, fall_3, empty): ")
+    return input("Enter capture label (e.g. walk_activity_1, fall_3, empty): ")
 
 
 def export_csv_with_header(source_path: Path, csv_path: Path) -> None:
