@@ -69,6 +69,7 @@ RANDOM_SEED = 42
 MODELS_TO_TRAIN = "all"
 MODEL_KEYS = ["svm", "rf", "et", "knn", "lr", "gb", "mlp", "nb"]
 MODEL_CHOICES = MODEL_KEYS + ["all"]
+MODEL_FILES = {k: f"{k}.joblib" for k in MODEL_KEYS}
 AUGMENTATION_TECHNIQUES = ["noise", "shift", "scale", "time_warp"]
 TEST_RATIO = 0.2
 N_AUGMENTS = 4

@@ -176,20 +176,10 @@ def load_models(models_dir: str, model_choice: str):
     Exits with a clear message if any file is missing.
     """
     d = Path(models_dir)
-    model_files = {
-        "rf": "rf.joblib",
-        "svm": "svm.joblib",
-        "et": "et.joblib",
-        "knn": "knn.joblib",
-        "lr": "lr.joblib",
-        "gb": "gb.joblib",
-        "mlp": "mlp.joblib",
-        "nb": "nb.joblib"
-    }
     files = {
         "pipeline": d / "csi_pipeline.joblib",
         "le":       d / "label_encoder.joblib",
-        "model":    d / model_files.get(model_choice, "rf.joblib"),
+        "model":    d / config.MODEL_FILES.get(model_choice, "rf.joblib"),
     }
     for key, path in files.items():
         if not path.exists():

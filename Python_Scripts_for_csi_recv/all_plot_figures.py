@@ -35,41 +35,7 @@ import matplotlib.pyplot as plt
 # STYLE
 # ========================================================================
 
-# Professional light theme for thesis/paper printing
-STYLE = {
-    "bg":       "#ffffff",
-    "panel":    "#fafafa",
-    "text":     "#1a1a1a",
-    "grid":     "#e0e0e0",
-    "accent1":  "#2563eb",   # blue
-    "accent2":  "#f59e0b",   # amber
-    "accent3":  "#10b981",   # green
-    "accent4":  "#ef4444",   # red
-    "accent5":  "#8b5cf6",   # purple
-    "accent6":  "#06b6d4",   # cyan
-}
-
-PALETTE = [STYLE["accent1"], STYLE["accent2"], STYLE["accent3"],
-           STYLE["accent4"], STYLE["accent5"], STYLE["accent6"]]
-
-def _apply_style():
-    for style in ['seaborn-v0_8-whitegrid', 'seaborn-whitegrid', 'ggplot']:
-        try:
-            plt.style.use(style)
-            break
-        except Exception:
-            continue
-    plt.rcParams.update({
-        "font.family":      "DejaVu Sans",
-        "font.size":        11,
-        "axes.facecolor":   STYLE["panel"],
-        "figure.facecolor": STYLE["bg"],
-        "axes.grid":        True,
-        "grid.alpha":       0.4,
-        "grid.linewidth":   0.5,
-        "axes.spines.top":  False,
-        "axes.spines.right": False,
-    })
+from plot_styles import STYLE, PALETTE, _apply_style
 
 def _save_fig(fig, save_dir: Path, name: str):
     save_dir.mkdir(parents=True, exist_ok=True)

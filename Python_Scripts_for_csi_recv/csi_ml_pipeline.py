@@ -445,6 +445,15 @@ def _classify_feature(feature_name: str) -> str:
     return _STAT_TO_GROUP.get(stat, "Other")
 
 
+# Colors for each feature group — update here when adding a new group to _STAT_TO_GROUP.
+GROUP_COLORS: dict[str, str] = {
+    "Statistical": "#2563eb",
+    "FFT":         "#f59e0b",
+    "Temporal":    "#10b981",
+    "Other":       "#8b5cf6",
+}
+
+
 
 
 def extract_windows(data: np.ndarray,

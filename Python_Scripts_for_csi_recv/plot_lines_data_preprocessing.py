@@ -42,6 +42,7 @@ configure_console_output()
 
 from plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
+from plot_styles import PCA_COLORS
 
 
 try:
@@ -331,7 +332,7 @@ def main():
 
     raw_indices = select_subcarriers(n_sub, args.n_subcarriers)
     SC_COLORS  = get_color_palette(max(len(raw_indices), len(sc_indices), n_pca))
-    PCA_COLORS = ['#e63946', '#2a9d8f', '#e9c46a', '#457b9d', '#f4a261']
+    # PCA_COLORS imported from plot_styles (shared palette)
 
 
     def create_window():
