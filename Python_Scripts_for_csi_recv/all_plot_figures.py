@@ -60,7 +60,7 @@ def get_preprocessed_amplitude(complex_matrix, fs):
     # 2. Hampel filter
     amp_clean = pipeline.apply_hampel_filter(amp_active)
     # 3. Butterworth low-pass
-    amp_clean = pipeline.apply_lowpass_filter(amp_clean)
+    amp_clean = pipeline.apply_lowpass_filter(amp_clean, cutoff=pipeline.cutoff)
     return amp_clean, indices
 
 # ========================================================================

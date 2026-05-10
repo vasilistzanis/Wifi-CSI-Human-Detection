@@ -421,8 +421,10 @@ class CSIPipeline:
 
         if complex_matrix.shape[1] != self._fitted_n_subcarriers:
             raise ValueError(
-                f"Shape mismatch: input has {complex_matrix.shape[1]}, "
-                f"expected {self._fitted_n_subcarriers}. Check hardware config."
+                f"Shape mismatch: input has {complex_matrix.shape[1]} subcarriers, "
+                f"expected {self._fitted_n_subcarriers}. "
+                f"Ensure hardware config (bandwidth/channel) AND null removal settings "
+                f"match between training and inference."
             )
 
         data = self.remove_null_subcarriers(complex_matrix, fit=False)

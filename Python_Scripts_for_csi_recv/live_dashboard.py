@@ -458,6 +458,7 @@ def _inference_worker_fn(in_q, out_q, pipeline, model, le, classes,
     except ImportError:
         _extract = None
 
+    _mismatch_warned = False
     while True:
         try:
             msg = in_q.get(timeout=1.0)
@@ -474,7 +475,15 @@ def _inference_worker_fn(in_q, out_q, pipeline, model, le, classes,
             if cm.shape[0] >= window_size + 1:
                 try:
                     if cm.shape[1] != pipeline._fitted_n_subcarriers:
-                        pass  # shape mismatch
+                        if not _mismatch_warned:
+                            import sys as _sys
+                            print(
+                                f"[WARN] Subcarrier mismatch in inference: "
+                                f"got {cm.shape[1]}, expected {pipeline._fitted_n_subcarriers}. "
+                                f"Check hardware config (bandwidth/channel).",
+                                file=_sys.stderr, flush=True,
+                            )
+                            _mismatch_warned = True
                     else:
                         t0 = _time.monotonic()
                         processed = pipeline.transform(cm, use_pca=True, cutoff=cutoff)
@@ -484,6 +493,14 @@ def _inference_worker_fn(in_q, out_q, pipeline, model, le, classes,
                                 ok = True
                                 if hasattr(model, "n_features_in_"):
                                     ok = features.shape[1] == model.n_features_in_
+                                    if not ok:
+                                        import sys as _sys
+                                        print(
+                                            f"[WARN] Feature count mismatch: model expects "
+                                            f"{model.n_features_in_}, got {features.shape[1]}. "
+                                            f"Retrain the model.",
+                                            file=_sys.stderr, flush=True,
+                                        )
                                 if ok:
                                     if hasattr(model, "predict_proba"):
                                         probs = model.predict_proba(features)[0]

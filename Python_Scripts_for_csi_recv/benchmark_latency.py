@@ -130,7 +130,10 @@ def plot_comparison(df_comp, output_path):
 
     # Sort by Mean Latency for the plot
     df_plot = df_comp.copy()
-    df_plot['Mean Latency (ms)'] = df_plot['Mean Latency'].str.replace(' ms', '').astype(float)
+    if df_plot['Mean Latency'].dtype == object:
+        df_plot['Mean Latency (ms)'] = df_plot['Mean Latency'].str.replace(' ms', '').astype(float)
+    else:
+        df_plot['Mean Latency (ms)'] = df_plot['Mean Latency'].astype(float)
     df_plot = df_plot.sort_values('Mean Latency (ms)')
     
 
@@ -295,13 +298,11 @@ def main():
     # A mismatch means the model was trained before a feature-space change
     # (e.g. DWT removal).  Replace stale models with fresh fallbacks and warn.
     n_feat = dummy_feat.shape[1]
-    stale_names = []
     for name, (model, source) in list(loaded_models.items()):
         if source != "saved":
             continue
         expected = getattr(model, "n_features_in_", None)
         if expected is not None and expected != n_feat:
-            stale_names.append(name)
             print(f"  [STALE] {name}: saved model expects {expected} features, "
                   f"pipeline now produces {n_feat}. Using untrained fallback.")
             print(f"          → Re-train to fix: python csi_ml_pipeline.py "

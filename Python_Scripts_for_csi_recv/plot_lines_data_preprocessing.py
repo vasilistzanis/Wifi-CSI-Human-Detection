@@ -42,7 +42,7 @@ configure_console_output()
 
 from plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
-from plot_styles import PCA_COLORS
+from plot_styles import PCA_COLORS, _apply_style
 
 
 try:
@@ -304,22 +304,7 @@ def main():
     # ====================================================================
 
 
-    for style in ['seaborn-v0_8-whitegrid', 'seaborn-whitegrid', 'ggplot']:
-        try:
-            plt.style.use(style)
-            break
-        except Exception:
-            continue
-
-
-    plt.rcParams.update({
-        "font.family":      "DejaVu Sans",
-        "axes.facecolor":   "#fafafa",
-        "figure.facecolor": "#ffffff",
-        "axes.grid":        True,
-        "grid.alpha":       0.4,
-        "grid.linewidth":   0.4,
-    })
+    _apply_style()
 
 
     global_suptitle = (

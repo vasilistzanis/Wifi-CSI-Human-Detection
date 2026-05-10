@@ -495,7 +495,6 @@ def plot_roc_curves(
         y_bin = np.hstack([1 - y_bin, y_bin])  # ensure shape (N, 2)
 
     _apply_style()
-    n_models = len(loaded)
 
     # Layout: one subplot per class, repeated for each model
     # If many models: separate figure per model; else stack subplots

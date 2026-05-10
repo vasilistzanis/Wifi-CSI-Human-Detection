@@ -78,30 +78,31 @@ def main():
         f1_scores.append(test_f1)
 
 
+        safe_name = model_name.replace(" ", "_").replace("(", "").replace(")", "")
+
         # ----------------------------------------------------
         # 1. Plot Confusion Matrix
         # ----------------------------------------------------
         plt.figure(figsize=config.PLOT_ML_RESULTS_SIZE)
-        ax = sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                         cbar=False, square=True, 
+        ax = sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                         cbar=False, square=True,
                          xticklabels=classes, yticklabels=classes,
                          annot_kws={"size": 16, "weight": "bold"})
-        
 
-        plt.title(f"Confusion Matrix: {model_name}\nAcc: {test_acc:.1f}% | F1: {test_f1:.1f}%", 
+
+        plt.title(f"Confusion Matrix: {model_name}\nAcc: {test_acc:.1f}% | F1: {test_f1:.1f}%",
                   pad=15, fontweight='bold', fontsize=14)
         plt.ylabel('True Class', fontweight='bold', fontsize=12)
         plt.xlabel('Predicted Class', fontweight='bold', fontsize=12)
-        
+
 
         # Ensure labels are rotated nicely
         plt.xticks(rotation=0)
         plt.yticks(rotation=0)
         plt.tight_layout()
-        
+
 
         if args.save:
-            safe_name = model_name.replace(" ", "_").replace("(", "").replace(")", "")
             img_path = out_dir / f"CM_{safe_name}.png"
             plt.savefig(img_path, dpi=300, bbox_inches='tight')
             print(f"  [OK] Saved {img_path.name}")

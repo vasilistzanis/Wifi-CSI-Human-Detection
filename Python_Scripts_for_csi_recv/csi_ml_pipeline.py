@@ -601,7 +601,7 @@ def build_dataset(
     if pipeline_kwargs is None:
         pipeline_kwargs = {'fs': config.SAMPLING_RATE, 'use_diff': True}
 
-    _fs     = float(pipeline_kwargs.get('fs', 100.0))  # ΑΛΛΑΓΗ
+    _fs     = float(pipeline_kwargs.get('fs', config.SAMPLING_RATE))  # ΑΛΛΑΓΗ
     _cutoff = float(cutoff)                            # ΑΛΛΑΓΗ — passed to bandwidth-limited FFT features
 
     do_augment = bool(augment_techniques)  # empty list / None -> no augmentation
@@ -1115,17 +1115,17 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
 
 
     mlp_grid = {
-        'hidden_layer_sizes': [(100,), (100, 50), (50, 50)],
-        'alpha': [0.0001, 0.001, 0.01],
-        'learning_rate': ['constant', 'adaptive'],
+        'clf__hidden_layer_sizes': [(100,), (100, 50), (50, 50)],
+        'clf__alpha': [0.0001, 0.001, 0.01],
+        'clf__learning_rate': ['constant', 'adaptive'],
     }
     print("\n[TUNE] Tuning MLP (Neural Network)...")
     mlp_search = GridSearchCV(
-        MLPClassifier(max_iter=500, random_state=random_seed),
+        Pipeline([('scaler', StandardScaler()), ('clf', MLPClassifier(max_iter=500, random_state=random_seed))]),
         mlp_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
     mlp_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
-    best_params['MLP'] = mlp_search.best_params_
+    best_params['MLP'] = {k.replace('clf__', ''): v for k, v in mlp_search.best_params_.items()}
     print(f"   Best MLP params : {mlp_search.best_params_}")
     print(f"   Best MLP CV acc : {mlp_search.best_score_*100:.2f}%")
 
@@ -1152,7 +1152,8 @@ def train_and_evaluate(
     cv_folds: int = config.CV_FOLDS,
     best_params: dict = None,
     random_seed: int = config.RANDOM_SEED,
-    target_model: str = config.MODELS_TO_TRAIN
+    target_model: str = config.MODELS_TO_TRAIN,
+    n_pca: int = None,
 ) -> dict:
     """
     Train SVM, RF, K-NN, Logistic Regression, Extra Trees, Naive Bayes.
@@ -1249,8 +1250,8 @@ def train_and_evaluate(
         random_seed=random_seed
     )
     
-    # Calculate actual number of PCA components used based on feature count
-    n_pca = int(X_train.shape[1] // N_STATS)
+    if n_pca is None:
+        n_pca = int(X_train.shape[1] // N_STATS)
 
 
     for name, model in models.items():
@@ -1592,7 +1593,8 @@ def main():
         train_groups_orig, le, best_params=best_params,
         random_seed=args.seed,
         target_model=args.model,
-        cv_folds=args.cv_folds
+        cv_folds=args.cv_folds,
+        n_pca=dataset_info['n_pca'],
     )
 
 

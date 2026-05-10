@@ -155,7 +155,7 @@ class ReaderThread(threading.Thread):
 
 
         # Energy: rms of short-term differences (last 10 samples)
-        diff   = np.diff(wf_norm, prepend=wf_norm[0])
+        diff   = np.append(np.diff(wf_norm), 0.0)
         energy = float(np.sqrt(np.mean(diff[-10:] ** 2)))
         return wf_norm, energy, fc
 

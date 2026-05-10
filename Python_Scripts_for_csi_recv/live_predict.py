@@ -62,7 +62,6 @@ except ImportError:
 
 
 # --- Defaults -----------------------------------------------------------------
-import config
 _IS_WIN        = os.name == "nt"
 DEFAULT_PORT   = config.SERIAL_PORT
 DEFAULT_BAUD   = config.BAUD_RATE
@@ -426,6 +425,7 @@ def main() -> int:
           f"| Step: {args.step}  "
           f"| History: {args.history}")
     print(f"  Verbose : {args.verbose}")
+    print(f"  Pipeline fs: {pipeline.fs} Hz  (hardware must match — retrain if different)")
     print("=" * 52)
     print("  Press Ctrl+C to stop.\n")
 
@@ -496,10 +496,19 @@ def main() -> int:
                 # happened to be dropped during warmup
                 if frame_count >= buf_size:
                     warmup_done = True
+                    observed_fps = fps_tracker.fps
                     print(
                         f"\r  [OK]  Buffer ready - live predictions starting!"
                         f"{'':30}"
                     )
+                    if observed_fps > 0 and abs(observed_fps - pipeline.fs) / pipeline.fs > 0.2:
+                        print(
+                            f"  [WARN] Observed FPS ({observed_fps:.1f}) differs from "
+                            f"training fs ({pipeline.fs} Hz) by "
+                            f"{abs(observed_fps - pipeline.fs) / pipeline.fs * 100:.0f}%. "
+                            f"FFT features will be computed at wrong frequencies — retrain.",
+                            file=sys.stderr,
+                        )
                 continue
 
             # -- Inference gate -------------------------------------------
