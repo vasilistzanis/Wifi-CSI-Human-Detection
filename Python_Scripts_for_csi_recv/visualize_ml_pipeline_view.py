@@ -420,7 +420,7 @@ def plot_feature_vector(
 
     # Full pipeline transform (saved PCA + scaler)
     processed = pipeline.transform(window, use_pca=True).astype(np.float64)
-    feat = extract_features_from_window(processed)
+    feat = extract_features_from_window(processed, fs=pipeline.fs, cutoff_hz=pipeline.cutoff)
 
     n_pca = processed.shape[1]
     feature_names = _get_feature_names(n_pca)

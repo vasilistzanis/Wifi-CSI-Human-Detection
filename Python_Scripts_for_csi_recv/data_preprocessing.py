@@ -36,6 +36,8 @@ from csi_parser import SeqStats
 from csi_parser import configure_console_output
 configure_console_output()
 
+import config
+
 
 # ----------------------------------------------------------------------------
 # LOADERS
@@ -174,9 +176,9 @@ class CSIPipeline:
 
     def __init__(
         self,
-        fs: float = 100.0,
+        fs: float = config.SAMPLING_RATE,
         use_diff: bool = True,
-        cutoff: float = 10.0,
+        cutoff: float = config.FILTER_CUTOFF_HZ,
     ):
         self.fs = fs
         self.use_diff = use_diff
@@ -233,7 +235,7 @@ class CSIPipeline:
 
     # -- 3. Butterworth Low-Pass (Vectorized) --------------------------------
     def apply_lowpass_filter(self, data: np.ndarray,
-                             cutoff: float = 10.0) -> np.ndarray:
+                             cutoff: float = config.FILTER_CUTOFF_HZ) -> np.ndarray:
         from scipy.signal import sosfiltfilt
 
         nyquist = self.fs / 2.0
@@ -465,11 +467,11 @@ if __name__ == "__main__":
 
     print(f"\n[STATS] Input: {complex_matrix.shape}")
 
-    pipeline = CSIPipeline(fs=100.0, use_diff=True)
+    pipeline = CSIPipeline(fs=config.SAMPLING_RATE, use_diff=True)
     pipeline.fit_from_recordings(
         [complex_matrix],
         use_pca=True,
-        n_components=10,
+        n_components=config.N_PCA_COMPONENTS,
         scaler_type='standard',
     )
     processed = pipeline.transform(complex_matrix, use_pca=True)

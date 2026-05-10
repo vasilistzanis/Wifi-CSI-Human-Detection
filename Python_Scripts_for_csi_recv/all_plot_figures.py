@@ -371,7 +371,7 @@ def plot_phase_vs_time(complex_matrix, fs, title_base, save_dir, save):
 # ========================================================================
 
 def plot_motion_analysis(complex_matrix, fs, title_base, save_dir, save,
-                         f_max=10.0, stft_window=64):
+                         f_max=config.FILTER_CUTOFF_HZ, stft_window=64):
     amp_clean, indices = get_preprocessed_amplitude(complex_matrix, fs)
     n_frames, n_sc = amp_clean.shape
     duration = n_frames / fs

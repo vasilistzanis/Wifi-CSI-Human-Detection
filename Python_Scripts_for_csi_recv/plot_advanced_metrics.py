@@ -196,7 +196,7 @@ def _build_test_set(cfg: dict, models_dir: Path, data_dir: Path,
             n_proc = proc_full.shape[0]
             for s in range(0, n_proc - window_size + 1, step):
                 proc = proc_full[s:s + window_size]
-                feat = extract_features_from_window(proc)
+                feat = extract_features_from_window(proc, fs=pipeline.fs, cutoff_hz=pipeline.cutoff)
                 if np.isfinite(feat).all():
                     X_parts.append(feat)
                     y_parts.append(cls_idx)

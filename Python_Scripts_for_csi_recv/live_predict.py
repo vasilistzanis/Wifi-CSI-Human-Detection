@@ -31,6 +31,7 @@ from pathlib import Path
 from csi_parser import configure_console_output
 configure_console_output()
 
+import config
 import numpy as np
 import serial
 
@@ -231,7 +232,7 @@ def run_inference(
     model,
     le,
     window_size: int,
-    cutoff: float = 10.0,
+    cutoff: float = config.FILTER_CUTOFF_HZ,
 ) -> "tuple[str, float, np.ndarray] | None":
     """
     Transform the current rolling buffer and return
@@ -244,7 +245,7 @@ def run_inference(
     1. Stack raw complex frames  -> (N, n_subcarriers)
     2. pipeline.transform()      -> (N-1, n_pca)   [temporal diff reduces by 1]
     3. Take last `window_size` rows as inference window
-    4. extract_features_from_window -> (n_pca * 14,) feature vector  [currently 140]
+    4. extract_features_from_window -> (n_pca * 22,) feature vector  [currently 220]
     5. model.predict_proba        -> argmax + per-class probabilities
     """
     # 1. Stack - frames may rarely have inconsistent lengths if the ESP32
@@ -285,7 +286,7 @@ def run_inference(
     window = processed[-window_size:]                       # (window_size, n_pca)
 
     # 4. Feature extraction -> flat vector
-    features = extract_features_from_window(window).reshape(1, -1)
+    features = extract_features_from_window(window, fs=pipeline.fs, cutoff_hz=cutoff).reshape(1, -1)
 
     # Guard against corrupted data propagating to model
     if not np.all(np.isfinite(features)):

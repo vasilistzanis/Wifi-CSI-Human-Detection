@@ -479,7 +479,7 @@ def _inference_worker_fn(in_q, out_q, pipeline, model, le, classes,
                         t0 = _time.monotonic()
                         processed = pipeline.transform(cm, use_pca=True, cutoff=cutoff)
                         if processed.shape[0] >= window_size:
-                            features = _extract(processed[-window_size:]).reshape(1, -1)
+                            features = _extract(processed[-window_size:], fs=pipeline.fs, cutoff_hz=cutoff).reshape(1, -1)
                             if _np.all(_np.isfinite(features)):
                                 ok = True
                                 if hasattr(model, "n_features_in_"):
@@ -1718,7 +1718,7 @@ class DashboardWindow(QMainWindow):
                  window_size: int, step: int, ema_alpha: float,
                  conf_thresh: float, cutoff: float, refresh_ms: int,
                  max_log: int, port: str, baud: int, demo: bool,
-                 models_dir: str, hyst_count: int = 2):
+                 models_dir: str, hyst_count: int = config.DASHBOARD_HYST_COUNT):
         super().__init__()
         self.reader      = reader
         self.pipeline    = pipeline; self.le = le; self.model = model

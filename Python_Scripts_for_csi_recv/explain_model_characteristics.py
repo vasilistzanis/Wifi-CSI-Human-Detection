@@ -149,7 +149,7 @@ def plot_permutation_importance(
     model, X_test, y_test, feature_names,
     model_name: str, top_n: int = 15,
     save_dir: Path = None, save: bool = False,
-    n_repeats: int = 10, random_state: int = 42,
+    n_repeats: int = config.XAI_N_REPEATS, random_state: int = config.RANDOM_SEED,
 ):
     """
     Model-agnostic feature importance via sklearn.inspection.permutation_importance.
@@ -281,7 +281,7 @@ def plot_builtin_importance(
 def plot_group_importance(
     model, X_test, y_test, feature_names, model_name: str,
     save_dir: Path = None, save: bool = False,
-    n_repeats: int = 10, random_state: int = 42,
+    n_repeats: int = config.XAI_N_REPEATS, random_state: int = config.RANDOM_SEED,
 ):
     """
     Aggregate feature importance by category: Statistical, FFT.
@@ -394,7 +394,7 @@ def plot_per_class_importance(
     model, X_test, y_test, feature_names, class_names,
     model_name: str, top_n: int = 10,
     save_dir: Path = None, save: bool = False,
-    n_repeats: int = 10, random_state: int = 42,
+    n_repeats: int = config.XAI_N_REPEATS, random_state: int = config.RANDOM_SEED,
 ):
     """
     Compute permutation importance separately for each class.
@@ -631,7 +631,7 @@ def main():
             augment_techniques=[],
             n_augments=0,
             simulation_mode=bool(saved_config.get('simulation_mode', args.simulate)),
-            test_recording_ratio=float(saved_config.get('test_recording_ratio', 0.2)),
+            test_recording_ratio=float(saved_config.get('test_recording_ratio', config.TEST_RATIO)),
             random_seed=int(saved_config.get('random_seed', args.seed)),
             n_pca=int(saved_config.get('n_pca', args.pca)),
             cutoff=float(saved_config.get('cutoff', args.cutoff)),
@@ -653,7 +653,7 @@ def main():
             augment_techniques=[],      # No augmentation for XAI
             n_augments=0,
             simulation_mode=args.simulate,
-            test_recording_ratio=0.2,
+            test_recording_ratio=config.TEST_RATIO,
             random_seed=args.seed,
             n_pca=args.pca,
             cutoff=args.cutoff,

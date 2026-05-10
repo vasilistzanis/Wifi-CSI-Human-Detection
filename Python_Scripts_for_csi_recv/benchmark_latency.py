@@ -97,7 +97,7 @@ _MODEL_REGISTRY = {
 }
 
 
-def load_or_build_models(models_dir: Path, seed: int = 42) -> dict:
+def load_or_build_models(models_dir: Path, seed: int = config.RANDOM_SEED) -> dict:
     """
     Load trained models from models_dir if available.
     Falls back to a freshly-initialised model (fitted on tiny dummy data)
@@ -259,7 +259,7 @@ def main():
     # transform the full buf_size buffer, then take the last window_size rows.
     processed_ref = pipeline.transform(window_data, use_pca=True).astype(np.float64)
     dummy_feat = extract_features_from_window(
-        processed_ref[-args.window_size:]
+        processed_ref[-args.window_size:], fs=pipeline.fs, cutoff_hz=pipeline.cutoff
     ).reshape(1, -1)
     X_dummy = np.tile(dummy_feat, (10, 1))
     y_dummy = np.array([0, 1] * 5)
@@ -338,7 +338,7 @@ def main():
         # Warm-up
         for _ in range(args.n_warmup):
             proc = pipeline.transform(window_data, use_pca=True).astype(np.float64)
-            feat = extract_features_from_window(proc[-args.window_size:]).reshape(1, -1)
+            feat = extract_features_from_window(proc[-args.window_size:], fs=pipeline.fs, cutoff_hz=pipeline.cutoff).reshape(1, -1)
             model.predict(feat)
 
         # Benchmark
@@ -346,7 +346,7 @@ def main():
         for _ in range(args.n_benchmark):
             t_start = time.perf_counter()
             proc = pipeline.transform(window_data, use_pca=True).astype(np.float64)
-            feat = extract_features_from_window(proc[-args.window_size:]).reshape(1, -1)
+            feat = extract_features_from_window(proc[-args.window_size:], fs=pipeline.fs, cutoff_hz=pipeline.cutoff).reshape(1, -1)
             model.predict(feat)
             t_end = time.perf_counter()
 

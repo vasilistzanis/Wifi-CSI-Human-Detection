@@ -30,7 +30,7 @@ Usage:
 # Increment this string whenever the feature extraction semantics change
 # (formula, normalisation, added/removed features).  It is written to
 # metrics.json at save time and checked by benchmark_latency.py at load time.
-FEATURE_VECTOR_VERSION = "3"  # ΑΛΛΑΓΗ
+FEATURE_VECTOR_VERSION = "4"  # ΑΛΛΑΓΗ
 
 import sys
 import json
@@ -193,7 +193,7 @@ _AUG_FN_MAP = {
 
 
 def augment_window(window: np.ndarray,
-                   n_augments: int = 4,
+                   n_augments: int = config.N_AUGMENTS,
                    techniques: list = None,
                    seed: int = None,
                    class_label: str = None) -> list:
@@ -261,7 +261,7 @@ def _dwt_features_for_col(col: np.ndarray, wavelet: str = 'db4',
 
 
 
-def extract_features_from_window(window: np.ndarray, fs: float = 100.0) -> np.ndarray:  # ΑΛΛΑΓΗ
+def extract_features_from_window(window: np.ndarray, fs: float = config.SAMPLING_RATE, cutoff_hz: float = config.FILTER_CUTOFF_HZ) -> np.ndarray:  # ΑΛΛΑΓΗ
     """
     22 features per PCA component -> flat feature vector.
 
@@ -284,16 +284,23 @@ def extract_features_from_window(window: np.ndarray, fs: float = 100.0) -> np.nd
 
         # ----------------------------------------------------------------
         # FFT — υπολογίζεται ΜΙΑ ΦΟΡΑ, χρησιμοποιείται από πολλά features
+        # Περιορίζεται στο active bandwidth [0, cutoff_hz] ώστε τα bins
+        # πάνω από το Butterworth cutoff (≈ 0) να μην αραιώνουν τα stats.
         # ----------------------------------------------------------------
-        fft_vals       = np.abs(np.fft.rfft(col))
-        freqs          = np.fft.rfftfreq(len(col), d=1.0 / fs)  # ΑΛΛΑΓΗ
-        fft_power      = fft_vals ** 2  # ΑΛΛΑΓΗ
-        fft_vals_no_dc = fft_vals[1:]
-        freqs_no_dc    = freqs[1:]  # ΑΛΛΑΓΗ
-        n_bins         = len(fft_vals_no_dc)
+        fft_vals        = np.abs(np.fft.rfft(col))
+        freqs           = np.fft.rfftfreq(len(col), d=1.0 / fs)
+        fft_power       = fft_vals ** 2
 
-        fft_mean = float(fft_vals.mean())
-        fft_std  = float(fft_vals.std())
+        active_mask_fft  = freqs <= cutoff_hz                    # ΑΛΛΑΓΗ — e.g. bins 0–10 Hz
+        fft_vals_active  = fft_vals[active_mask_fft]             # ΑΛΛΑΓΗ — e.g. 11 bins
+        freqs_active     = freqs[active_mask_fft]                # ΑΛΛΑΓΗ
+
+        fft_vals_no_dc  = fft_vals_active[1:]                    # ΑΛΛΑΓΗ — exclude DC, e.g. 10 bins
+        freqs_no_dc     = freqs_active[1:]                       # ΑΛΛΑΓΗ
+        n_bins_active   = len(fft_vals_no_dc)                    # ΑΛΛΑΓΗ — replaces n_bins (=50→10)
+
+        fft_mean = float(fft_vals_active.mean())                 # ΑΛΛΑΓΗ — active band only
+        fft_std  = float(fft_vals_active.std())                  # ΑΛΛΑΓΗ — active band only
 
         # ----------------------------------------------------------------
         # ZCR
@@ -304,7 +311,7 @@ def extract_features_from_window(window: np.ndarray, fs: float = 100.0) -> np.nd
         # ----------------------------------------------------------------
         # Dominant frequency index (exclude DC)
         # ----------------------------------------------------------------
-        fft_peak_idx = float(np.argmax(fft_vals_no_dc) + 1) / n_bins  # normalised (0,1]
+        fft_peak_idx = float(np.argmax(fft_vals_no_dc) + 1) / n_bins_active  # ΑΛΛΑΓΗ — normalised within active band (0,1]
 
         # ----------------------------------------------------------------
         # Spectral entropy (exclude DC)
@@ -416,8 +423,8 @@ def _get_feature_names(n_pca_components: int) -> list[str]:
 
 
 def extract_windows(data: np.ndarray,
-                    window_size: int = 50,
-                    step: int = 25) -> list[np.ndarray]:
+                    window_size: int = config.WINDOW_SIZE,
+                    step: int = config.PIPELINE_STEP_SIZE) -> list[np.ndarray]:
     """Sliding window -> list of (window_size, n_components) arrays."""
     if data.shape[0] < window_size:
         return []
@@ -429,8 +436,8 @@ def extract_windows(data: np.ndarray,
 
 def _make_group_cv(y: np.ndarray,
                    groups: np.ndarray,
-                   requested_folds: int = 5,
-                   random_seed: int = 42) -> tuple:
+                   requested_folds: int = config.CV_FOLDS,
+                   random_seed: int = config.RANDOM_SEED) -> tuple:
     """
     Build a group-aware CV splitter so windows from the same recording
     never appear in both train and validation folds.
@@ -560,7 +567,8 @@ def build_dataset(
     if pipeline_kwargs is None:
         pipeline_kwargs = {'fs': config.SAMPLING_RATE, 'use_diff': True}
 
-    _fs = float(pipeline_kwargs.get('fs', 100.0))  # ΑΛΛΑΓΗ
+    _fs     = float(pipeline_kwargs.get('fs', 100.0))  # ΑΛΛΑΓΗ
+    _cutoff = float(cutoff)                            # ΑΛΛΑΓΗ — passed to bandwidth-limited FFT features
 
     do_augment = bool(augment_techniques)  # empty list / None -> no augmentation
     if do_augment:
@@ -681,7 +689,7 @@ def build_dataset(
                         w_proj = pp.scaler.transform(w_proj)
                     else:
                         w_proj = w_raw[:, :n_pca]
-                    X_te.append(extract_features_from_window(w_proj, fs=_fs))  # ΑΛΛΑΓΗ
+                    X_te.append(extract_features_from_window(w_proj, fs=_fs, cutoff_hz=_cutoff))  # ΑΛΛΑΓΗ
                     y_te.append(label_idx)
                 else:
                     # Train original (no augmentation)
@@ -690,7 +698,7 @@ def build_dataset(
                         w_proj = pp.scaler.transform(w_proj)
                     else:
                         w_proj = w_raw[:, :n_pca]
-                    feat_orig = extract_features_from_window(w_proj, fs=_fs)  # ΑΛΛΑΓΗ
+                    feat_orig = extract_features_from_window(w_proj, fs=_fs, cutoff_hz=_cutoff)  # ΑΛΛΑΓΗ
                     X_tr_orig.append(feat_orig)
                     y_tr_orig.append(label_idx)
                     train_groups_orig.append(recording_group_id)
@@ -713,7 +721,7 @@ def build_dataset(
                                 aw_proj = pp.scaler.transform(aw_proj)
                             else:
                                 aw_proj = aw_raw[:, :n_pca]
-                            X_tr.append(extract_features_from_window(aw_proj, fs=_fs))  # ΑΛΛΑΓΗ
+                            X_tr.append(extract_features_from_window(aw_proj, fs=_fs, cutoff_hz=_cutoff))  # ΑΛΛΑΓΗ
                             y_tr.append(label_idx)
                     global_window_idx += 1
             recording_group_id += 1
@@ -855,7 +863,7 @@ def build_dataset(
                 # Project original window through PCA+scaler
                 w_proj = pipeline.pca.transform(w_raw)
                 w_proj = pipeline.scaler.transform(w_proj)
-                feat_orig = extract_features_from_window(w_proj, fs=_fs)  # ΑΛΛΑΓΗ
+                feat_orig = extract_features_from_window(w_proj, fs=_fs, cutoff_hz=_cutoff)  # ΑΛΛΑΓΗ
 
 
                 X_tr_orig.append(feat_orig)
@@ -877,7 +885,7 @@ def build_dataset(
                             continue
                         aw_proj = pipeline.pca.transform(aw_raw)
                         aw_proj = pipeline.scaler.transform(aw_proj)
-                        X_tr.append(extract_features_from_window(aw_proj, fs=_fs))  # ΑΛΛΑΓΗ
+                        X_tr.append(extract_features_from_window(aw_proj, fs=_fs, cutoff_hz=_cutoff))  # ΑΛΛΑΓΗ
                         y_tr.append(label_idx)
                         aug_count_cls += 1
                 global_window_idx += 1
@@ -896,7 +904,7 @@ def build_dataset(
                 continue
             # Test files: use full pipeline.transform (no augmentation)
             for w in extract_windows(processed, window_size, step):
-                X_te.append(extract_features_from_window(w, fs=_fs))  # ΑΛΛΑΓΗ
+                X_te.append(extract_features_from_window(w, fs=_fs, cutoff_hz=_cutoff))  # ΑΛΛΑΓΗ
                 y_te.append(label_idx)
                 te_wins += 1
 
@@ -957,8 +965,8 @@ def build_dataset(
 def tune_hyperparameters(X_train_orig: np.ndarray,
                          y_train_orig: np.ndarray,
                          train_groups_orig: np.ndarray,
-                         cv_folds: int = 5,
-                         random_seed: int = 42) -> dict:
+                         cv_folds: int = config.CV_FOLDS,
+                         random_seed: int = config.RANDOM_SEED) -> dict:
     """
     GridSearchCV on non-augmented train data.
     Returns best params for SVM and RF.
@@ -1107,10 +1115,10 @@ def train_and_evaluate(
     y_test:       np.ndarray,
     train_groups_orig: np.ndarray,
     le: LabelEncoder,
-    cv_folds: int = 5,
+    cv_folds: int = config.CV_FOLDS,
     best_params: dict = None,
-    random_seed: int = 42,
-    target_model: str = "all"
+    random_seed: int = config.RANDOM_SEED,
+    target_model: str = config.MODELS_TO_TRAIN
 ) -> dict:
     """
     Train SVM, RF, K-NN, Logistic Regression, Extra Trees, Naive Bayes.
