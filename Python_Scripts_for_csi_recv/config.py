@@ -338,7 +338,7 @@ SCRIPT_DEFAULTS = {
         "use_diff": True,
         "simulate": False,
         "save_model": False,
-        "tune": False,
+        "tune": True,
         "model": MODELS_TO_TRAIN,
         "seed": RANDOM_SEED,
         "cv_folds": CV_FOLDS,
