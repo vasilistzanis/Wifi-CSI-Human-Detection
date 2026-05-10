@@ -52,45 +52,7 @@ except ImportError as e:
 # STYLE
 # -----------------------------------------------------------------------
 
-STYLE = {
-    "bg":    "#ffffff",
-    "panel": "#fafafa",
-    "text":  "#1a1a1a",
-    "grid":  "#e0e0e0",
-    "a1":    "#2563eb",
-    "a2":    "#f59e0b",
-    "a3":    "#10b981",
-    "a4":    "#ef4444",
-    "a5":    "#8b5cf6",
-    "a6":    "#06b6d4",
-}
-
-CLASS_COLORS  = [STYLE["a1"], STYLE["a3"], STYLE["a4"], STYLE["a2"],
-                 STYLE["a5"], STYLE["a6"]]
-MODEL_PALETTE = [
-    "#2563eb", "#f59e0b", "#10b981", "#ef4444",
-    "#8b5cf6", "#06b6d4", "#f97316", "#64748b",
-]
-
-
-def _apply_style():
-    for s in ["seaborn-v0_8-whitegrid", "seaborn-whitegrid", "ggplot"]:
-        try:
-            plt.style.use(s)
-            break
-        except Exception:
-            continue
-    plt.rcParams.update({
-        "font.family":       "DejaVu Sans",
-        "font.size":         11,
-        "axes.facecolor":    STYLE["panel"],
-        "figure.facecolor":  STYLE["bg"],
-        "axes.grid":         True,
-        "grid.alpha":        0.35,
-        "grid.linewidth":    0.5,
-        "axes.spines.top":   False,
-        "axes.spines.right": False,
-    })
+from plot_styles import STYLE, CLASS_COLORS, MODEL_PALETTE, _apply_style
 
 
 def _save_fig(fig, save_dir: Path, name: str):
@@ -501,20 +463,15 @@ def plot_roc_curves(
         return
 
     # Determine which models to plot
-    all_model_keys = {
-        "rf": "rf.joblib",  "svm": "svm.joblib", "mlp": "mlp.joblib",
-        "knn": "knn.joblib", "lr": "lr.joblib",  "et":  "et.joblib",
-        "gb": "gb.joblib",   "nb": "nb.joblib",
-    }
     if target_models and target_models != ["all"]:
-        keys = [k for k in target_models if k in all_model_keys]
+        keys = [k for k in target_models if k in config.MODEL_FILES]
     else:
-        keys = list(all_model_keys.keys())
+        keys = list(config.MODEL_FILES.keys())
 
     # Load requested models
     loaded = {}
     for key in keys:
-        path = models_dir / all_model_keys[key]
+        path = models_dir / config.MODEL_FILES[key]
         if not path.exists():
             print(f"  [SKIP] {path.name} not found")
             continue

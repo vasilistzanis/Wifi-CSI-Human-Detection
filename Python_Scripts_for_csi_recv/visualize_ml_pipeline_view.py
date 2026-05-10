@@ -51,44 +51,7 @@ except ImportError as e:
 # STYLE  (matches thesis palette)
 # -----------------------------------------------------------------------
 
-STYLE = {
-    "bg":      "#ffffff",
-    "panel":   "#fafafa",
-    "text":    "#1a1a1a",
-    "grid":    "#e0e0e0",
-    "a1":      "#2563eb",
-    "a2":      "#f59e0b",
-    "a3":      "#10b981",
-    "a4":      "#ef4444",
-    "a5":      "#8b5cf6",
-    "a6":      "#06b6d4",
-}
-
-PCA_COLORS = ["#e63946", "#2a9d8f", "#e9c46a", "#457b9d", "#f4a261",
-              "#6a4c93", "#1982c4", "#8ac926", "#ff595e", "#ffca3a"]
-
-CLASS_COLORS = [STYLE["a1"], STYLE["a3"], STYLE["a4"], STYLE["a2"],
-                STYLE["a5"], STYLE["a6"]]
-
-
-def _apply_style():
-    for s in ["seaborn-v0_8-whitegrid", "seaborn-whitegrid", "ggplot"]:
-        try:
-            plt.style.use(s)
-            break
-        except Exception:
-            continue
-    plt.rcParams.update({
-        "font.family":       "DejaVu Sans",
-        "font.size":         10,
-        "axes.facecolor":    STYLE["panel"],
-        "figure.facecolor":  STYLE["bg"],
-        "axes.grid":         True,
-        "grid.alpha":        0.35,
-        "grid.linewidth":    0.5,
-        "axes.spines.top":   False,
-        "axes.spines.right": False,
-    })
+from plot_styles import STYLE, PCA_COLORS, CLASS_COLORS, _apply_style
 
 
 def _save_fig(fig, save_dir: Path, name: str):
