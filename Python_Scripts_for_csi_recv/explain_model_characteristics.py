@@ -41,6 +41,7 @@ try:
     from csi_ml_pipeline import (
         build_dataset, _get_feature_names, N_STATS,
         ALL_AUGMENT_TECHNIQUES,
+        _STAT_TO_GROUP, _classify_feature,
     )
     _PIPELINE_OK = True
 except ImportError:
@@ -73,6 +74,7 @@ PALETTE = [STYLE["accent1"], STYLE["accent2"], STYLE["accent3"],
 GROUP_COLORS = {
     "Statistical":  "#2563eb",
     "FFT":          "#f59e0b",
+    "Temporal":     "#10b981",
     "Other":        "#8b5cf6",
 }
 
@@ -108,29 +110,8 @@ def _save_fig(fig, save_dir: Path, name: str):
 # ========================================================================
 # FEATURE GROUPING HELPERS
 # ========================================================================
-
-# Mapping from stat suffix -> human-readable group
-_STAT_TO_GROUP = {
-    'mean': 'Statistical', 'std': 'Statistical', 'max': 'Statistical',
-    'min': 'Statistical', 'range': 'Statistical', 'median': 'Statistical',
-    'energy': 'Statistical', 'skewness': 'Statistical', 'excess_kurtosis': 'Statistical',
-    'zcr': 'Statistical',
-    'fft_mean': 'FFT', 'fft_std': 'FFT',
-    'fft_peak_idx': 'FFT', 'spectral_entropy': 'FFT',
-}
-
-
-def _classify_feature(feature_name: str) -> str:
-    """Classify a feature name like 'PC3_spectral_entropy' into its group."""
-    # Strip the PC prefix (e.g. 'PC1_' -> '')
-    parts = feature_name.split("_", 1)
-    if len(parts) == 2 and parts[0].startswith("PC"):
-        stat_name = parts[1]
-    else:
-        stat_name = feature_name
-
-    return _STAT_TO_GROUP.get(stat_name, "Other")
-
+# _STAT_TO_GROUP and _classify_feature are imported from csi_ml_pipeline.
+# To add a new feature group, edit _STAT_TO_GROUP in csi_ml_pipeline.py.
 
 def _aggregate_group_importance(feature_names, importances):
     """Sum importance per feature group (Statistical / FFT)."""

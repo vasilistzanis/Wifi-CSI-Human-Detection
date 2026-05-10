@@ -420,6 +420,31 @@ def _get_feature_names(n_pca_components: int) -> list[str]:
     return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in all_stats]
 
 
+# Update this dict whenever a new feature is added to _get_feature_names above.
+_STAT_TO_GROUP: dict[str, str] = {
+    # Statistical — time-domain descriptors
+    'mean': 'Statistical', 'std': 'Statistical', 'max': 'Statistical',
+    'min': 'Statistical', 'range': 'Statistical', 'median': 'Statistical',
+    'energy': 'Statistical', 'skewness': 'Statistical', 'excess_kurtosis': 'Statistical',
+    'zcr': 'Statistical',
+    # FFT / frequency-domain
+    'fft_mean': 'FFT', 'fft_std': 'FFT',
+    'fft_peak_idx': 'FFT', 'spectral_entropy': 'FFT',
+    'gait_band_ratio': 'FFT', 'spectral_centroid': 'FFT', 'peak_prominence': 'FFT',
+    # Temporal — autocorrelation / Hjorth / morphology
+    'autocorr_peak': 'Temporal', 'autocorr_dominant_lag': 'Temporal',
+    'signal_mobility': 'Temporal', 'signal_complexity': 'Temporal',
+    'waveform_length': 'Temporal',
+}
+
+
+def _classify_feature(feature_name: str) -> str:
+    """Map 'PC3_spectral_entropy' → group string. Falls back to 'Other'."""
+    parts = feature_name.split("_", 1)
+    stat = parts[1] if len(parts) == 2 and parts[0].startswith("PC") else feature_name
+    return _STAT_TO_GROUP.get(stat, "Other")
+
+
 
 
 def extract_windows(data: np.ndarray,
