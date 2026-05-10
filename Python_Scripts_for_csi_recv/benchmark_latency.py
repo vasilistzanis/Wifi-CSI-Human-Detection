@@ -190,7 +190,7 @@ def main():
     parser.add_argument('--start-frame', type=int, default=defaults["start_frame"],
                         help="Start frame index for benchmarking (default: 500)")
     parser.add_argument('--window-size', type=int, default=defaults["window_size"],
-                        help="Number of frames per inference window (default: 50)")
+                        help="Number of frames per inference window (default: 100)")
     parser.add_argument('--n_warmup', type=int, default=defaults["n_warmup"], help="Warm-up runs (default: 10)")
     parser.add_argument('--n_benchmark', type=int, default=defaults["n_benchmark"], help="Benchmark runs (default: 50)")
     parser.add_argument('--seed', type=int, default=defaults["seed"], help="Random seed (default: 42)")
