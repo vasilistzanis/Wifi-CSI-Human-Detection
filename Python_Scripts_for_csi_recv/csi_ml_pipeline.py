@@ -30,7 +30,7 @@ Usage:
 # Increment this string whenever the feature extraction semantics change
 # (formula, normalisation, added/removed features).  It is written to
 # metrics.json at save time and checked by benchmark_latency.py at load time.
-FEATURE_VECTOR_VERSION = "2"
+FEATURE_VECTOR_VERSION = "3"  # ΑΛΛΑΓΗ
 
 import sys
 import json
@@ -55,7 +55,8 @@ from sklearn.metrics import (
     classification_report, confusion_matrix,
     accuracy_score, f1_score
 )
-from sklearn.preprocessing import LabelEncoder
+from sklearn.pipeline import Pipeline  # ΑΛΛΑΓΗ
+from sklearn.preprocessing import LabelEncoder, StandardScaler  # ΑΛΛΑΓΗ
 
 
 import warnings
@@ -68,7 +69,7 @@ warnings.filterwarnings("ignore", message=".*solver.*lbfgs.*", module="sklearn")
 # DWT removed: 10 Hz cutoff kills d1/d2; window_size=50 only allows depth-2 decomposition.
 # Re-enable by setting WINDOW_SIZE≥100 and cutoff≥25 Hz.
 _DWT_STATS_PER_COMPONENT = 0
-N_STATS = 14
+N_STATS = 22  # ΑΛΛΑΓΗ
 
 
 try:
@@ -260,17 +261,20 @@ def _dwt_features_for_col(col: np.ndarray, wavelet: str = 'db4',
 
 
 
-def extract_features_from_window(window: np.ndarray) -> np.ndarray:
+def extract_features_from_window(window: np.ndarray, fs: float = 100.0) -> np.ndarray:  # ΑΛΛΑΓΗ
     """
-    14 features per PCA component -> flat feature vector.
+    22 features per PCA component -> flat feature vector.
 
-    Input:  (window_size, n_pca_components)  e.g. (50, 10)
-    Output: (140,)  [14 features x 10 components]
+    Input:  (window_size, n_pca_components)  e.g. (100, 10)
+    Output: (220,)  [22 features x 10 components]
 
-    Feature breakdown (14 per component):
+    Feature breakdown (22 per component):
       mean, std, max, min, range, median, energy,
       skewness, excess_kurtosis, fft_mean, fft_std, zcr,
-      fft_peak_idx, spectral_entropy
+      fft_peak_idx, spectral_entropy,
+      autocorr_peak, autocorr_dominant_lag, gait_band_ratio,
+      spectral_centroid, peak_prominence, signal_mobility,
+      signal_complexity, waveform_length
     """
     feats = []
     for c in range(window.shape[1]):
@@ -278,30 +282,53 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
         mean_val = col.mean()
         std_val  = col.std() + 1e-8
 
+        # ----------------------------------------------------------------
+        # FFT — υπολογίζεται ΜΙΑ ΦΟΡΑ, χρησιμοποιείται από πολλά features
+        # ----------------------------------------------------------------
+        fft_vals       = np.abs(np.fft.rfft(col))
+        freqs          = np.fft.rfftfreq(len(col), d=1.0 / fs)  # ΑΛΛΑΓΗ
+        fft_power      = fft_vals ** 2  # ΑΛΛΑΓΗ
+        fft_vals_no_dc = fft_vals[1:]
+        freqs_no_dc    = freqs[1:]  # ΑΛΛΑΓΗ
+        n_bins         = len(fft_vals_no_dc)
 
-        # -- FFT features -------------------------------------------------
-        fft_vals = np.abs(np.fft.rfft(col))
         fft_mean = float(fft_vals.mean())
         fft_std  = float(fft_vals.std())
 
-
-        # -- ZCR (Zero-Crossing Rate) --------------------------------------
+        # ----------------------------------------------------------------
+        # ZCR
+        # ----------------------------------------------------------------
         centered = col - mean_val
         zcr = float(np.sum(np.diff(np.sign(centered)) != 0) / max(1, len(col) - 1))
 
+        # ----------------------------------------------------------------
+        # Dominant frequency index (exclude DC)
+        # ----------------------------------------------------------------
+        fft_peak_idx = float(np.argmax(fft_vals_no_dc) + 1) / n_bins  # normalised (0,1]
 
-        # -- Dominant Frequency index (exclude DC bin) ---------------------
-        fft_vals_no_dc = fft_vals[1:]  # DC carries static offset, not motion
-        n_bins = len(fft_vals_no_dc)
-        fft_peak_idx = float(np.argmax(fft_vals_no_dc) + 1) / n_bins  # normalised (0, 1]
-
-
-        # -- Spectral Entropy (exclude DC bin) -----------------------------
-        prob = fft_vals_no_dc / (np.sum(fft_vals_no_dc) + 1e-8)
+        # ----------------------------------------------------------------
+        # Spectral entropy (exclude DC)
+        # ----------------------------------------------------------------
+        prob             = fft_vals_no_dc / (np.sum(fft_vals_no_dc) + 1e-8)
         spectral_entropy = float(-np.sum(prob * np.log2(prob + 1e-8)))
 
+        # ----------------------------------------------------------------
+        # Autocorrelation — υπολογίζεται ΜΙΑ ΦΟΡΑ, χρησιμοποιείται από 2 features
+        # ----------------------------------------------------------------
+        col_norm      = (col - mean_val) / std_val  # ΑΛΛΑΓΗ
+        autocorr_full = np.correlate(col_norm, col_norm, mode='full')  # ΑΛΛΑΓΗ
+        autocorr      = autocorr_full[len(col_norm)-1:] / (len(col_norm) * 1.0)  # ΑΛΛΑΓΗ
+        autocorr_lags = autocorr[1:]  # lag=0 εξαιρείται παντού  # ΑΛΛΑΓΗ
 
-        # -- Classical 14 stats --------------------------------------------
+        # ----------------------------------------------------------------
+        # Diff — υπολογίζεται ΜΙΑ ΦΟΡΑ, χρησιμοποιείται από 3 features
+        # ----------------------------------------------------------------
+        diff1 = np.diff(col)  # ΑΛΛΑΓΗ
+        diff2 = np.diff(diff1)  # ΑΛΛΑΓΗ
+
+        # ================================================================
+        # FEATURES 1–14 (υπάρχοντα — ΜΗΝ ΑΛΛΑΞΕΙΣ)
+        # ================================================================
         feats.extend([
             mean_val,
             std_val,
@@ -319,10 +346,55 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
             spectral_entropy,
         ])
 
-
-        # -- DWT 6 stats (db4, 3 detail levels) ---------------------------
+        # ================================================================
+        # DWT (υπάρχον — ΜΗΝ ΑΛΛΑΞΕΙΣ, επιστρέφει [] αυτή τη στιγμή)
+        # ================================================================
         feats.extend(_dwt_features_for_col(col, wavelet='db4', level=3))
 
+        # ================================================================
+        # FEATURES 15–22
+        # ================================================================
+
+        # 15. autocorr_peak — max periodicity strength
+        autocorr_peak = float(np.max(autocorr_lags))  # ΑΛΛΑΓΗ
+
+        # 16. autocorr_dominant_lag — gait cycle duration estimator (sec)
+        autocorr_dominant_lag = float(np.argmax(autocorr_lags) + 1) / fs  # ΑΛΛΑΓΗ
+
+        # 17. gait_band_ratio — energy ratio in 0.5–3 Hz zone
+        gait_mask        = (freqs >= 0.5) & (freqs <= 3.0)  # ΑΛΛΑΓΗ
+        gait_energy      = float(np.sum(fft_power[gait_mask]))  # ΑΛΛΑΓΗ
+        total_energy_fft = float(np.sum(fft_power) + 1e-8)  # ΑΛΛΑΓΗ
+        gait_band_ratio  = gait_energy / total_energy_fft  # ΑΛΛΑΓΗ
+
+        # 18. spectral_centroid — weighted mean frequency
+        spectral_centroid = float(  # ΑΛΛΑΓΗ
+            np.sum(freqs_no_dc * fft_vals_no_dc) / (np.sum(fft_vals_no_dc) + 1e-8)
+        )
+
+        # 19. peak_prominence — sharpness of dominant FFT peak
+        peak_prominence = float(np.max(fft_vals_no_dc)) - float(np.mean(fft_vals_no_dc))  # ΑΛΛΑΓΗ
+
+        # 20. signal_mobility — Hjorth: signal velocity
+        signal_mobility = float(np.std(diff1) / (np.std(col) + 1e-8))  # ΑΛΛΑΓΗ
+
+        # 21. signal_complexity — Hjorth: waveform complexity
+        mobility_diff1    = float(np.std(diff2) / (np.std(diff1) + 1e-8))  # ΑΛΛΑΓΗ
+        signal_complexity = mobility_diff1 / (signal_mobility + 1e-8)  # ΑΛΛΑΓΗ
+
+        # 22. waveform_length — total activity measure
+        waveform_length = float(np.sum(np.abs(diff1)))  # ΑΛΛΑΓΗ
+
+        feats.extend([  # ΑΛΛΑΓΗ
+            autocorr_peak,
+            autocorr_dominant_lag,
+            gait_band_ratio,
+            spectral_centroid,
+            peak_prominence,
+            signal_mobility,
+            signal_complexity,
+            waveform_length,
+        ])
 
     return np.array(feats, dtype=np.float32)
 
@@ -332,9 +404,12 @@ def extract_features_from_window(window: np.ndarray) -> np.ndarray:
 def _get_feature_names(n_pca_components: int) -> list[str]:
     classical = ['mean', 'std', 'max', 'min', 'range', 'median',
                  'energy', 'skewness', 'excess_kurtosis', 'fft_mean', 'fft_std',
-                 'zcr', 'fft_peak_idx', 'spectral_entropy']
+                 'zcr', 'fft_peak_idx', 'spectral_entropy',
+                 'autocorr_peak', 'autocorr_dominant_lag', 'gait_band_ratio',  # ΑΛΛΑΓΗ
+                 'spectral_centroid', 'peak_prominence', 'signal_mobility',     # ΑΛΛΑΓΗ
+                 'signal_complexity', 'waveform_length']                        # ΑΛΛΑΓΗ
     # DWT removed — see _DWT_STATS_PER_COMPONENT comment at top of file
-    all_stats = classical   # 14 total
+    all_stats = classical   # 22 total  # ΑΛΛΑΓΗ
     return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in all_stats]
 
 
@@ -485,6 +560,7 @@ def build_dataset(
     if pipeline_kwargs is None:
         pipeline_kwargs = {'fs': config.SAMPLING_RATE, 'use_diff': True}
 
+    _fs = float(pipeline_kwargs.get('fs', 100.0))  # ΑΛΛΑΓΗ
 
     do_augment = bool(augment_techniques)  # empty list / None -> no augmentation
     if do_augment:
@@ -605,7 +681,7 @@ def build_dataset(
                         w_proj = pp.scaler.transform(w_proj)
                     else:
                         w_proj = w_raw[:, :n_pca]
-                    X_te.append(extract_features_from_window(w_proj))
+                    X_te.append(extract_features_from_window(w_proj, fs=_fs))  # ΑΛΛΑΓΗ
                     y_te.append(label_idx)
                 else:
                     # Train original (no augmentation)
@@ -614,7 +690,7 @@ def build_dataset(
                         w_proj = pp.scaler.transform(w_proj)
                     else:
                         w_proj = w_raw[:, :n_pca]
-                    feat_orig = extract_features_from_window(w_proj)
+                    feat_orig = extract_features_from_window(w_proj, fs=_fs)  # ΑΛΛΑΓΗ
                     X_tr_orig.append(feat_orig)
                     y_tr_orig.append(label_idx)
                     train_groups_orig.append(recording_group_id)
@@ -637,7 +713,7 @@ def build_dataset(
                                 aw_proj = pp.scaler.transform(aw_proj)
                             else:
                                 aw_proj = aw_raw[:, :n_pca]
-                            X_tr.append(extract_features_from_window(aw_proj))
+                            X_tr.append(extract_features_from_window(aw_proj, fs=_fs))  # ΑΛΛΑΓΗ
                             y_tr.append(label_idx)
                     global_window_idx += 1
             recording_group_id += 1
@@ -779,7 +855,7 @@ def build_dataset(
                 # Project original window through PCA+scaler
                 w_proj = pipeline.pca.transform(w_raw)
                 w_proj = pipeline.scaler.transform(w_proj)
-                feat_orig = extract_features_from_window(w_proj)
+                feat_orig = extract_features_from_window(w_proj, fs=_fs)  # ΑΛΛΑΓΗ
 
 
                 X_tr_orig.append(feat_orig)
@@ -801,7 +877,7 @@ def build_dataset(
                             continue
                         aw_proj = pipeline.pca.transform(aw_raw)
                         aw_proj = pipeline.scaler.transform(aw_proj)
-                        X_tr.append(extract_features_from_window(aw_proj))
+                        X_tr.append(extract_features_from_window(aw_proj, fs=_fs))  # ΑΛΛΑΓΗ
                         y_tr.append(label_idx)
                         aug_count_cls += 1
                 global_window_idx += 1
@@ -820,7 +896,7 @@ def build_dataset(
                 continue
             # Test files: use full pipeline.transform (no augmentation)
             for w in extract_windows(processed, window_size, step):
-                X_te.append(extract_features_from_window(w))
+                X_te.append(extract_features_from_window(w, fs=_fs))  # ΑΛΛΑΓΗ
                 y_te.append(label_idx)
                 te_wins += 1
 
@@ -903,17 +979,17 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
 
 
     svm_grid = {
-        'C':     [1, 10, 100],
-        'gamma': ['scale', 'auto', 0.01, 0.001],
+        'clf__C':     [1, 10, 100],      # ΑΛΛΑΓΗ — clf__ prefix για Pipeline
+        'clf__gamma': ['scale', 'auto', 0.01, 0.001],  # ΑΛΛΑΓΗ
     }
     print("\n[TUNE] Tuning SVM...")
     svm_search = GridSearchCV(
-        SVC(kernel='rbf', class_weight='balanced', probability=True),
+        Pipeline([('scaler', StandardScaler()), ('clf', SVC(kernel='rbf', class_weight='balanced', probability=True))]),  # ΑΛΛΑΓΗ
         svm_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
     svm_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
-    best_params['SVM (RBF)'] = svm_search.best_params_
-    print(f"   Best SVM params : {svm_search.best_params_}")
+    best_params['SVM (RBF)'] = {k.replace('clf__', ''): v for k, v in svm_search.best_params_.items()}  # ΑΛΛΑΓΗ
+    print(f"   Best SVM params : {best_params['SVM (RBF)']}")
     print(f"   Best SVM CV acc : {svm_search.best_score_*100:.2f}%")
 
 
@@ -949,33 +1025,34 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
 
 
     knn_grid = {
-        'n_neighbors': [3, 5, 7, 9],
-        'weights':     ['uniform', 'distance'],
-        'metric':      ['euclidean', 'manhattan'],
+        'clf__n_neighbors': [3, 5, 7, 9],        # ΑΛΛΑΓΗ
+        'clf__weights':     ['uniform', 'distance'],  # ΑΛΛΑΓΗ
+        'clf__metric':      ['euclidean', 'manhattan'],  # ΑΛΛΑΓΗ
     }
     print("\n[TUNE] Tuning K-NN...")
     knn_search = GridSearchCV(
-        KNeighborsClassifier(n_jobs=-1),
+        Pipeline([('scaler', StandardScaler()), ('clf', KNeighborsClassifier(n_jobs=-1))]),  # ΑΛΛΑΓΗ
         knn_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
     knn_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
-    best_params['K-NN'] = knn_search.best_params_
-    print(f"   Best K-NN params: {knn_search.best_params_}")
+    best_params['K-NN'] = {k.replace('clf__', ''): v for k, v in knn_search.best_params_.items()}  # ΑΛΛΑΓΗ
+    print(f"   Best K-NN params: {best_params['K-NN']}")
     print(f"   Best K-NN CV acc: {knn_search.best_score_*100:.2f}%")
 
 
     lr_grid = {
-        'C': [0.1, 1.0, 10.0, 100.0],
+        'clf__C': [0.1, 1.0, 10.0, 100.0],  # ΑΛΛΑΓΗ
     }
     print("\n[TUNE] Tuning Logistic Regression...")
     lr_search = GridSearchCV(
-        LogisticRegression(penalty='l2', solver='liblinear', max_iter=1000,
-                           class_weight='balanced', random_state=random_seed),
+        Pipeline([('scaler', StandardScaler()), ('clf', LogisticRegression(  # ΑΛΛΑΓΗ
+            penalty='l2', solver='liblinear', max_iter=1000,
+            class_weight='balanced', random_state=random_seed))]),
         lr_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
     lr_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
-    best_params['Logistic Regression'] = lr_search.best_params_
-    print(f"   Best LR params  : {lr_search.best_params_}")
+    best_params['Logistic Regression'] = {k.replace('clf__', ''): v for k, v in lr_search.best_params_.items()}  # ΑΛΛΑΓΗ
+    print(f"   Best LR params  : {best_params['Logistic Regression']}")
     print(f"   Best LR CV acc  : {lr_search.best_score_*100:.2f}%")
 
 
@@ -1062,14 +1139,14 @@ def train_and_evaluate(
 
 
     all_models = {
-        'svm': SVC(
+        'svm': Pipeline([('scaler', StandardScaler()), ('clf', SVC(  # ΑΛΛΑΓΗ
             kernel='rbf',
             C=svm_params.get('C', 10),
             gamma=svm_params.get('gamma', 'scale'),
             class_weight='balanced',
             probability=True,
-        ),
-        'rf': RandomForestClassifier(
+        ))]),
+        'rf': RandomForestClassifier(  # tree-based — no scaler needed
             n_estimators=rf_params.get('n_estimators', 200),
             max_depth=rf_params.get('max_depth', 15),
             min_samples_leaf=rf_params.get('min_samples_leaf', 2),
@@ -1077,7 +1154,7 @@ def train_and_evaluate(
             n_jobs=-1,
             random_state=random_seed,
         ),
-        'et': ExtraTreesClassifier(
+        'et': ExtraTreesClassifier(  # tree-based — no scaler needed
             n_estimators=et_params.get('n_estimators', 200),
             max_depth=et_params.get('max_depth', None),
             min_samples_leaf=et_params.get('min_samples_leaf', 1),
@@ -1085,33 +1162,33 @@ def train_and_evaluate(
             n_jobs=-1,
             random_state=random_seed,
         ),
-        'knn': KNeighborsClassifier(
+        'knn': Pipeline([('scaler', StandardScaler()), ('clf', KNeighborsClassifier(  # ΑΛΛΑΓΗ
             n_neighbors=knn_params.get('n_neighbors', 5),
             weights=knn_params.get('weights', 'distance'),
             metric=knn_params.get('metric', 'euclidean'),
             n_jobs=-1,
-        ),
-        'lr': LogisticRegression(
+        ))]),
+        'lr': Pipeline([('scaler', StandardScaler()), ('clf', LogisticRegression(  # ΑΛΛΑΓΗ
             C=lr_params.get('C', 1.0),
             penalty='l2',
             solver='liblinear',
             max_iter=1000,
             class_weight='balanced',
             random_state=random_seed,
-        ),
-        'gb': GradientBoostingClassifier(
+        ))]),
+        'gb': GradientBoostingClassifier(  # tree-based — no scaler needed
             n_estimators=gb_params.get('n_estimators', 100),
             learning_rate=gb_params.get('learning_rate', 0.1),
             max_depth=gb_params.get('max_depth', 3),
             random_state=random_seed,
         ),
-        'mlp': MLPClassifier(
+        'mlp': Pipeline([('scaler', StandardScaler()), ('clf', MLPClassifier(  # ΑΛΛΑΓΗ
             hidden_layer_sizes=mlp_params.get('hidden_layer_sizes', (100,)),
             alpha=mlp_params.get('alpha', 0.0001),
             max_iter=500,
             random_state=random_seed,
-        ),
-        'nb': GaussianNB(),
+        ))]),
+        'nb': GaussianNB(),  # Gaussian — no scaler needed
     }
 
 
