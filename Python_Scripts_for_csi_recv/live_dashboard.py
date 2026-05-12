@@ -1899,10 +1899,7 @@ class DashboardWindow(QMainWindow):
                 smoothed_cand = self.classes[best_idx]
 
                 if smoothed_prob < self.conf_thresh:
-                    if self._last_record_lbl:
-                        smoothed_cand = self._last_record_lbl
-                    else:
-                        smoothed_cand = "—"
+                    smoothed_cand = "—"
 
                 # ── Hysteresis (State Transition Delay) ──────────────────────
                 if smoothed_cand == self._hyst_pending:
@@ -1913,7 +1910,17 @@ class DashboardWindow(QMainWindow):
 
                 if self._hyst_count >= self._hyst_min:
                     now = time.monotonic()
-                    if (smoothed_cand != self._last_record_lbl or
+                    if smoothed_cand == "—":
+                        # Uncertain: update display only — never log to activity
+                        if self._state["label"] != "—":
+                            self._state.update({
+                                "label":      "—",
+                                "raw_label":  "—",
+                                "confidence": smoothed_prob,
+                                "all_probs":  self._ema_probs,
+                            })
+                            self._last_record_lbl = ""
+                    elif (smoothed_cand != self._last_record_lbl or
                             (now - self._last_record_t) >= 4.0):
                         self._last_record_lbl = smoothed_cand
                         self._last_record_t   = now
