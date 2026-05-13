@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python live_dashboard.py --demo)",
-      "Bash(ping -n 6 127.0.0.1)"
-    ]
-  }
-}

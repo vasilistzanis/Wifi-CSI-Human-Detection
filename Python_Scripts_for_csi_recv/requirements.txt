@@ -1,0 +1,18 @@
+# Python dependencies for WiFi CSI HAR pipeline
+# Install with: pip install -r requirements.txt
+
+numpy
+scipy
+pandas
+pyserial
+matplotlib
+PyQt5
+pyqtgraph
+scikit-learn
+joblib
+seaborn
+psutil
+
+# Optional: PyWavelets — DWT features are currently disabled
+# (_DWT_STATS_PER_COMPONENT = 0). Install only if you plan to re-enable DWT.
+# PyWavelets
