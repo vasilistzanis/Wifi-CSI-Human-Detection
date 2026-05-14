@@ -88,7 +88,7 @@ TRAINING_CLASS_CONFIG = {
     "no_activity": {"enabled": True, "folder": "no_activity"},
     "walk_activity": {"enabled": True, "folder": "walk_activity"},
     "sit": {"enabled": False, "folder": "sit"},
-    "fall": {"enabled": False, "folder": "fall"},
+    "fall": {"enabled": True, "folder": "fall"},
     "stand": {"enabled": False, "folder": "stand"},
     "run": {"enabled": False, "folder": "run"},
 }
@@ -234,6 +234,34 @@ LOGGER_MAX_FILE_SIZE_MB = 500
 LOGGER_WAIT_SECONDS = 5
 LOGGER_DURATION_SECONDS = 0
 
+# Activity recording presets  (used by --mode flag in csi_logger.py)
+LOGGER_ACTIVITY_PRESETS: dict[str, dict] = {
+    "fall": {
+        "output_dir": "datasets/fall",
+        "duration":   4,
+        "wait":       5,
+        "label_prefix": "fall",
+    },
+    "sit": {
+        "output_dir": "datasets/sit",
+        "duration":   4,
+        "wait":       5,
+        "label_prefix": "sit",
+    },
+    "walk": {
+        "output_dir": "datasets/walk_activity",
+        "duration":   60,
+        "wait":       5,
+        "label_prefix": "walk_activity",
+    },
+    "idle": {
+        "output_dir": "datasets/no_activity",
+        "duration":   120,
+        "wait":       5,
+        "label_prefix": "no_activity",
+    },
+}
+
 
 # ------------------------------------------------------------------------------
 # live_predict.py defaults
@@ -323,6 +351,8 @@ SCRIPT_DEFAULTS = {
         "max_size_mb": LOGGER_MAX_FILE_SIZE_MB,
         "wait": LOGGER_WAIT_SECONDS,
         "duration": LOGGER_DURATION_SECONDS,
+        "mode": None,
+        "repeat": 1,
     },
     "csi_ml_pipeline": {
         "data_dir": DATASETS_DIR,
