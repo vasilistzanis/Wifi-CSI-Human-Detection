@@ -234,7 +234,7 @@ def run_inference(
     1. Stack raw complex frames  -> (N, n_subcarriers)
     2. pipeline.transform()      -> (N-1, n_pca)   [temporal diff reduces by 1]
     3. Take last `window_size` rows as inference window
-    4. extract_features_from_window -> (n_pca * 22,) feature vector  [currently 220]
+    4. extract_features_from_window -> (n_pca * 25,) feature vector  [currently 250]
     5. model.predict_proba        -> argmax + per-class probabilities
     """
     # 1. Stack - frames may rarely have inconsistent lengths if the ESP32

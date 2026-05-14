@@ -30,7 +30,7 @@ Usage:
 # Increment this string whenever the feature extraction semantics change
 # (formula, normalisation, added/removed features).  It is written to
 # metrics.json at save time and checked by benchmark_latency.py at load time.
-FEATURE_VECTOR_VERSION = "4"  # ΑΛΛΑΓΗ
+FEATURE_VECTOR_VERSION = "5"  # ΑΛΛΑΓΗ
 
 import sys
 import json
@@ -69,7 +69,7 @@ warnings.filterwarnings("ignore", message=".*solver.*lbfgs.*", module="sklearn")
 # DWT removed: 10 Hz cutoff kills d1/d2; window_size=50 only allows depth-2 decomposition.
 # Re-enable by setting WINDOW_SIZE≥100 and cutoff≥25 Hz.
 _DWT_STATS_PER_COMPONENT = 0
-N_STATS = 22  # ΑΛΛΑΓΗ
+N_STATS = 25  # ΑΛΛΑΓΗ
 
 
 try:
@@ -263,18 +263,19 @@ def _dwt_features_for_col(col: np.ndarray, wavelet: str = 'db4',
 
 def extract_features_from_window(window: np.ndarray, fs: float = config.SAMPLING_RATE, cutoff_hz: float = config.FILTER_CUTOFF_HZ) -> np.ndarray:  # ΑΛΛΑΓΗ
     """
-    22 features per PCA component -> flat feature vector.
+    25 features per PCA component -> flat feature vector.
 
     Input:  (window_size, n_pca_components)  e.g. (100, 10)
-    Output: (220,)  [22 features x 10 components]
+    Output: (250,)  [25 features x 10 components]
 
-    Feature breakdown (22 per component):
+    Feature breakdown (25 per component):
       mean, std, max, min, range, median, energy,
       skewness, excess_kurtosis, fft_mean, fft_std, zcr,
       fft_peak_idx, spectral_entropy,
       autocorr_peak, autocorr_dominant_lag, gait_band_ratio,
       spectral_centroid, peak_prominence, signal_mobility,
-      signal_complexity, waveform_length
+      signal_complexity, waveform_length,
+      impulse_ratio, burst_duration, rise_fall_ratio
     """
     feats = []
     for c in range(window.shape[1]):
@@ -392,6 +393,24 @@ def extract_features_from_window(window: np.ndarray, fs: float = config.SAMPLING
         # 22. waveform_length — total activity measure
         waveform_length = float(np.sum(np.abs(diff1)))  # ΑΛΛΑΓΗ
 
+        # 23. impulse_ratio — crest factor: max(|col|) / mean(|col|)
+        # High for single-spike events (fall), low for periodic motion (walk)
+        abs_col = np.abs(col)
+        impulse_ratio = float(np.max(abs_col)) / (float(np.mean(abs_col)) + 1e-8)
+
+        # 24. burst_duration — fraction of window above half-max (FWHM proxy)
+        # Fall: narrow burst → small value; Walk: spread energy → larger value
+        burst_duration = float(np.sum(abs_col > 0.5 * float(np.max(abs_col)))) / len(col)
+
+        # 25. rise_fall_ratio — slope asymmetry of dominant peak
+        # Measures how much steeper the rise is vs the decay, independent of peak position.
+        # Fall: rapid impact + slow settling → rise_slope >> fall_slope → high ratio
+        # Walk: symmetric periodic motion → ratio ≈ 1
+        peak_idx = int(np.argmax(np.abs(col)))
+        rise_slope = (col[peak_idx] - col[0]) / (peak_idx + 1)
+        fall_slope = (col[peak_idx] - col[-1]) / (len(col) - peak_idx)
+        rise_fall_ratio = float(np.abs(rise_slope)) / (float(np.abs(fall_slope)) + 1e-9)
+
         feats.extend([  # ΑΛΛΑΓΗ
             autocorr_peak,
             autocorr_dominant_lag,
@@ -401,6 +420,9 @@ def extract_features_from_window(window: np.ndarray, fs: float = config.SAMPLING
             signal_mobility,
             signal_complexity,
             waveform_length,
+            impulse_ratio,
+            burst_duration,
+            rise_fall_ratio,
         ])
 
     return np.array(feats, dtype=np.float32)
@@ -414,9 +436,10 @@ def _get_feature_names(n_pca_components: int) -> list[str]:
                  'zcr', 'fft_peak_idx', 'spectral_entropy',
                  'autocorr_peak', 'autocorr_dominant_lag', 'gait_band_ratio',  # ΑΛΛΑΓΗ
                  'spectral_centroid', 'peak_prominence', 'signal_mobility',     # ΑΛΛΑΓΗ
-                 'signal_complexity', 'waveform_length']                        # ΑΛΛΑΓΗ
+                 'signal_complexity', 'waveform_length',                        # ΑΛΛΑΓΗ
+                 'impulse_ratio', 'burst_duration', 'rise_fall_ratio']          # ΑΛΛΑΓΗ
     # DWT removed — see _DWT_STATS_PER_COMPONENT comment at top of file
-    all_stats = classical   # 22 total  # ΑΛΛΑΓΗ
+    all_stats = classical   # 25 total  # ΑΛΛΑΓΗ
     return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in all_stats]
 
 
@@ -431,10 +454,12 @@ _STAT_TO_GROUP: dict[str, str] = {
     'fft_mean': 'FFT', 'fft_std': 'FFT',
     'fft_peak_idx': 'FFT', 'spectral_entropy': 'FFT',
     'gait_band_ratio': 'FFT', 'spectral_centroid': 'FFT', 'peak_prominence': 'FFT',
-    # Temporal — autocorrelation / Hjorth / morphology
+    # Temporal — autocorrelation / Hjorth / morphology / impulse shape
     'autocorr_peak': 'Temporal', 'autocorr_dominant_lag': 'Temporal',
     'signal_mobility': 'Temporal', 'signal_complexity': 'Temporal',
     'waveform_length': 'Temporal',
+    'impulse_ratio': 'Statistical', 'burst_duration': 'Temporal',
+    'rise_fall_ratio': 'Temporal',
 }
 
 
