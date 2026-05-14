@@ -1088,7 +1088,7 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     print("\n[TUNE] Tuning Logistic Regression...")
     lr_search = GridSearchCV(
         Pipeline([('scaler', StandardScaler()), ('clf', LogisticRegression(  # ΑΛΛΑΓΗ
-            penalty='l2', solver='liblinear', max_iter=1000,
+            penalty='l2', solver='lbfgs', max_iter=1000,
             class_weight='balanced', random_state=random_seed))]),
         lr_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
     )
@@ -1214,7 +1214,7 @@ def train_and_evaluate(
         'lr': Pipeline([('scaler', StandardScaler()), ('clf', LogisticRegression(  # ΑΛΛΑΓΗ
             C=lr_params.get('C', 1.0),
             penalty='l2',
-            solver='liblinear',
+            solver='lbfgs',
             max_iter=1000,
             class_weight='balanced',
             random_state=random_seed,
