@@ -1000,11 +1000,15 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
                          y_train_orig: np.ndarray,
                          train_groups_orig: np.ndarray,
                          cv_folds: int = config.CV_FOLDS,
-                         random_seed: int = config.RANDOM_SEED) -> dict:
+                         random_seed: int = config.RANDOM_SEED,
+                         models_to_tune: set[str] | None = None) -> dict:
     """
     GridSearchCV on non-augmented train data.
-    Returns best params for SVM and RF.
+    Only tunes models listed in models_to_tune (defaults to all).
     """
+    if models_to_tune is None:
+        models_to_tune = set(config.MODEL_KEYS)
+
     print(f"\n{'='*60}")
     cv, actual_folds, splitter_name = _make_group_cv(
         y_train_orig, train_groups_orig, requested_folds=cv_folds,
@@ -1020,115 +1024,116 @@ def tune_hyperparameters(X_train_orig: np.ndarray,
     best_params = {}
 
 
-    svm_grid = {
-        'clf__C':     [1, 10, 100],      # ΑΛΛΑΓΗ — clf__ prefix για Pipeline
-        'clf__gamma': ['scale', 'auto', 0.01, 0.001],  # ΑΛΛΑΓΗ
-    }
-    print("\n[TUNE] Tuning SVM...")
-    svm_search = GridSearchCV(
-        Pipeline([('scaler', StandardScaler()), ('clf', SVC(kernel='rbf', class_weight='balanced', probability=True))]),  # ΑΛΛΑΓΗ
-        svm_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
-    )
-    svm_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
-    best_params['SVM (RBF)'] = {k.replace('clf__', ''): v for k, v in svm_search.best_params_.items()}  # ΑΛΛΑΓΗ
-    print(f"   Best SVM params : {best_params['SVM (RBF)']}")
-    print(f"   Best SVM CV acc : {svm_search.best_score_*100:.2f}%")
+    if "svm" in models_to_tune:
+        svm_grid = {
+            'clf__C':     [1, 10, 100],
+            'clf__gamma': ['scale', 'auto', 0.01, 0.001],
+        }
+        print("\n[TUNE] Tuning SVM...")
+        svm_search = GridSearchCV(
+            Pipeline([('scaler', StandardScaler()), ('clf', SVC(kernel='rbf', class_weight='balanced', probability=True))]),
+            svm_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+        )
+        svm_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
+        best_params['SVM (RBF)'] = {k.replace('clf__', ''): v for k, v in svm_search.best_params_.items()}
+        print(f"   Best SVM params : {best_params['SVM (RBF)']}")
+        print(f"   Best SVM CV acc : {svm_search.best_score_*100:.2f}%")
 
+    if "rf" in models_to_tune:
+        rf_grid = {
+            'n_estimators': [100, 200, 300],
+            'max_depth':    [10, 15, 20, None],
+            'min_samples_leaf': [1, 2, 4],
+        }
+        print("\n[TUNE] Tuning Random Forest...")
+        rf_search = GridSearchCV(
+            RandomForestClassifier(class_weight='balanced', n_jobs=-1, random_state=random_seed),
+            rf_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+        )
+        rf_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
+        best_params['Random Forest'] = rf_search.best_params_
+        print(f"   Best RF params  : {rf_search.best_params_}")
+        print(f"   Best RF CV acc  : {rf_search.best_score_*100:.2f}%")
 
-    rf_grid = {
-        'n_estimators': [100, 200, 300],
-        'max_depth':    [10, 15, 20, None],
-        'min_samples_leaf': [1, 2, 4],
-    }
-    print("\n[TUNE] Tuning Random Forest...")
-    rf_search = GridSearchCV(
-        RandomForestClassifier(class_weight='balanced',
-                               n_jobs=-1, random_state=random_seed),
-        rf_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
-    )
-    rf_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
-    best_params['Random Forest'] = rf_search.best_params_
-    print(f"   Best RF params  : {rf_search.best_params_}")
-    print(f"   Best RF CV acc  : {rf_search.best_score_*100:.2f}%")
-    et_grid = {
-        'n_estimators':     [100, 200, 300],
-        'max_depth':        [10, 15, 20, None],
-        'min_samples_leaf': [1, 2, 4],
-    }
-    print("\n[SEARCH] Tuning Extra Trees...")
-    et_search = GridSearchCV(
-        ExtraTreesClassifier(class_weight='balanced', n_jobs=-1, random_state=random_seed),
-        et_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
-    )
-    et_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
-    best_params['Extra Trees'] = et_search.best_params_
-    print(f"   Best ET params  : {et_search.best_params_}")
-    print(f"   Best ET CV acc  : {et_search.best_score_*100:.2f}%")
+    if "et" in models_to_tune:
+        et_grid = {
+            'n_estimators':     [100, 200, 300],
+            'max_depth':        [10, 15, 20, None],
+            'min_samples_leaf': [1, 2, 4],
+        }
+        print("\n[TUNE] Tuning Extra Trees...")
+        et_search = GridSearchCV(
+            ExtraTreesClassifier(class_weight='balanced', n_jobs=-1, random_state=random_seed),
+            et_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+        )
+        et_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
+        best_params['Extra Trees'] = et_search.best_params_
+        print(f"   Best ET params  : {et_search.best_params_}")
+        print(f"   Best ET CV acc  : {et_search.best_score_*100:.2f}%")
 
+    if "knn" in models_to_tune:
+        knn_grid = {
+            'clf__n_neighbors': [3, 5, 7, 9],
+            'clf__weights':     ['uniform', 'distance'],
+            'clf__metric':      ['euclidean', 'manhattan'],
+        }
+        print("\n[TUNE] Tuning K-NN...")
+        knn_search = GridSearchCV(
+            Pipeline([('scaler', StandardScaler()), ('clf', KNeighborsClassifier(n_jobs=-1))]),
+            knn_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+        )
+        knn_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
+        best_params['K-NN'] = {k.replace('clf__', ''): v for k, v in knn_search.best_params_.items()}
+        print(f"   Best K-NN params: {best_params['K-NN']}")
+        print(f"   Best K-NN CV acc: {knn_search.best_score_*100:.2f}%")
 
-    knn_grid = {
-        'clf__n_neighbors': [3, 5, 7, 9],        # ΑΛΛΑΓΗ
-        'clf__weights':     ['uniform', 'distance'],  # ΑΛΛΑΓΗ
-        'clf__metric':      ['euclidean', 'manhattan'],  # ΑΛΛΑΓΗ
-    }
-    print("\n[TUNE] Tuning K-NN...")
-    knn_search = GridSearchCV(
-        Pipeline([('scaler', StandardScaler()), ('clf', KNeighborsClassifier(n_jobs=-1))]),  # ΑΛΛΑΓΗ
-        knn_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
-    )
-    knn_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
-    best_params['K-NN'] = {k.replace('clf__', ''): v for k, v in knn_search.best_params_.items()}  # ΑΛΛΑΓΗ
-    print(f"   Best K-NN params: {best_params['K-NN']}")
-    print(f"   Best K-NN CV acc: {knn_search.best_score_*100:.2f}%")
+    if "lr" in models_to_tune:
+        lr_grid = {
+            'clf__C': [0.1, 1.0, 10.0, 100.0],
+        }
+        print("\n[TUNE] Tuning Logistic Regression...")
+        lr_search = GridSearchCV(
+            Pipeline([('scaler', StandardScaler()), ('clf', LogisticRegression(
+                penalty='l2', solver='lbfgs', max_iter=1000,
+                class_weight='balanced', random_state=random_seed))]),
+            lr_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+        )
+        lr_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
+        best_params['Logistic Regression'] = {k.replace('clf__', ''): v for k, v in lr_search.best_params_.items()}
+        print(f"   Best LR params  : {best_params['Logistic Regression']}")
+        print(f"   Best LR CV acc  : {lr_search.best_score_*100:.2f}%")
 
+    if "gb" in models_to_tune:
+        gb_grid = {
+            'n_estimators': [100, 200],
+            'learning_rate': [0.05, 0.1, 0.2],
+            'max_depth': [3, 5],
+        }
+        print("\n[TUNE] Tuning Gradient Boosting...")
+        gb_search = GridSearchCV(
+            GradientBoostingClassifier(random_state=random_seed),
+            gb_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+        )
+        gb_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
+        best_params['Gradient Boosting'] = gb_search.best_params_
+        print(f"   Best GB params  : {gb_search.best_params_}")
+        print(f"   Best GB CV acc  : {gb_search.best_score_*100:.2f}%")
 
-    lr_grid = {
-        'clf__C': [0.1, 1.0, 10.0, 100.0],  # ΑΛΛΑΓΗ
-    }
-    print("\n[TUNE] Tuning Logistic Regression...")
-    lr_search = GridSearchCV(
-        Pipeline([('scaler', StandardScaler()), ('clf', LogisticRegression(  # ΑΛΛΑΓΗ
-            penalty='l2', solver='lbfgs', max_iter=1000,
-            class_weight='balanced', random_state=random_seed))]),
-        lr_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
-    )
-    lr_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
-    best_params['Logistic Regression'] = {k.replace('clf__', ''): v for k, v in lr_search.best_params_.items()}  # ΑΛΛΑΓΗ
-    print(f"   Best LR params  : {best_params['Logistic Regression']}")
-    print(f"   Best LR CV acc  : {lr_search.best_score_*100:.2f}%")
-
-
-    gb_grid = {
-        'n_estimators': [100, 200],
-        'learning_rate': [0.05, 0.1, 0.2],
-        'max_depth': [3, 5],
-    }
-    print("\n[TUNE] Tuning Gradient Boosting...")
-    gb_search = GridSearchCV(
-        GradientBoostingClassifier(random_state=random_seed),
-        gb_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
-    )
-    gb_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
-    best_params['Gradient Boosting'] = gb_search.best_params_
-    print(f"   Best GB params  : {gb_search.best_params_}")
-    print(f"   Best GB CV acc  : {gb_search.best_score_*100:.2f}%")
-
-
-    mlp_grid = {
-        'clf__hidden_layer_sizes': [(100,), (100, 50), (50, 50)],
-        'clf__alpha': [0.0001, 0.001, 0.01],
-        'clf__learning_rate': ['constant', 'adaptive'],
-    }
-    print("\n[TUNE] Tuning MLP (Neural Network)...")
-    mlp_search = GridSearchCV(
-        Pipeline([('scaler', StandardScaler()), ('clf', MLPClassifier(max_iter=500, random_state=random_seed))]),
-        mlp_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
-    )
-    mlp_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
-    best_params['MLP'] = {k.replace('clf__', ''): v for k, v in mlp_search.best_params_.items()}
-    print(f"   Best MLP params : {mlp_search.best_params_}")
-    print(f"   Best MLP CV acc : {mlp_search.best_score_*100:.2f}%")
-
+    if "mlp" in models_to_tune:
+        mlp_grid = {
+            'clf__hidden_layer_sizes': [(100,), (100, 50), (50, 50)],
+            'clf__alpha': [0.0001, 0.001, 0.01],
+            'clf__learning_rate': ['constant', 'adaptive'],
+        }
+        print("\n[TUNE] Tuning MLP (Neural Network)...")
+        mlp_search = GridSearchCV(
+            Pipeline([('scaler', StandardScaler()), ('clf', MLPClassifier(max_iter=500, random_state=random_seed))]),
+            mlp_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=0
+        )
+        mlp_search.fit(X_train_orig, y_train_orig, groups=train_groups_orig)
+        best_params['MLP'] = {k.replace('clf__', ''): v for k, v in mlp_search.best_params_.items()}
+        print(f"   Best MLP params : {mlp_search.best_params_}")
+        print(f"   Best MLP CV acc : {mlp_search.best_score_*100:.2f}%")
 
     return best_params
 
@@ -1581,9 +1586,11 @@ def main():
 
     best_params = None
     if args.tune:
+        models_to_tune = set(config.MODEL_KEYS) if args.model == "all" else {args.model}
         best_params = tune_hyperparameters(
             X_train_orig, y_train_orig, train_groups_orig,
-            random_seed=args.seed, cv_folds=args.cv_folds
+            random_seed=args.seed, cv_folds=args.cv_folds,
+            models_to_tune=models_to_tune,
         )
 
 
