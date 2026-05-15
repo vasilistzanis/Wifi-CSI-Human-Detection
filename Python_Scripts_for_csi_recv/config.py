@@ -84,11 +84,11 @@ FILTER_WARMUP = 50
 # Training classes
 # ------------------------------------------------------------------------------
 TRAINING_CLASS_CONFIG = {
-    "empty": {"enabled": True, "folder": "empty"},
+    "empty": {"enabled": False, "folder": "empty"},
     "no_activity": {"enabled": True, "folder": "no_activity"},
     "walk_activity": {"enabled": True, "folder": "walk_activity"},
     "sit": {"enabled": False, "folder": "sit"},
-    "fall": {"enabled": True, "folder": "fall"},
+    "fall": {"enabled": False, "folder": "fall"},
     "stand": {"enabled": False, "folder": "stand"},
     "run": {"enabled": False, "folder": "run"},
 }
