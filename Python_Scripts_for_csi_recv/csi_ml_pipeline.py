@@ -261,21 +261,25 @@ def _dwt_features_for_col(col: np.ndarray, wavelet: str = 'db4',
 
 
 
-def extract_features_from_window(window: np.ndarray, fs: float = config.SAMPLING_RATE, cutoff_hz: float = config.FILTER_CUTOFF_HZ) -> np.ndarray:  # ΑΛΛΑΓΗ
+def extract_features_from_window(window: np.ndarray, fs: float = config.SAMPLING_RATE,
+                                  cutoff_hz: float = config.FILTER_CUTOFF_HZ,
+                                  n_stats: int = N_STATS) -> np.ndarray:  # ΑΛΛΑΓΗ
     """
-    25 features per PCA component -> flat feature vector.
+    22–N_STATS features per PCA component -> flat feature vector.
 
     Input:  (window_size, n_pca_components)  e.g. (100, 10)
-    Output: (250,)  [25 features x 10 components]
+    Output: (n_stats * n_pca_components,)   e.g. (220,)–(250,)
 
-    Feature breakdown (25 per component):
-      mean, std, max, min, range, median, energy,
-      skewness, excess_kurtosis, fft_mean, fft_std, zcr,
-      fft_peak_idx, spectral_entropy,
-      autocorr_peak, autocorr_dominant_lag, gait_band_ratio,
-      spectral_centroid, peak_prominence, signal_mobility,
-      signal_complexity, waveform_length,
-      impulse_ratio, burst_duration, rise_fall_ratio
+    Feature breakdown (base 22, optional up to 25 per component):
+      1-14:  mean, std, max, min, range, median, energy,
+             skewness, excess_kurtosis, fft_mean, fft_std, zcr,
+             fft_peak_idx, spectral_entropy
+      15-22: autocorr_peak, autocorr_dominant_lag, gait_band_ratio,
+             spectral_centroid, peak_prominence, signal_mobility,
+             signal_complexity, waveform_length
+      23:    impulse_ratio      (n_stats >= 23)
+      24:    burst_duration     (n_stats >= 24)
+      25:    rise_fall_ratio    (n_stats >= 25)
     """
     feats = []
     for c in range(window.shape[1]):
@@ -393,25 +397,7 @@ def extract_features_from_window(window: np.ndarray, fs: float = config.SAMPLING
         # 22. waveform_length — total activity measure
         waveform_length = float(np.sum(np.abs(diff1)))  # ΑΛΛΑΓΗ
 
-        # 23. impulse_ratio — crest factor: max(|col|) / mean(|col|)
-        # High for single-spike events (fall), low for periodic motion (walk)
-        abs_col = np.abs(col)
-        impulse_ratio = float(np.max(abs_col)) / (float(np.mean(abs_col)) + 1e-8)
-
-        # 24. burst_duration — fraction of window above half-max (FWHM proxy)
-        # Fall: narrow burst → small value; Walk: spread energy → larger value
-        burst_duration = float(np.sum(abs_col > 0.5 * float(np.max(abs_col)))) / len(col)
-
-        # 25. rise_fall_ratio — slope asymmetry of dominant peak
-        # Measures how much steeper the rise is vs the decay, independent of peak position.
-        # Fall: rapid impact + slow settling → rise_slope >> fall_slope → high ratio
-        # Walk: symmetric periodic motion → ratio ≈ 1
-        peak_idx = int(np.argmax(np.abs(col)))
-        rise_slope = (col[peak_idx] - col[0]) / (peak_idx + 1)
-        fall_slope = (col[peak_idx] - col[-1]) / (len(col) - peak_idx)
-        rise_fall_ratio = float(np.abs(rise_slope)) / (float(np.abs(fall_slope)) + 1e-9)
-
-        feats.extend([  # ΑΛΛΑΓΗ
+        feats.extend([
             autocorr_peak,
             autocorr_dominant_lag,
             gait_band_ratio,
@@ -420,27 +406,42 @@ def extract_features_from_window(window: np.ndarray, fs: float = config.SAMPLING
             signal_mobility,
             signal_complexity,
             waveform_length,
-            impulse_ratio,
-            burst_duration,
-            rise_fall_ratio,
         ])
+
+        # 23-25: impulse shape descriptors (optional — gated individually by n_stats)
+        if n_stats >= 23:
+            abs_col = np.abs(col)
+            impulse_ratio = float(np.max(abs_col)) / (float(np.mean(abs_col)) + 1e-8)
+            feats.append(impulse_ratio)
+        if n_stats >= 24:
+            burst_duration = float(np.sum(abs_col > 0.5 * float(np.max(abs_col)))) / len(col)
+            feats.append(burst_duration)
+        if n_stats >= 25:
+            peak_idx   = int(np.argmax(np.abs(col)))
+            rise_slope = (col[peak_idx] - col[0]) / (peak_idx + 1)
+            fall_slope = (col[peak_idx] - col[-1]) / (len(col) - peak_idx)
+            rise_fall_ratio = float(np.abs(rise_slope)) / (float(np.abs(fall_slope)) + 1e-9)
+            feats.append(rise_fall_ratio)
 
     return np.array(feats, dtype=np.float32)
 
 
 
 
-def _get_feature_names(n_pca_components: int) -> list[str]:
+def _get_feature_names(n_pca_components: int, n_stats: int = N_STATS) -> list[str]:
     classical = ['mean', 'std', 'max', 'min', 'range', 'median',
                  'energy', 'skewness', 'excess_kurtosis', 'fft_mean', 'fft_std',
                  'zcr', 'fft_peak_idx', 'spectral_entropy',
-                 'autocorr_peak', 'autocorr_dominant_lag', 'gait_band_ratio',  # ΑΛΛΑΓΗ
-                 'spectral_centroid', 'peak_prominence', 'signal_mobility',     # ΑΛΛΑΓΗ
-                 'signal_complexity', 'waveform_length',                        # ΑΛΛΑΓΗ
-                 'impulse_ratio', 'burst_duration', 'rise_fall_ratio']          # ΑΛΛΑΓΗ
-    # DWT removed — see _DWT_STATS_PER_COMPONENT comment at top of file
-    all_stats = classical   # 25 total  # ΑΛΛΑΓΗ
-    return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in all_stats]
+                 'autocorr_peak', 'autocorr_dominant_lag', 'gait_band_ratio',
+                 'spectral_centroid', 'peak_prominence', 'signal_mobility',
+                 'signal_complexity', 'waveform_length']
+    if n_stats >= 23:
+        classical.append('impulse_ratio')
+    if n_stats >= 24:
+        classical.append('burst_duration')
+    if n_stats >= 25:
+        classical.append('rise_fall_ratio')
+    return [f"PC{c+1}_{s}" for c in range(n_pca_components) for s in classical]
 
 
 # Update this dict whenever a new feature is added to _get_feature_names above.
@@ -593,6 +594,7 @@ def build_dataset(
     random_seed: int = config.RANDOM_SEED,
     n_pca: int = config.N_PCA_COMPONENTS,
     cutoff: float = config.FILTER_CUTOFF_HZ,
+    n_stats: int = N_STATS,
     train_files_override: dict | None = None,
     test_files_override: dict | None = None,
     pipeline_override = None,
@@ -748,7 +750,7 @@ def build_dataset(
                         w_proj = pp.scaler.transform(w_proj)
                     else:
                         w_proj = w_raw[:, :n_pca]
-                    X_te.append(extract_features_from_window(w_proj, fs=_fs, cutoff_hz=_cutoff))  # ΑΛΛΑΓΗ
+                    X_te.append(extract_features_from_window(w_proj, fs=_fs, cutoff_hz=_cutoff, n_stats=n_stats))  # ΑΛΛΑΓΗ
                     y_te.append(label_idx)
                 else:
                     # Train original (no augmentation)
@@ -757,7 +759,7 @@ def build_dataset(
                         w_proj = pp.scaler.transform(w_proj)
                     else:
                         w_proj = w_raw[:, :n_pca]
-                    feat_orig = extract_features_from_window(w_proj, fs=_fs, cutoff_hz=_cutoff)  # ΑΛΛΑΓΗ
+                    feat_orig = extract_features_from_window(w_proj, fs=_fs, cutoff_hz=_cutoff, n_stats=n_stats)  # ΑΛΛΑΓΗ
                     X_tr_orig.append(feat_orig)
                     y_tr_orig.append(label_idx)
                     train_groups_orig.append(recording_group_id)
@@ -780,7 +782,7 @@ def build_dataset(
                                 aw_proj = pp.scaler.transform(aw_proj)
                             else:
                                 aw_proj = aw_raw[:, :n_pca]
-                            X_tr.append(extract_features_from_window(aw_proj, fs=_fs, cutoff_hz=_cutoff))  # ΑΛΛΑΓΗ
+                            X_tr.append(extract_features_from_window(aw_proj, fs=_fs, cutoff_hz=_cutoff, n_stats=n_stats))  # ΑΛΛΑΓΗ
                             y_tr.append(label_idx)
                     global_window_idx += 1
             recording_group_id += 1
@@ -922,7 +924,7 @@ def build_dataset(
                 # Project original window through PCA+scaler
                 w_proj = pipeline.pca.transform(w_raw)
                 w_proj = pipeline.scaler.transform(w_proj)
-                feat_orig = extract_features_from_window(w_proj, fs=_fs, cutoff_hz=_cutoff)  # ΑΛΛΑΓΗ
+                feat_orig = extract_features_from_window(w_proj, fs=_fs, cutoff_hz=_cutoff, n_stats=n_stats)  # ΑΛΛΑΓΗ
 
 
                 X_tr_orig.append(feat_orig)
@@ -944,7 +946,7 @@ def build_dataset(
                             continue
                         aw_proj = pipeline.pca.transform(aw_raw)
                         aw_proj = pipeline.scaler.transform(aw_proj)
-                        X_tr.append(extract_features_from_window(aw_proj, fs=_fs, cutoff_hz=_cutoff))  # ΑΛΛΑΓΗ
+                        X_tr.append(extract_features_from_window(aw_proj, fs=_fs, cutoff_hz=_cutoff, n_stats=n_stats))  # ΑΛΛΑΓΗ
                         y_tr.append(label_idx)
                         aug_count_cls += 1
                 global_window_idx += 1
@@ -963,7 +965,7 @@ def build_dataset(
                 continue
             # Test files: use full pipeline.transform (no augmentation)
             for w in extract_windows(processed, window_size, step):
-                X_te.append(extract_features_from_window(w, fs=_fs, cutoff_hz=_cutoff))  # ΑΛΛΑΓΗ
+                X_te.append(extract_features_from_window(w, fs=_fs, cutoff_hz=_cutoff, n_stats=n_stats))  # ΑΛΛΑΓΗ
                 y_te.append(label_idx)
                 te_wins += 1
 
@@ -1554,7 +1556,14 @@ def main():
                         help="Butterworth filter cutoff frequency in Hz (default: 10)")
     parser.add_argument("--models_dir",  type=str,   default=defaults["models_dir"],
                         help="Directory to save/load model files (default: ./models)")
+    parser.add_argument("--features",   type=int,   default=defaults.get("features", N_STATS),
+                        help=f"Number of stats per PCA component (22–{N_STATS}). "
+                             "22=base only, 23+=impulse descriptors added one by one. "
+                             "Saved models will only work with the same feature count.")
     args = parser.parse_args()
+
+    if not (22 <= args.features <= N_STATS):
+        parser.error(f"--features must be between 22 and {N_STATS}, got {args.features}")
 
 
     # Validation: Step vs Window size
@@ -1584,7 +1593,8 @@ def main():
     aug_label = ', '.join(augment_techniques) if augment_techniques else 'DISABLED'
     print(f" Augment : [{aug_label}] (x{args.n_augments}) | "
           f"PCA: {args.pca} | Diff: {args.use_diff}")
-    print(f" Tune    : {args.tune} | Seed: {args.seed}")
+    print(f" Features: {args.features} per PCA component "
+          f"→ {args.features * args.pca} total | Tune: {args.tune} | Seed: {args.seed}")
     print("=" * 60)
 
 
@@ -1603,6 +1613,7 @@ def main():
         random_seed=args.seed,
         n_pca=args.pca,
         cutoff=args.cutoff,
+        n_stats=args.features,
     )
 
 

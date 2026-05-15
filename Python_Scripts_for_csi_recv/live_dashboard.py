@@ -528,6 +528,19 @@ def _inference_worker_fn(in_q, out_q, pipeline, model, le, classes,
     except ImportError:
         _extract = None
 
+    # Auto-detect how many stats per PCA component this model was trained with
+    try:
+        from csi_ml_pipeline import N_STATS as _N_STATS_DEFAULT
+    except ImportError:
+        _N_STATS_DEFAULT = 25
+    _n_pca = None
+    if pipeline is not None and hasattr(pipeline, 'pca') and pipeline.pca is not None:
+        _n_pca = getattr(pipeline.pca, 'n_components_', None)
+    if _n_pca and hasattr(model, 'n_features_in_'):
+        _n_stats = model.n_features_in_ // _n_pca
+    else:
+        _n_stats = _N_STATS_DEFAULT
+
     _mismatch_warned = False
     while True:
         try:
@@ -558,7 +571,7 @@ def _inference_worker_fn(in_q, out_q, pipeline, model, le, classes,
                         t0 = _time.monotonic()
                         processed = pipeline.transform(cm, use_pca=True, cutoff=cutoff)
                         if processed.shape[0] >= window_size:
-                            features = _extract(processed[-window_size:], fs=pipeline.fs, cutoff_hz=cutoff).reshape(1, -1)
+                            features = _extract(processed[-window_size:], fs=pipeline.fs, cutoff_hz=cutoff, n_stats=_n_stats).reshape(1, -1)
                             if _np.all(_np.isfinite(features)):
                                 ok = True
                                 if hasattr(model, "n_features_in_"):

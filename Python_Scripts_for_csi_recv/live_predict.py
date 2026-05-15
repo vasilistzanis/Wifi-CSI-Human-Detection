@@ -49,7 +49,7 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from csi_ml_pipeline import extract_features_from_window, FEATURE_VECTOR_VERSION
+    from csi_ml_pipeline import extract_features_from_window, FEATURE_VECTOR_VERSION, N_STATS as _N_STATS_DEFAULT
 except ImportError:
     print("[ERROR]  csi_ml_pipeline.py not found in the same directory.")
     sys.exit(1)
@@ -274,8 +274,13 @@ def run_inference(
 
     window = processed[-window_size:]                       # (window_size, n_pca)
 
-    # 4. Feature extraction -> flat vector
-    features = extract_features_from_window(window, fs=pipeline.fs, cutoff_hz=cutoff).reshape(1, -1)
+    # 4. Feature extraction -> flat vector (auto-detect n_stats from model)
+    _n_pca = getattr(getattr(pipeline, 'pca', None), 'n_components_', None)
+    if _n_pca and hasattr(model, 'n_features_in_'):
+        _n_stats = model.n_features_in_ // _n_pca
+    else:
+        _n_stats = _N_STATS_DEFAULT
+    features = extract_features_from_window(window, fs=pipeline.fs, cutoff_hz=cutoff, n_stats=_n_stats).reshape(1, -1)
 
     # Guard against corrupted data propagating to model
     if not np.all(np.isfinite(features)):

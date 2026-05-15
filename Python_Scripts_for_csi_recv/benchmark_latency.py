@@ -49,7 +49,7 @@ warnings.filterwarnings("ignore")
 
 try:
     from data_preprocessing import CSIPipeline, load_csi_csv
-    from csi_ml_pipeline import extract_features_from_window, FEATURE_VECTOR_VERSION
+    from csi_ml_pipeline import extract_features_from_window, FEATURE_VECTOR_VERSION, N_STATS as _N_STATS_DEFAULT
     import sklearn
 except ImportError:
     print("Cannot import modules. Run this in the correct directory.")
@@ -194,6 +194,8 @@ def main():
     parser.add_argument('--n_warmup', type=int, default=defaults["n_warmup"], help="Warm-up runs (default: 10)")
     parser.add_argument('--n_benchmark', type=int, default=defaults["n_benchmark"], help="Benchmark runs (default: 50)")
     parser.add_argument('--seed', type=int, default=defaults["seed"], help="Random seed (default: 42)")
+    parser.add_argument('--features', type=int, default=defaults.get("features", _N_STATS_DEFAULT),
+                        help=f"Stats per PCA component (22–{_N_STATS_DEFAULT}). Must match the trained models.")
     args = parser.parse_args()
 
 
@@ -262,7 +264,8 @@ def main():
     # transform the full buf_size buffer, then take the last window_size rows.
     processed_ref = pipeline.transform(window_data, use_pca=True).astype(np.float64)
     dummy_feat = extract_features_from_window(
-        processed_ref[-args.window_size:], fs=pipeline.fs, cutoff_hz=pipeline.cutoff
+        processed_ref[-args.window_size:], fs=pipeline.fs, cutoff_hz=pipeline.cutoff,
+        n_stats=args.features,
     ).reshape(1, -1)
     X_dummy = np.tile(dummy_feat, (10, 1))
     y_dummy = np.array([0, 1] * 5)
@@ -336,10 +339,17 @@ def main():
         # RAM usage estimated as the delta after the first predict
         ram_mb = max(0, mem_after - mem_before)
 
+        # Auto-detect n_stats from this model (supports 22–N_STATS features)
+        _n_pca_bench = getattr(getattr(pipeline, 'pca', None), 'n_components_', None)
+        if _n_pca_bench and hasattr(model, 'n_features_in_'):
+            _n_stats_bench = model.n_features_in_ // _n_pca_bench
+        else:
+            _n_stats_bench = _N_STATS_DEFAULT
+
         # Warm-up
         for _ in range(args.n_warmup):
             proc = pipeline.transform(window_data, use_pca=True).astype(np.float64)
-            feat = extract_features_from_window(proc[-args.window_size:], fs=pipeline.fs, cutoff_hz=pipeline.cutoff).reshape(1, -1)
+            feat = extract_features_from_window(proc[-args.window_size:], fs=pipeline.fs, cutoff_hz=pipeline.cutoff, n_stats=_n_stats_bench).reshape(1, -1)
             model.predict(feat)
 
         # Benchmark
@@ -347,7 +357,7 @@ def main():
         for _ in range(args.n_benchmark):
             t_start = time.perf_counter()
             proc = pipeline.transform(window_data, use_pca=True).astype(np.float64)
-            feat = extract_features_from_window(proc[-args.window_size:], fs=pipeline.fs, cutoff_hz=pipeline.cutoff).reshape(1, -1)
+            feat = extract_features_from_window(proc[-args.window_size:], fs=pipeline.fs, cutoff_hz=pipeline.cutoff, n_stats=_n_stats_bench).reshape(1, -1)
             model.predict(feat)
             t_end = time.perf_counter()
 
