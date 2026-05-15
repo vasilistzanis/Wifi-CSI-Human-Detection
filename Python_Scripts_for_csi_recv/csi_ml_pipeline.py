@@ -1618,7 +1618,10 @@ def main():
 
     best_params = None
     if args.tune:
-        models_to_tune = set(config.MODEL_KEYS) if args.model == "all" else {args.model}
+        if isinstance(args.model, list):
+            models_to_tune = set(config.MODEL_KEYS) if 'all' in [m.lower() for m in args.model] else set(args.model)
+        else:
+            models_to_tune = set(config.MODEL_KEYS) if args.model.lower() == "all" else {args.model}
         best_params = tune_hyperparameters(
             X_train_orig, y_train_orig, train_groups_orig,
             random_seed=args.seed, cv_folds=args.cv_folds,
