@@ -166,9 +166,16 @@ class ActivityBlock(QWidget):
         self._sub   = ""
         self._color = _DIM
         self.setMinimumHeight(96)
+        # Cached fonts — created once, reused every paintEvent
+        self._font_lbl = QFont("Segoe UI", 26, QFont.Bold)
+        self._font_sub = QFont("Segoe UI", 10)
+        self._col_dim  = QColor(_DIM)
 
     def set(self, label: str, sub: str, color: str):
-        self._label = label.upper()
+        lbl = label.upper()
+        if lbl == self._label and sub == self._sub and color == self._color:
+            return  # nothing changed — skip repaint entirely
+        self._label = lbl
         self._sub   = sub
         self._color = color
         self.update()
@@ -190,21 +197,19 @@ class ActivityBlock(QWidget):
         p.drawRoundedRect(r, 8.0, 8.0)
 
         # Left accent bar
-        p.setBrush(QColor(self._color))
+        p.setBrush(c)
         p.drawRoundedRect(0, 12, 4, r.height() - 24, 2.0, 2.0)
 
         # Large activity label
-        p.setPen(QColor(self._color))
-        f = QFont("Segoe UI", 26, QFont.Bold)
-        p.setFont(f)
+        p.setPen(c)
+        p.setFont(self._font_lbl)
         lbl_r = QRectF(16, 6, r.width() - 20, r.height() - 30)
         p.drawText(lbl_r, Qt.AlignLeft | Qt.AlignVCenter, self._label)
 
         # Sub-text
         if self._sub:
-            p.setPen(QColor(_DIM))
-            sf = QFont("Segoe UI", 10)
-            p.setFont(sf)
+            p.setPen(self._col_dim)
+            p.setFont(self._font_sub)
             sub_r = QRectF(16, r.height() - 26, r.width() - 20, 22)
             p.drawText(sub_r, Qt.AlignLeft | Qt.AlignVCenter, self._sub)
 
@@ -221,9 +226,18 @@ class ConfidenceGauge(QWidget):
         self._pct   = 0.0
         self._color = _DIM
         self.setFixedSize(size, size)
+        # Cached objects — avoid allocating on every paintEvent
+        sz = size - 20
+        self._font_gauge = QFont("Segoe UI", max(8, sz // 5), QFont.Bold)
+        self._pen_track  = QPen(QColor(_DARK2), 7, Qt.SolidLine, Qt.RoundCap)
+        self._col_text   = QColor(_TEXT)
 
     def set(self, pct: float, color: str):
-        self._pct   = max(0.0, min(100.0, pct))
+        new_pct = max(0.0, min(100.0, pct))
+        # Only trigger repaint when integer % or color changes
+        if int(new_pct) == int(self._pct) and color == self._color:
+            return
+        self._pct   = new_pct
         self._color = color
         self.update()
 
@@ -235,21 +249,18 @@ class ConfidenceGauge(QWidget):
         arc = QRectF(m, m, sz, sz)
 
         # Track
-        pen = QPen(QColor(_DARK2), 7, Qt.SolidLine, Qt.RoundCap)
-        p.setPen(pen)
+        p.setPen(self._pen_track)
         p.drawArc(arc, 225 * 16, -270 * 16)
 
         # Value arc
         if self._pct > 0:
-            pen.setColor(QColor(self._color))
+            pen = QPen(QColor(self._color), 7, Qt.SolidLine, Qt.RoundCap)
             p.setPen(pen)
             p.drawArc(arc, 225 * 16, int(-270 * 16 * self._pct / 100))
 
         # Center text
-        p.setPen(QColor(_TEXT))
-        fs = max(8, sz // 5)
-        f  = QFont("Segoe UI", fs, QFont.Bold)
-        p.setFont(f)
+        p.setPen(self._col_text)
+        p.setFont(self._font_gauge)
         p.drawText(arc.toRect(), Qt.AlignCenter, f"{int(self._pct)}%")
         p.end()
 
@@ -319,6 +330,18 @@ class MotionIntensityBar(QWidget):
         self._intensity = 0.0
         self._overlay   = ""
         self.setFixedHeight(48)
+        # Cache fonts — avoid allocating new QFont objects on every paintEvent
+        self._font_lbl = QFont("Segoe UI", 8);  self._font_lbl.setBold(True)
+        self._font_val = QFont("Segoe UI", 10); self._font_val.setBold(True)
+        self._font_ovl = QFont("Segoe UI", 9);  self._font_ovl.setBold(True)
+        # Cache gradient colors
+        self._col_green  = QColor(_GREEN)
+        self._col_yellow = QColor(_YELLOW)
+        self._col_orange = QColor(_ORANGE)
+        self._col_red    = QColor(_RED)
+        self._col_dark2  = QColor(_DARK2)
+        self._col_dim    = QColor(_DIM)
+        self._col_text   = QColor(_TEXT)
 
     def set(self, intensity: float, overlay: str = ""):
         self._intensity = max(0.0, min(1.0, intensity))
@@ -331,46 +354,39 @@ class MotionIntensityBar(QWidget):
         r = self.rect()
 
         # Label + percentage
-        p.setPen(QColor(_DIM))
-        lf = QFont("Segoe UI", 8); lf.setBold(True)
-        p.setFont(lf)
+        p.setPen(self._col_dim)
+        p.setFont(self._font_lbl)
         p.drawText(QRectF(0, 0, r.width() * 0.7, 16),
                    Qt.AlignLeft | Qt.AlignVCenter, "MOTION INTENSITY")
-        p.setPen(QColor(_TEXT))
-        vf = QFont("Segoe UI", 10); vf.setBold(True)
-        p.setFont(vf)
+        p.setPen(self._col_text)
+        p.setFont(self._font_val)
         p.drawText(QRectF(r.width() * 0.7, 0, r.width() * 0.3, 16),
                    Qt.AlignRight | Qt.AlignVCenter, f"{int(self._intensity * 100)}%")
 
         # Track
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(_DARK2))
+        p.setBrush(self._col_dark2)
         p.drawRoundedRect(QRectF(0, 20, r.width(), 10), 5.0, 5.0)
 
         # Filled gradient bar
         if self._intensity > 0.005:
             fill_w = max(10.0, self._intensity * r.width())
             g = QLinearGradient(0.0, 0.0, float(r.width()), 0.0)
-            g.setColorAt(0.00, QColor(_GREEN))
-            g.setColorAt(0.45, QColor(_YELLOW))
-            g.setColorAt(0.75, QColor(_ORANGE))
-            g.setColorAt(1.00, QColor(_RED))
+            g.setColorAt(0.00, self._col_green)
+            g.setColorAt(0.45, self._col_yellow)
+            g.setColorAt(0.75, self._col_orange)
+            g.setColorAt(1.00, self._col_red)
             p.setBrush(QBrush(g))
             p.drawRoundedRect(QRectF(0, 20, fill_w, 10), 5.0, 5.0)
 
         # Super Motion label below bar (Calm / Low / Medium / High)
         if self._overlay:
-            if self._intensity < 0.25:
-                oc = _GREEN
-            elif self._intensity < 0.50:
-                oc = _YELLOW
-            elif self._intensity < 0.75:
-                oc = _ORANGE
-            else:
-                oc = _RED
-            p.setPen(QColor(oc))
-            of = QFont("Segoe UI", 9); of.setBold(True)
-            p.setFont(of)
+            if self._intensity < 0.25:   oc = self._col_green
+            elif self._intensity < 0.50: oc = self._col_yellow
+            elif self._intensity < 0.75: oc = self._col_orange
+            else:                        oc = self._col_red
+            p.setPen(oc)
+            p.setFont(self._font_ovl)
             p.drawText(QRectF(0, 33, r.width(), 15),
                        Qt.AlignRight | Qt.AlignVCenter, self._overlay)
 
@@ -425,24 +441,39 @@ class ReaderThread(threading.Thread):
         self.connected     = False
 
     def snapshot(self) -> dict | None:
+        # Hold the lock only to copy scalars and cheap arrays, not for numpy ops
         with self._lock:
             if self._n_active == 0:
                 return None
-            ft  = list(self._fps_times)
-            fps = (len(ft) - 1) / (ft[-1] - ft[0]) if len(ft) >= 2 else 0.0
-            return {
-                "wave":        np.roll(self._wave_buf, -self._wave_ptr),
-                "last_amp":    self._last_amp[:self._n_active].copy(),
-                "n":           self._n_active,
-                "frame_count": self._frame_count,
-                "fps":         fps,
-                "uptime_s":    time.monotonic() - self._start_time,
-                "variance":    self._variance,
-                "mean_amp":    self._mean_amp,
-                "infer_snap":  list(self._infer_deque),
-                "infer_fill":  len(self._infer_deque) / max(1, self.infer_buf_max),
-                "connected":   self.connected,
-            }
+            ft       = list(self._fps_times)
+            fps      = (len(ft) - 1) / (ft[-1] - ft[0]) if len(ft) >= 2 else 0.0
+            wave_buf = self._wave_buf.copy()
+            wave_ptr = self._wave_ptr
+            amp_snap = self._last_amp[:self._n_active].copy()
+            n        = self._n_active
+            fc       = self._frame_count
+            fill     = len(self._infer_deque) / max(1, self.infer_buf_max)
+            conn     = self.connected
+            var      = self._variance
+            ma       = self._mean_amp
+        # np.roll allocates outside the lock — reader thread can push freely
+        return {
+            "wave":        np.roll(wave_buf, -wave_ptr),
+            "last_amp":    amp_snap,
+            "n":           n,
+            "frame_count": fc,
+            "fps":         fps,
+            "uptime_s":    time.monotonic() - self._start_time,
+            "variance":    var,
+            "mean_amp":    ma,
+            "infer_fill":  fill,
+            "connected":   conn,
+        }
+
+    def get_infer_snap(self) -> list:
+        """Return a copy of the inference deque — call only when submitting for inference."""
+        with self._lock:
+            return list(self._infer_deque)
 
     def _push(self, cf_frame: np.ndarray):
         n   = min(cf_frame.size, config.MAX_SUBCARRIERS)
@@ -481,6 +512,13 @@ class ReaderThread(threading.Thread):
             self.connected = True
             self._run_demo()
             return
+        # Raise this thread's OS priority so it preempts GUI work promptly
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetThreadPriority(
+                ctypes.windll.kernel32.GetCurrentThread(), 1)  # ABOVE_NORMAL
+        except Exception:
+            pass
         try:
             while not self.stop_event.is_set():
                 raw = ser.readline()
@@ -870,10 +908,13 @@ class MonitorPage(QWidget):
     def __init__(self, classes: list, waveform_len: int,
                  model_key: str, port: str):
         super().__init__()
-        self.classes       = classes
-        self.waveform_len  = waveform_len
-        self._wave_scale   = 1.0
-        self._current_mode = "har"
+        self.classes          = classes
+        self.waveform_len     = waveform_len
+        self._wave_scale      = 1.0
+        self._current_mode    = "har"
+        self._last_fps_level  = None   # guard: only setStyleSheet when fps category changes
+        self._last_recent_upd = 0.0    # throttle: recent activity table max 1 Hz
+        self._sc_x            = None   # cached x-axis array for subcarrier bars
         self._build(model_key, port)
 
     def set_mode(self, mode: str):
@@ -1063,8 +1104,10 @@ class MonitorPage(QWidget):
 
         n = state.get("n", 1); amp = state.get("last_amp")
         if amp is not None:
-            self._sc_bars.setOpts(x=np.arange(n, dtype=np.float32), height=amp, width=0.8)
-            self._pw_sc.setXRange(-0.5, n - 0.5, padding=0)
+            if self._sc_x is None or len(self._sc_x) != n:
+                self._sc_x = np.arange(n, dtype=np.float32)
+                self._pw_sc.setXRange(-0.5, n - 0.5, padding=0)
+            self._sc_bars.setOpts(x=self._sc_x, height=amp, width=0.8)
 
         label = state.get("label", "—")
         raw   = state.get("raw_label", "—")
@@ -1094,30 +1137,33 @@ class MonitorPage(QWidget):
             self._motion_bar.set(intensity)
 
         fps = state.get("fps", 0.0)
-        if fps <= 0:
-            self._lq_lbl.setText("No Signal")
-            self._lq_lbl.setStyleSheet(
-                f"font-size:13px; font-weight:bold; color:{_DIM};"
-                f" background:transparent; border:none;"
-            )
-        elif fps >= 80:
-            self._lq_lbl.setText("Excellent")
-            self._lq_lbl.setStyleSheet(
-                f"font-size:13px; font-weight:bold; color:{_GREEN};"
-                f" background:transparent; border:none;"
-            )
-        elif fps >= 50:
-            self._lq_lbl.setText("Good")
-            self._lq_lbl.setStyleSheet(
-                f"font-size:13px; font-weight:bold; color:{_YELLOW};"
-                f" background:transparent; border:none;"
-            )
-        else:
-            self._lq_lbl.setText("Poor")
-            self._lq_lbl.setStyleSheet(
-                f"font-size:13px; font-weight:bold; color:{_RED};"
-                f" background:transparent; border:none;"
-            )
+        fps_level = 0 if fps <= 0 else (3 if fps >= 80 else (2 if fps >= 50 else 1))
+        if fps_level != self._last_fps_level:
+            self._last_fps_level = fps_level
+            if fps_level == 0:
+                self._lq_lbl.setText("No Signal")
+                self._lq_lbl.setStyleSheet(
+                    f"font-size:13px; font-weight:bold; color:{_DIM};"
+                    f" background:transparent; border:none;"
+                )
+            elif fps_level == 3:
+                self._lq_lbl.setText("Excellent")
+                self._lq_lbl.setStyleSheet(
+                    f"font-size:13px; font-weight:bold; color:{_GREEN};"
+                    f" background:transparent; border:none;"
+                )
+            elif fps_level == 2:
+                self._lq_lbl.setText("Good")
+                self._lq_lbl.setStyleSheet(
+                    f"font-size:13px; font-weight:bold; color:{_YELLOW};"
+                    f" background:transparent; border:none;"
+                )
+            else:
+                self._lq_lbl.setText("Poor")
+                self._lq_lbl.setStyleSheet(
+                    f"font-size:13px; font-weight:bold; color:{_RED};"
+                    f" background:transparent; border:none;"
+                )
         self._lq_sub.setText(f"{fps:.0f} fps")
 
         expected = config.SAMPLING_RATE
@@ -1134,7 +1180,9 @@ class MonitorPage(QWidget):
         show = len(log) > 0
         self._no_recent.setVisible(not show)
         self._recent.setVisible(show)
-        if show:
+        now = time.monotonic()
+        if show and (now - self._last_recent_upd) >= 1.0:
+            self._last_recent_upd = now
             n_rows = min(6, len(log))
             self._recent.setRowCount(n_rows)
             for r, (ts, lbl, cf, _fr) in enumerate(log[:n_rows]):
@@ -1240,6 +1288,8 @@ class ActivityLogPage(QWidget):
         self._x_dist          = np.arange(len(classes), dtype=np.float32)
         self._session_start   = time.monotonic()
         self._last_table_upd  = 0.0
+        self._last_avgc_color = None
+        self._last_dom_label  = None
         self._build(on_clear)
 
     def _build(self, on_clear):
@@ -1380,17 +1430,21 @@ class ActivityLogPage(QWidget):
 
         c_avg = _GREEN if avg_c >= 70 else (_YELLOW if avg_c >= 50 else _RED)
         self._v_avgc.setText(f"{avg_c:.0f}%")
-        self._v_avgc.setStyleSheet(
-            f"font-size:14px; font-weight:bold; color:{c_avg};"
-            f" border:none; background:transparent;"
-        )
+        if c_avg != self._last_avgc_color:
+            self._last_avgc_color = c_avg
+            self._v_avgc.setStyleSheet(
+                f"font-size:14px; font-weight:bold; color:{c_avg};"
+                f" border:none; background:transparent;"
+            )
         if total > 0 and counts:
             dom = max(counts, key=counts.get)
             self._v_dom.setText(_disp(dom).upper())
-            self._v_dom.setStyleSheet(
-                f"font-size:14px; font-weight:bold; color:{_cc(dom)};"
-                f" border:none; background:transparent;"
-            )
+            if dom != self._last_dom_label:
+                self._last_dom_label = dom
+                self._v_dom.setStyleSheet(
+                    f"font-size:14px; font-weight:bold; color:{_cc(dom)};"
+                    f" border:none; background:transparent;"
+                )
 
         # Distribution chart
         if total > 0:
@@ -1483,6 +1537,11 @@ class SystemInfoPage(QWidget):
         self._conn_status_lbl   = None
         self._conn_latency_lbl  = None
         self._infer_latency_lbl = None
+        # Guards: only call setStyleSheet when the color category changes
+        self._last_conn_color = None
+        self._last_fps_color  = None
+        self._last_buf_color  = None
+        self._last_lat_color  = None
         self._build()
 
     def _build(self):
@@ -1610,28 +1669,27 @@ class SystemInfoPage(QWidget):
     def update(self, state: dict):
         connected = state.get("connected", False)
         dot_color = _GREEN if connected else _RED
-        sys_text  = "LIVE" if connected else "OFFLINE"
 
-        # Header card: tinted left border depending on status
-        self._hc.setStyleSheet(
-            f"QWidget{{background:{_PANEL}; border-radius:8px;"
-            f" border-left:3px solid {dot_color}; border-top:1px solid {_BORDER};"
-            f" border-right:1px solid {_BORDER}; border-bottom:1px solid {_BORDER};}}"
-        )
-        self._sys_dot.setStyleSheet(
-            f"font-size:14px; color:{dot_color}; background:transparent; border:none;"
-        )
-        self._sys_lbl.setText(sys_text)
-        self._sys_lbl.setStyleSheet(
-            f"font-size:16px; font-weight:bold; color:{dot_color};"
-            f" letter-spacing:0.06em; background:transparent; border:none;"
-        )
-
+        # Connection status — only update stylesheet when color changes
+        if dot_color != self._last_conn_color:
+            self._last_conn_color = dot_color
+            self._hc.setStyleSheet(
+                f"QWidget{{background:{_PANEL}; border-radius:8px;"
+                f" border-left:3px solid {dot_color}; border-top:1px solid {_BORDER};"
+                f" border-right:1px solid {_BORDER}; border-bottom:1px solid {_BORDER};}}"
+            )
+            self._sys_dot.setStyleSheet(
+                f"font-size:14px; color:{dot_color}; background:transparent; border:none;"
+            )
+            self._sys_lbl.setStyleSheet(
+                f"font-size:16px; font-weight:bold; color:{dot_color};"
+                f" letter-spacing:0.06em; background:transparent; border:none;"
+            )
+            if self._conn_status_lbl:
+                self._conn_status_lbl.setStyleSheet(self._metric_style(dot_color))
+        self._sys_lbl.setText("LIVE" if connected else "OFFLINE")
         if self._conn_status_lbl:
             self._conn_status_lbl.setText("LIVE" if connected else "LOST")
-            self._conn_status_lbl.setStyleSheet(
-                self._metric_style(dot_color)
-            )
         if self._conn_latency_lbl:
             self._conn_latency_lbl.setText(
                 f"{state.get('latency_ms', 0.0):.1f} ms"
@@ -1644,37 +1702,41 @@ class SystemInfoPage(QWidget):
         self._si_uptime.setText(f"{h:02d}:{m:02d}:{s:02d}")
         self._si_frames.setText(f"{state.get('frame_count', 0):,}")
 
-        # FPS — color-coded
+        # FPS — only setStyleSheet when color category changes
         fps = state.get("fps", 0.0)
         fps_color = _GREEN if fps >= 80 else (_YELLOW if fps >= 40 else _RED)
+        eff_fps_color = fps_color if fps > 0 else _DIM
         self._si_fps.setText(f"{fps:.1f} fps" if fps > 0 else "—")
-        self._si_fps.setStyleSheet(
-            self._metric_style(fps_color if fps > 0 else _DIM)
-        )
+        if eff_fps_color != self._last_fps_color:
+            self._last_fps_color = eff_fps_color
+            self._si_fps.setStyleSheet(self._metric_style(eff_fps_color))
 
-        # Buffer fill — color-coded label + progress bar in Inference card
+        # Buffer fill — only setStyleSheet when color category changes
         buf = int(state.get("infer_fill", 0) * 100)
         buf_color = _GREEN if buf >= 80 else (_YELLOW if buf >= 40 else _BLUE)
         self._si_buf.setText(f"{buf}%")
-        self._si_buf.setStyleSheet(self._metric_style(buf_color))
+        if buf_color != self._last_buf_color:
+            self._last_buf_color = buf_color
+            self._si_buf.setStyleSheet(self._metric_style(buf_color))
+            self._buf_bar.setStyleSheet(
+                f"QProgressBar{{background:{_DARK2}; border-radius:2px; border:none;}}"
+                f"QProgressBar::chunk{{background:{buf_color}; border-radius:2px;}}"
+            )
+            self._buf_pct_lbl.setStyleSheet(
+                f"font-size:10px; color:{buf_color}; background:transparent; border:none;"
+            )
         self._buf_bar.setValue(buf)
-        self._buf_bar.setStyleSheet(
-            f"QProgressBar{{background:{_DARK2}; border-radius:2px; border:none;}}"
-            f"QProgressBar::chunk{{background:{buf_color}; border-radius:2px;}}"
-        )
         self._buf_pct_lbl.setText(f"{buf}%")
-        self._buf_pct_lbl.setStyleSheet(
-            f"font-size:10px; color:{buf_color}; background:transparent; border:none;"
-        )
 
-        # Inference latency — color-coded
+        # Inference latency — only setStyleSheet when color category changes
         lat = state.get("latency_ms", 0.0)
         lat_s = f"{lat:.1f} ms" if lat > 0 else "—"
         lat_color = _GREEN if lat <= 5 else (_YELLOW if lat <= 30 else _RED)
+        eff_lat_color = lat_color if lat > 0 else _DIM
         self._si_lat.setText(lat_s)
-        self._si_lat.setStyleSheet(
-            self._metric_style(lat_color if lat > 0 else _DIM)
-        )
+        if eff_lat_color != self._last_lat_color:
+            self._last_lat_color = eff_lat_color
+            self._si_lat.setStyleSheet(self._metric_style(eff_lat_color))
         if self._infer_latency_lbl:
             self._infer_latency_lbl.setText(lat_s)
 
@@ -2187,6 +2249,16 @@ class DashboardWindow(QMainWindow):
 
     def _switch_page(self, idx: int):
         self._stack.setCurrentIndex(idx)
+        # Immediately refresh the newly-visible page so it's never stale
+        snap = self.reader.snapshot()
+        if snap is not None and 0 <= idx < len(self._pages):
+            motion_intensity = 0.0
+            ma = snap.get("mean_amp", 0.0)
+            if ma > 1e-6:
+                motion_intensity = min(1.0, math.sqrt(snap.get("variance", 0.0)) / ma * 4.0)
+            state = {**snap, **self._state, "latency_ms": self._latency_ms,
+                     "motion_intensity": motion_intensity, "mode": self._current_mode}
+            self._pages[idx].update(state)
 
     def _clear_log(self):
         self._log_entries.clear()
@@ -2221,7 +2293,7 @@ class DashboardWindow(QMainWindow):
                 if self.demo and self.pipeline is None:
                     self._demo_predict(snap["frame_count"])
                 else:
-                    self._infer_worker.submit(snap["infer_snap"], snap["frame_count"])
+                    self._infer_worker.submit(self.reader.get_infer_snap(), snap["frame_count"])
 
             result = self._infer_worker.get_result()
             if result is not None:
@@ -2291,8 +2363,11 @@ class DashboardWindow(QMainWindow):
 
         self._sidebar.update_health(int(snap["infer_fill"] * 100), 0)
         self._pill.update_status(snap["frame_count"], snap["fps"])
-        for page in self._pages:
-            page.update(state)
+        # Only update the visible page — invisible pages waste CPU on Qt/numpy ops
+        active = self._stack.currentIndex()
+        for i, page in enumerate(self._pages):
+            if i == active:
+                page.update(state)
 
     def _record(self, label, conf, probs, frame):
         self._total_preds += 1
@@ -2357,6 +2432,11 @@ def _parse_args():
 
 
 def main():
+    # Tighten the GIL switch interval so the serial reader thread gets the GIL
+    # within ~1ms instead of the default 5ms — critical at 100 Hz (10ms/frame).
+    import sys as _sys
+    _sys.setswitchinterval(0.001)
+
     args = _parse_args()
     app  = QApplication(sys.argv)
 
