@@ -1266,13 +1266,21 @@ def train_and_evaluate(
 
 
     # Map full names if needed or filter by ID
-    if target_model.lower() == 'all':
+    selected_models = [m.lower() for m in target_model] if isinstance(target_model, list) else [target_model.lower()]
+    
+    if 'all' in selected_models:
         models = all_models
-    elif target_model.lower() in all_models:
-        models = {target_model.lower(): all_models[target_model.lower()]}
     else:
-        print(f"[WARNING] Warning: Model '{target_model}' not recognized. Training all.")
-        models = all_models
+        models = {}
+        for m in selected_models:
+            if m in all_models:
+                models[m] = all_models[m]
+            else:
+                print(f"[WARNING] Model '{m}' not recognized. Skipped.")
+        
+        if not models:
+            print("[WARNING] No valid models selected. Training all.")
+            models = all_models
 
 
     cv, actual_folds, splitter_name = _make_group_cv(
@@ -1537,9 +1545,8 @@ def main():
         positive_flags=["--tune"],
         negative_flags=["--no-tune"],
     )
-    parser.add_argument("--model", type=str, default=defaults["model"],
-                        choices=config.MODEL_CHOICES,
-                        help="Specific model to train, or 'all'")
+    parser.add_argument("--model", type=str, nargs="+", default=[defaults["model"]],
+                        help="Specific model(s) to train (e.g., rf gb), or 'all'")
     parser.add_argument("--seed",        type=int,   default=defaults["seed"])
     parser.add_argument("--cv_folds",    type=int,   default=defaults["cv_folds"],
                         help="Number of cross-validation folds (default: 5)")
