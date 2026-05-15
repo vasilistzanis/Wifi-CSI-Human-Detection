@@ -85,7 +85,11 @@ _CLASS_COLORS = {
     "empty": _BLUE,   "no_activity":  _GREEN,  "walk_activity":  _ORANGE,
     "idle":  _GREEN,  "walk":         _ORANGE,
     "sit":   _YELLOW, "fall":  _RED,    "stand": _PURPLE, "run": "#ff7b72",
+    # Super Motion levels
+    "calm":   _GREEN,  "low": _YELLOW, "medium": _ORANGE, "high": _RED,
 }
+
+_MOTION_LEVELS = ["calm", "low", "medium", "high"]
 _DISPLAY_NAMES = {
     "walk":          "walk/activity",
     "walk_activity": "walk/activity",
@@ -305,6 +309,72 @@ class StatusPill(QWidget):
             self._text.setText("Connecting…")
             self._text.setStyleSheet(f"font-size:11px; color:{_YELLOW};")
             self._set_style("connecting")
+
+
+class MotionIntensityBar(QWidget):
+    """Horizontal gradient bar showing real-time motion intensity (0–100%).
+    In Super Motion mode an extra label row (Calm/Low/Medium/High) appears below the bar."""
+    def __init__(self):
+        super().__init__()
+        self._intensity = 0.0
+        self._overlay   = ""
+        self.setFixedHeight(48)
+
+    def set(self, intensity: float, overlay: str = ""):
+        self._intensity = max(0.0, min(1.0, intensity))
+        self._overlay   = overlay
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = self.rect()
+
+        # Label + percentage
+        p.setPen(QColor(_DIM))
+        lf = QFont("Segoe UI", 8); lf.setBold(True)
+        p.setFont(lf)
+        p.drawText(QRectF(0, 0, r.width() * 0.7, 16),
+                   Qt.AlignLeft | Qt.AlignVCenter, "MOTION INTENSITY")
+        p.setPen(QColor(_TEXT))
+        vf = QFont("Segoe UI", 10); vf.setBold(True)
+        p.setFont(vf)
+        p.drawText(QRectF(r.width() * 0.7, 0, r.width() * 0.3, 16),
+                   Qt.AlignRight | Qt.AlignVCenter, f"{int(self._intensity * 100)}%")
+
+        # Track
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(_DARK2))
+        p.drawRoundedRect(QRectF(0, 20, r.width(), 10), 5.0, 5.0)
+
+        # Filled gradient bar
+        if self._intensity > 0.005:
+            fill_w = max(10.0, self._intensity * r.width())
+            g = QLinearGradient(0.0, 0.0, float(r.width()), 0.0)
+            g.setColorAt(0.00, QColor(_GREEN))
+            g.setColorAt(0.45, QColor(_YELLOW))
+            g.setColorAt(0.75, QColor(_ORANGE))
+            g.setColorAt(1.00, QColor(_RED))
+            p.setBrush(QBrush(g))
+            p.drawRoundedRect(QRectF(0, 20, fill_w, 10), 5.0, 5.0)
+
+        # Super Motion label below bar (Calm / Low / Medium / High)
+        if self._overlay:
+            if self._intensity < 0.25:
+                oc = _GREEN
+            elif self._intensity < 0.50:
+                oc = _YELLOW
+            elif self._intensity < 0.75:
+                oc = _ORANGE
+            else:
+                oc = _RED
+            p.setPen(QColor(oc))
+            of = QFont("Segoe UI", 9); of.setBold(True)
+            p.setFont(of)
+            p.drawText(QRectF(0, 33, r.width(), 15),
+                       Qt.AlignRight | Qt.AlignVCenter, self._overlay)
+
+        p.end()
 
 
 # ============================================================================
@@ -787,10 +857,14 @@ class MonitorPage(QWidget):
     def __init__(self, classes: list, waveform_len: int,
                  model_key: str, port: str):
         super().__init__()
-        self.classes      = classes
-        self.waveform_len = waveform_len
-        self._wave_scale  = 1.0
+        self.classes       = classes
+        self.waveform_len  = waveform_len
+        self._wave_scale   = 1.0
+        self._current_mode = "har"
         self._build(model_key, port)
+
+    def set_mode(self, mode: str):
+        self._current_mode = mode
 
     def _build(self, model_key: str, port: str):
         root = QVBoxLayout(self)
@@ -881,6 +955,11 @@ class MonitorPage(QWidget):
         info_v.addStretch()
         g_row.addLayout(info_v, 1)
         iv.addLayout(g_row)
+
+        # Motion intensity bar
+        self._motion_bar = MotionIntensityBar()
+        iv.addWidget(self._motion_bar)
+
         right.addWidget(inf_card)
 
         # Link Quality + FPS/LOSS
@@ -977,11 +1056,29 @@ class MonitorPage(QWidget):
         label = state.get("label", "—")
         raw   = state.get("raw_label", "—")
         conf  = state.get("confidence", 0.0)
-        color = _cc(label)
-        self._activity_block.set(_disp(label), f"Raw: {_disp(raw)}", color)
-        self._gauge.set(conf, color)
-        self._conf_lbl.setText(f"Confidence: {conf:.1f}%")
-        self._raw_lbl.setText(f"Raw: {_disp(raw)}")
+        intensity = state.get("motion_intensity", 0.0)
+
+        if self._current_mode == "motion":
+            if intensity < 0.20:
+                motion_label, motion_color = "Calm",   _GREEN
+            elif intensity < 0.45:
+                motion_label, motion_color = "Low",    _YELLOW
+            elif intensity < 0.72:
+                motion_label, motion_color = "Medium", _ORANGE
+            else:
+                motion_label, motion_color = "High",   _RED
+            self._activity_block.set(motion_label, f"Motion: {int(intensity * 100)}%", motion_color)
+            self._gauge.set(intensity * 100.0, motion_color)
+            self._conf_lbl.setText(f"Motion: {int(intensity * 100)}%")
+            self._raw_lbl.setText(f"Level: {motion_label}")
+            self._motion_bar.set(intensity, motion_label)
+        else:
+            color = _cc(label)
+            self._activity_block.set(_disp(label), f"Raw: {_disp(raw)}", color)
+            self._gauge.set(conf, color)
+            self._conf_lbl.setText(f"Confidence: {conf:.1f}%")
+            self._raw_lbl.setText(f"Raw: {_disp(raw)}")
+            self._motion_bar.set(intensity)
 
         fps = state.get("fps", 0.0)
         if fps <= 0:
@@ -1230,6 +1327,31 @@ class ActivityLogPage(QWidget):
         tv.addWidget(self._table, 1); tv.addWidget(self._no_log)
         self._table.setVisible(False)
         body.addWidget(log_card, 1)
+
+    def set_mode(self, new_classes: list):
+        """Switch the distribution chart to a new set of classes (e.g. motion levels)."""
+        self.classes = new_classes
+        n = len(new_classes)
+        self._x_dist = np.arange(n, dtype=np.float32)
+        self._pw_dist.removeItem(self._dist_bars)
+        for ti in self._pct_labels:
+            self._pw_dist.removeItem(ti)
+        ticks = [[(i, c[:6]) for i, c in enumerate(new_classes)]]
+        self._pw_dist.getAxis("bottom").setTicks(ticks)
+        brushes = [pg.mkBrush(_cc(c) + "cc") for c in new_classes]
+        self._dist_bars = pg.BarGraphItem(
+            x=self._x_dist, height=np.zeros(n), width=0.6, brushes=brushes,
+        )
+        self._pw_dist.addItem(self._dist_bars)
+        self._pct_labels = []
+        for cls in new_classes:
+            ti = pg.TextItem("", anchor=(0.5, 1.0), color=_DIM)
+            ti.setFont(QFont("Segoe UI", 8))
+            self._pw_dist.addItem(ti)
+            self._pct_labels.append(ti)
+        self._pw_dist.setYRange(0, 1, padding=0.22)
+        self._pw_dist.setVisible(False)
+        self._no_dist.setVisible(True)
 
     def update(self, state: dict):
         total  = state.get("total_predictions", 0)
@@ -1549,12 +1671,16 @@ class SystemInfoPage(QWidget):
 # ============================================================================
 
 class SettingsPage(QWidget):
-    def __init__(self, models_dir: str, current_model: str, on_deploy):
+    def __init__(self, models_dir: str, current_model: str, on_deploy,
+                 current_mode: str = "har", on_mode_change=None):
         super().__init__()
-        self._models_dir    = models_dir
-        self._current       = current_model
-        self._selected      = current_model
-        self._on_deploy     = on_deploy
+        self._models_dir      = models_dir
+        self._current         = current_model
+        self._selected        = current_model
+        self._on_deploy       = on_deploy
+        self._current_mode    = current_mode
+        self._selected_mode   = current_mode
+        self._on_mode_change  = on_mode_change
         self._radios: dict[str, QRadioButton] = {}
         self._status_pills: dict[str, QLabel] = {}
         self._build()
@@ -1575,22 +1701,108 @@ class SettingsPage(QWidget):
         )
         root.addWidget(h1)
 
+        # ── Inference Mode card ───────────────────────────────────────────────
+        mode_card = _card()
+        modelay = QVBoxLayout(mode_card)
+        modelay.setContentsMargins(20, 16, 20, 16); modelay.setSpacing(10)
+        modelay.addWidget(_hdr("INFERENCE MODE"))
+
+        _MODE_INFO = {
+            "har":    ("HAR Mode",      "Human Activity Recognition — classify activity from motion.", config.MODELS_HAR_DIR),
+            "motion": ("Super Motion",  "Motion intensity detection — different training parameters.", config.MODELS_MOTION_DIR),
+        }
+        mode_group = QButtonGroup(self)
+        self._mode_radios: dict[str, QRadioButton] = {}
+        for mkey, (mname, mdesc, mdir) in _MODE_INFO.items():
+            mrow = QWidget()
+            mrow.setStyleSheet(
+                f"QWidget{{background:{_DARK2}; border-radius:6px;"
+                f" border:1px solid {_BORDER};}}"
+            )
+            mrl = QHBoxLayout(mrow); mrl.setContentsMargins(14, 10, 14, 10); mrl.setSpacing(12)
+            mrb = QRadioButton()
+            mrb.setChecked(mkey == self._current_mode)
+            mrb.setStyleSheet("QRadioButton{background:transparent; border:none;}")
+            mode_group.addButton(mrb)
+            self._mode_radios[mkey] = mrb
+            mrb.toggled.connect(lambda checked, k=mkey: self._on_mode_radio(k, checked))
+            mrl.addWidget(mrb)
+            minfo = QVBoxLayout(); minfo.setSpacing(2)
+            mn_lbl = QLabel(mname)
+            mn_lbl.setStyleSheet(
+                f"font-size:13px; font-weight:bold; color:{_TEXT};"
+                f" background:transparent; border:none;"
+            )
+            md_lbl = QLabel(mdesc)
+            md_lbl.setStyleSheet(
+                f"font-size:10px; color:{_DIM}; background:transparent; border:none;"
+            )
+            minfo.addWidget(mn_lbl); minfo.addWidget(md_lbl)
+            mrl.addLayout(minfo, 1)
+            mdir_lbl = QLabel(mdir)
+            mdir_lbl.setStyleSheet(
+                f"font-size:9px; color:{_DIM}; background:transparent; border:none;"
+            )
+            mrl.addWidget(mdir_lbl)
+            if mkey == self._current_mode:
+                mpill_text, mpill_color = "ACTIVE", _GREEN
+            else:
+                mpill_text, mpill_color = "READY", _DIM
+            mpill = QLabel(mpill_text)
+            mpill.setFixedWidth(64)
+            mpill.setAlignment(Qt.AlignCenter)
+            mpill.setStyleSheet(
+                f"font-size:9px; font-weight:bold; color:{mpill_color};"
+                f" background:{mpill_color}22; border:1px solid {mpill_color}44;"
+                f" border-radius:8px; padding:2px 6px;"
+            )
+            self._mode_pills = getattr(self, "_mode_pills", {})
+            self._mode_pills[mkey] = mpill
+            mrl.addWidget(mpill)
+            modelay.addWidget(mrow)
+
+        modelay.addSpacing(4)
+        mode_act_row = QHBoxLayout(); mode_act_row.setSpacing(12)
+        self._mode_btn = QPushButton("⚡   Switch Mode")
+        self._mode_btn.setFixedHeight(38)
+        self._mode_btn.setStyleSheet(
+            f"QPushButton{{background:{_BLUE}; color:#ffffff; border:none;"
+            f" border-radius:6px; font-size:13px; font-weight:bold; padding:0 20px;}}"
+            f"QPushButton:hover{{background:{_BLUE}dd;}}"
+            f"QPushButton:disabled{{background:{_DARK2}; color:{_DIM};"
+            f" border:1px solid {_BORDER};}}"
+        )
+        self._mode_btn.setEnabled(False)
+        self._mode_btn.clicked.connect(self._switch_mode)
+        self._mode_status_lbl = QLabel(
+            f"Active: {_MODE_INFO.get(self._current_mode, ('—',))[0]}"
+        )
+        self._mode_status_lbl.setStyleSheet(
+            f"font-size:11px; color:{_DIM}; background:transparent; border:none;"
+        )
+        mode_act_row.addWidget(self._mode_btn)
+        mode_act_row.addWidget(self._mode_status_lbl, 1)
+        modelay.addLayout(mode_act_row)
+        root.addWidget(mode_card)
+
         # Model selection card
         mc = _card()
         mv = QVBoxLayout(mc); mv.setContentsMargins(20, 16, 20, 16); mv.setSpacing(10)
         mv.addWidget(_hdr("MODEL SELECTION"))
 
-        dir_lbl = QLabel(f"Models directory: {self._models_dir}")
-        dir_lbl.setStyleSheet(
+        self._dir_lbl = QLabel(f"Models directory: {self._models_dir}")
+        self._dir_lbl.setStyleSheet(
             f"font-size:10px; color:{_DIM}; background:transparent; border:none;"
         )
-        dir_lbl.setWordWrap(True)
-        mv.addWidget(dir_lbl)
+        self._dir_lbl.setWordWrap(True)
+        mv.addWidget(self._dir_lbl)
 
         sep = QWidget(); sep.setFixedHeight(1)
         sep.setStyleSheet(f"background:{_BORDER}; border:none;")
         mv.addWidget(sep)
 
+        self._model_rows:      dict[str, QWidget] = {}
+        self._model_name_lbls: dict[str, QLabel]  = {}
         group = QButtonGroup(self)
         models = self._scan()
         for key, available in models:
@@ -1601,6 +1813,7 @@ class SettingsPage(QWidget):
                 f"QWidget{{background:{row_bg}; border-radius:6px;"
                 f" border:1px solid {row_border};}}"
             )
+            self._model_rows[key] = row
             rl = QHBoxLayout(row); rl.setContentsMargins(14, 10, 14, 10); rl.setSpacing(12)
 
             rb = QRadioButton()
@@ -1619,6 +1832,7 @@ class SettingsPage(QWidget):
                 f" color:{_TEXT if available else _DIM};"
                 f" background:transparent; border:none;"
             )
+            self._model_name_lbls[key] = name_lbl
             desc_lbl = QLabel(_MODEL_DESC.get(key, ""))
             desc_lbl.setStyleSheet(
                 f"font-size:10px; color:{_DIM}; background:transparent; border:none;"
@@ -1680,6 +1894,41 @@ class SettingsPage(QWidget):
         root.addWidget(mc)
         root.addStretch()
 
+    def _on_mode_radio(self, key: str, checked: bool):
+        if checked:
+            self._selected_mode = key
+            self._mode_btn.setEnabled(key != self._current_mode)
+
+    def _switch_mode(self):
+        new_mode = self._selected_mode
+        self._mode_btn.setEnabled(False)
+        self._mode_btn.setText("⏳   Switching…")
+        QApplication.processEvents()
+        if self._on_mode_change:
+            self._on_mode_change(new_mode)
+        self._mode_btn.setText("⚡   Switch Mode")
+        _MODE_NAMES = {"har": "HAR Mode", "motion": "Super Motion"}
+        for k, pill in self._mode_pills.items():
+            if k == new_mode:
+                pill.setText("ACTIVE")
+                pill.setStyleSheet(
+                    f"font-size:9px; font-weight:bold; color:{_GREEN};"
+                    f" background:{_GREEN}22; border:1px solid {_GREEN}44;"
+                    f" border-radius:8px; padding:2px 6px;"
+                )
+            else:
+                pill.setText("READY")
+                pill.setStyleSheet(
+                    f"font-size:9px; font-weight:bold; color:{_DIM};"
+                    f" background:{_DIM}22; border:1px solid {_DIM}44;"
+                    f" border-radius:8px; padding:2px 6px;"
+                )
+        self._current_mode = new_mode
+        self._mode_status_lbl.setText(f"✓  Switched to {_MODE_NAMES.get(new_mode, new_mode)}")
+        self._mode_status_lbl.setStyleSheet(
+            f"font-size:11px; color:{_GREEN}; background:transparent; border:none;"
+        )
+
     def _on_radio(self, key: str, checked: bool):
         if checked:
             self._selected = key
@@ -1721,6 +1970,53 @@ class SettingsPage(QWidget):
             )
         self._deploy_btn.setEnabled(self._selected != self._current)
 
+    def refresh_models_dir(self, new_dir: str):
+        """Re-scan a new models directory and update all model row states."""
+        self._models_dir = new_dir
+        self._dir_lbl.setText(f"Models directory: {new_dir}")
+        models = self._scan()
+        for key, available in models:
+            # Radio button
+            rb = self._radios[key]
+            rb.setEnabled(available)
+            if not available and rb.isChecked():
+                rb.setChecked(False)
+            # Row background
+            row_bg     = _DARK2 if available else f"{_DARK2}44"
+            row_border = _BORDER if available else f"{_BORDER}44"
+            self._model_rows[key].setStyleSheet(
+                f"QWidget{{background:{row_bg}; border-radius:6px;"
+                f" border:1px solid {row_border};}}"
+            )
+            # Name label color
+            self._model_name_lbls[key].setStyleSheet(
+                f"font-size:13px; font-weight:bold;"
+                f" color:{_TEXT if available else _DIM};"
+                f" background:transparent; border:none;"
+            )
+            # Status pill
+            if key == self._current and available:
+                pill_text, pill_color = "ACTIVE", _GREEN
+            elif available:
+                pill_text, pill_color = "READY", _BLUE
+            else:
+                pill_text, pill_color = "NOT TRAINED", _DIM
+            pill = self._status_pills[key]
+            pill.setText(pill_text)
+            pill.setStyleSheet(
+                f"font-size:9px; font-weight:bold; color:{pill_color};"
+                f" background:{pill_color}22; border:1px solid {pill_color}44;"
+                f" border-radius:8px; padding:2px 6px;"
+            )
+        # Reset deploy row
+        self._deploy_btn.setEnabled(False)
+        self._status_lbl.setText(
+            f"Active: {_MODEL_NAMES.get(self._current, self._current)}"
+        )
+        self._status_lbl.setStyleSheet(
+            f"font-size:11px; color:{_DIM}; background:transparent; border:none;"
+        )
+
     def update(self, state: dict):
         pass
 
@@ -1746,6 +2042,7 @@ class DashboardWindow(QMainWindow):
         self.max_log     = max_log; self.demo = demo
         self._hyst_min   = hyst_count
 
+        self._current_mode    = "har"
         self._ema_probs       = np.zeros(len(classes), dtype=np.float32)
         self._frames_since    = 0; self._last_seen = 0
         self._latency_ms      = 0.0; self._demo_tick = 0
@@ -1804,12 +2101,15 @@ class DashboardWindow(QMainWindow):
         self._sysinfo_page  = SystemInfoPage(self.model_key, window_size, port, baud)
         self._sysinfo_page.set_classes(self.classes)
         self._settings_page = SettingsPage(
-            self.models_dir, self.model_key, self.switch_model
+            self.models_dir, self.model_key, self.switch_model,
+            current_mode=self._current_mode,
+            on_mode_change=self.switch_mode_dir,
         )
+        self._log_page = ActivityLogPage(self.classes, self._clear_log)
         self._pages = [
             self._monitor_page,
             SignalViewPage(wl),
-            ActivityLogPage(self.classes, self._clear_log),
+            self._log_page,
             self._sysinfo_page,
             self._settings_page,
         ]
@@ -1847,6 +2147,31 @@ class DashboardWindow(QMainWindow):
         except Exception as e:
             return False, str(e)
 
+    def switch_mode_dir(self, mode: str):
+        """Switch models directory between HAR (models/har) and Super Motion (models/motion)."""
+        new_dir = config.MODELS_HAR_DIR if mode == "har" else config.MODELS_MOTION_DIR
+        self._current_mode = mode
+        self._monitor_page.set_mode(mode)
+        # Reset log and distribution chart for the new mode's class set
+        new_classes = _MOTION_LEVELS if mode == "motion" else list(self.classes)
+        self._log_entries.clear()
+        self._class_counts = {c: 0 for c in new_classes}
+        self._conf_sum = 0.0; self._total_preds = 0
+        self._last_record_lbl = ""; self._hyst_pending = ""; self._hyst_count = 0
+        self._state.update({
+            "label": "—", "raw_label": "—", "confidence": 0.0,
+            "log_entries": [], "total_predictions": 0,
+            "avg_confidence": 0.0, "class_counts": {},
+        })
+        self._log_page.set_mode(new_classes)
+        if new_dir == self.models_dir:
+            return
+        self.models_dir = new_dir
+        self._settings_page.refresh_models_dir(new_dir)
+        ok, msg = self.switch_model(self.model_key)
+        if not ok:
+            print(f"[WARN] Mode switch to '{mode}' failed: {msg}")
+
     def _switch_page(self, idx: int):
         self._stack.setCurrentIndex(idx)
 
@@ -1869,64 +2194,87 @@ class DashboardWindow(QMainWindow):
         self._last_seen    = snap["frame_count"]
         self._frames_since += new_frames
 
-        # ── Submit work to background thread (non-blocking) ──────────────
-        if self._frames_since >= self.step:
-            self._frames_since = 0
-            if self.demo and self.pipeline is None:
-                self._demo_predict(snap["frame_count"])
-            else:
-                self._infer_worker.submit(
-                    snap["infer_snap"],
-                    snap["frame_count"],
-                )
+        variance = float(snap.get("variance", 0.0))
+        mean_amp = float(snap.get("mean_amp", 0.0))
+        if mean_amp > 1e-6:
+            motion_intensity = min(1.0, math.sqrt(variance) / mean_amp * 4.0)
+        else:
+            motion_intensity = 0.0
 
-        # ── Poll for completed inference result (non-blocking) ───────────
-        result = self._infer_worker.get_result()
-        if result is not None:
-            raw_cand, conf_cand, probs_cand, latency, fc = result
-            self._latency_ms = latency
-
-            if raw_cand is not None and probs_cand is not None:
-                # Adaptive EMA: scale update speed by model confidence
-                max_prob = float(np.max(probs_cand))
-                dynamic_alpha = self.ema_alpha * max_prob
-
-                self._ema_probs = (dynamic_alpha * probs_cand +
-                                   (1.0 - dynamic_alpha) * self._ema_probs)
-
-                best_idx = int(np.argmax(self._ema_probs))
-                smoothed_prob = float(self._ema_probs[best_idx]) * 100.0
-                smoothed_cand = self.classes[best_idx]
-
-                if smoothed_prob < self.conf_thresh:
-                    smoothed_cand = "—"
-
-                # ── Hysteresis (State Transition Delay) ──────────────────────
-                if smoothed_cand == self._hyst_pending:
-                    self._hyst_count += 1
+        # ── HAR mode: ML inference ───────────────────────────────────────
+        if self._current_mode == "har":
+            if self._frames_since >= self.step:
+                self._frames_since = 0
+                if self.demo and self.pipeline is None:
+                    self._demo_predict(snap["frame_count"])
                 else:
-                    self._hyst_pending = smoothed_cand
-                    self._hyst_count   = 1
+                    self._infer_worker.submit(snap["infer_snap"], snap["frame_count"])
 
-                if self._hyst_count >= self._hyst_min:
-                    now = time.monotonic()
-                    if smoothed_cand == "—":
-                        # Uncertain: update display only — never log to activity
-                        if self._state["label"] != "—":
-                            self._state.update({
-                                "label":      "—",
-                                "raw_label":  "—",
-                                "confidence": smoothed_prob,
-                                "all_probs":  self._ema_probs,
-                            })
-                            self._last_record_lbl = ""
-                    elif (smoothed_cand != self._last_record_lbl or
-                            (now - self._last_record_t) >= 4.0):
-                        self._last_record_lbl = smoothed_cand
-                        self._last_record_t   = now
-                        self._record(smoothed_cand, smoothed_prob, self._ema_probs, fc)
+            result = self._infer_worker.get_result()
+            if result is not None:
+                raw_cand, conf_cand, probs_cand, latency, fc = result
+                self._latency_ms = latency
 
-        state = {**snap, **self._state, "latency_ms": self._latency_ms}
+                if raw_cand is not None and probs_cand is not None:
+                    max_prob      = float(np.max(probs_cand))
+                    dynamic_alpha = self.ema_alpha * max_prob
+                    self._ema_probs = (dynamic_alpha * probs_cand +
+                                       (1.0 - dynamic_alpha) * self._ema_probs)
+                    best_idx      = int(np.argmax(self._ema_probs))
+                    smoothed_prob = float(self._ema_probs[best_idx]) * 100.0
+                    smoothed_cand = self.classes[best_idx]
+                    if smoothed_prob < self.conf_thresh:
+                        smoothed_cand = "—"
+
+                    if smoothed_cand == self._hyst_pending:
+                        self._hyst_count += 1
+                    else:
+                        self._hyst_pending = smoothed_cand
+                        self._hyst_count   = 1
+
+                    if self._hyst_count >= self._hyst_min:
+                        now = time.monotonic()
+                        if smoothed_cand == "—":
+                            if self._state["label"] != "—":
+                                self._state.update({
+                                    "label":      "—",
+                                    "raw_label":  "—",
+                                    "confidence": smoothed_prob,
+                                    "all_probs":  self._ema_probs,
+                                })
+                                self._last_record_lbl = ""
+                        elif (smoothed_cand != self._last_record_lbl or
+                                (now - self._last_record_t) >= 4.0):
+                            self._last_record_lbl = smoothed_cand
+                            self._last_record_t   = now
+                            self._record(smoothed_cand, smoothed_prob, self._ema_probs, fc)
+
+        # ── Super Motion mode: signal-based level tracking ───────────────
+        elif self._current_mode == "motion":
+            self._frames_since = 0
+            if motion_intensity < 0.20:   motion_lvl = "calm"
+            elif motion_intensity < 0.45: motion_lvl = "low"
+            elif motion_intensity < 0.72: motion_lvl = "medium"
+            else:                          motion_lvl = "high"
+
+            if motion_lvl == self._hyst_pending:
+                self._hyst_count += 1
+            else:
+                self._hyst_pending = motion_lvl
+                self._hyst_count   = 1
+
+            if self._hyst_count >= self._hyst_min:
+                now = time.monotonic()
+                if (motion_lvl != self._last_record_lbl or
+                        (now - self._last_record_t) >= 4.0):
+                    self._last_record_lbl = motion_lvl
+                    self._last_record_t   = now
+                    self._record(motion_lvl, motion_intensity * 100.0,
+                                 np.array([]), snap["frame_count"])
+
+        state = {**snap, **self._state, "latency_ms": self._latency_ms,
+                 "motion_intensity": motion_intensity,
+                 "mode": self._current_mode}
 
         self._sidebar.update_health(int(snap["infer_fill"] * 100), 0)
         self._pill.update_status(snap["frame_count"], snap["fps"])

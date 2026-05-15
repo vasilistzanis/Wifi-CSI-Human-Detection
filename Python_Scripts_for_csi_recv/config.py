@@ -50,9 +50,11 @@ MAX_SUBCARRIERS = 128
 # ------------------------------------------------------------------------------
 # Shared paths and model defaults
 # ------------------------------------------------------------------------------
-DATASETS_DIR = "datasets"
-MODELS_DIR = "models"
-PLOTS_DIR = "models/plots"
+DATASETS_DIR      = "datasets"
+MODELS_DIR        = "models"
+MODELS_HAR_DIR    = "models/har"
+MODELS_MOTION_DIR = "models/motion"
+PLOTS_DIR         = "models/plots"
 METRICS_JSON_PATH = "models/metrics.json"
 LATENCY_OUTPUT_CSV = "models/multi_model_latency.csv"
 LATENCY_OUTPUT_PLOT = "models/plots/Latency_Comparison.png"
@@ -395,7 +397,7 @@ SCRIPT_DEFAULTS = {
     "live_dashboard": {
         "port":        SERIAL_PORT,
         "baud":        BAUD_RATE,
-        "models_dir":  MODELS_DIR,
+        "models_dir":  MODELS_HAR_DIR,
         "model":       LIVE_PREDICT_MODEL,
         "window":      WINDOW_SIZE,
         "step":        DASHBOARD_STEP_SIZE,
