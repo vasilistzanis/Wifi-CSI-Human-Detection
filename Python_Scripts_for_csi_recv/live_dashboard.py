@@ -89,7 +89,7 @@ _CLASS_COLORS = {
     "calm":   _GREEN,  "low": _YELLOW, "medium": _ORANGE, "high": _RED,
 }
 
-_MOTION_LEVELS = ["calm", "low", "medium", "high"]
+
 _DISPLAY_NAMES = {
     "walk":          "walk/activity",
     "walk_activity": "walk/activity",
@@ -230,6 +230,7 @@ class ConfidenceGauge(QWidget):
         sz = size - 20
         self._font_gauge = QFont("Segoe UI", max(8, sz // 5), QFont.Bold)
         self._pen_track  = QPen(QColor(_DARK2), 7, Qt.SolidLine, Qt.RoundCap)
+        self._pen_value  = QPen(QColor(_DIM),   7, Qt.SolidLine, Qt.RoundCap)
         self._col_text   = QColor(_TEXT)
 
     def set(self, pct: float, color: str):
@@ -238,7 +239,9 @@ class ConfidenceGauge(QWidget):
         if int(new_pct) == int(self._pct) and color == self._color:
             return
         self._pct   = new_pct
-        self._color = color
+        if color != self._color:
+            self._color    = color
+            self._pen_value = QPen(QColor(color), 7, Qt.SolidLine, Qt.RoundCap)
         self.update()
 
     def paintEvent(self, event):
@@ -252,10 +255,9 @@ class ConfidenceGauge(QWidget):
         p.setPen(self._pen_track)
         p.drawArc(arc, 225 * 16, -270 * 16)
 
-        # Value arc
+        # Value arc — use pre-built pen (rebuilt only when color changes)
         if self._pct > 0:
-            pen = QPen(QColor(self._color), 7, Qt.SolidLine, Qt.RoundCap)
-            p.setPen(pen)
+            p.setPen(self._pen_value)
             p.drawArc(arc, 225 * 16, int(-270 * 16 * self._pct / 100))
 
         # Center text
@@ -415,6 +417,56 @@ def _load_models(models_dir: str, model_key: str):
 
 
 # ============================================================================
+# DEMO FRAME GENERATOR  (runs in its own OS process — own GIL)
+# ============================================================================
+
+def _demo_generator_fn(out_q, sc: int) -> None:
+    """
+    Generates synthetic CSI frames at 100 Hz in a dedicated subprocess.
+    Runs with its own Python interpreter and GIL — completely decoupled from
+    the Qt/GUI thread, so demo frame timing is never stolen by GUI work.
+    Must be a module-level function (picklable for Windows 'spawn').
+    """
+    import numpy as _np
+    import math   as _math
+    import time   as _time
+    import os     as _os
+
+    # 1 ms timer resolution so sleep() is accurate on Windows
+    if _os.name == "nt":
+        try:
+            import ctypes as _ctypes
+            _ctypes.windll.winmm.timeBeginPeriod(1)
+        except Exception:
+            pass
+
+    rng      = _np.random.default_rng(0)
+    t        = 0.0
+    idx      = _np.arange(sc, dtype=_np.float32)
+    idx_norm = idx / sc
+    interval = 1.0 / 100.0
+    next_t   = _time.perf_counter()
+
+    while True:
+        next_t   += interval
+        remaining = next_t - _time.perf_counter()
+        if remaining > 0.001:
+            _time.sleep(remaining)
+
+        t  += 0.05
+        p1  = _np.exp(-0.5 * ((idx - (sc * .3 + 10 * _math.sin(t * .7))) / 6) ** 2)
+        p2  = _np.exp(-0.5 * ((idx - (sc * .7 +  8 * _math.cos(t * .5))) / 5) ** 2)
+        amp = p1 * .7 + p2 * .5 + rng.uniform(0, .04, sc).astype(_np.float32)
+        ph  = t * .8 + idx_norm * (2 * _math.pi)
+        frame = (amp * (_np.cos(ph) + 1j * _np.sin(ph))).astype(_np.complex64)
+
+        try:
+            out_q.put_nowait(frame)
+        except Exception:
+            pass  # queue full — skip frame, don't block generator
+
+
+# ============================================================================
 # READER THREAD
 # ============================================================================
 
@@ -446,7 +498,6 @@ class ReaderThread(threading.Thread):
             if self._n_active == 0:
                 return None
             ft       = list(self._fps_times)
-            fps      = (len(ft) - 1) / (ft[-1] - ft[0]) if len(ft) >= 2 else 0.0
             wave_buf = self._wave_buf.copy()
             wave_ptr = self._wave_ptr
             amp_snap = self._last_amp[:self._n_active].copy()
@@ -456,6 +507,8 @@ class ReaderThread(threading.Thread):
             conn     = self.connected
             var      = self._variance
             ma       = self._mean_amp
+        # FPS computed outside the lock — avoids holding it for a Python division
+        fps = (len(ft) - 1) / (ft[-1] - ft[0]) if len(ft) >= 2 else 0.0
         # np.roll allocates outside the lock — reader thread can push freely
         return {
             "wave":        np.roll(wave_buf, -wave_ptr),
@@ -476,16 +529,17 @@ class ReaderThread(threading.Thread):
             return list(self._infer_deque)
 
     def _push(self, cf_frame: np.ndarray):
-        n   = min(cf_frame.size, config.MAX_SUBCARRIERS)
-        cf  = cf_frame[:n].astype(np.complex64)
-        amp = np.abs(cf)
-        ma  = float(amp.mean())
+        n        = min(cf_frame.size, config.MAX_SUBCARRIERS)
+        cf       = cf_frame[:n].astype(np.complex64, copy=False)
+        amp      = np.abs(cf)
+        ma       = float(amp.mean())
+        mx       = float(amp.max())           # computed outside the lock
+        amp_norm = amp / mx if mx > 0 else amp  # normalise outside the lock
         with self._lock:
             p = self._wave_ptr
-            self._wave_buf[p] = ma
-            self._wave_ptr    = (p + 1) % self.waveform_len
-            mx = amp.max()
-            self._last_amp[:n] = amp / mx if mx > 0 else amp
+            self._wave_buf[p]  = ma
+            self._wave_ptr     = (p + 1) % self.waveform_len
+            self._last_amp[:n] = amp_norm
             self._n_active     = max(self._n_active, n)
             self._frame_count += 1
             self._fps_times.append(time.monotonic())
@@ -494,6 +548,18 @@ class ReaderThread(threading.Thread):
             self._infer_deque.append(cf_frame)
 
     def run(self):
+        # Raise OS thread priority first — applies to both demo and hardware paths.
+        # HIGHEST (2) ensures this thread preempts the Qt/GUI thread immediately
+        # after waking from sleep, preventing the 1-2ms scheduling delay that
+        # causes frame rate to drop from 100 Hz to ~80 Hz.
+        if os.name == "nt":
+            try:
+                import ctypes
+                ctypes.windll.kernel32.SetThreadPriority(
+                    ctypes.windll.kernel32.GetCurrentThread(), 2)  # HIGHEST
+            except Exception:
+                pass
+
         if self.demo:
             self.connected = True
             self._run_demo()
@@ -512,13 +578,6 @@ class ReaderThread(threading.Thread):
             self.connected = True
             self._run_demo()
             return
-        # Raise this thread's OS priority so it preempts GUI work promptly
-        try:
-            import ctypes
-            ctypes.windll.kernel32.SetThreadPriority(
-                ctypes.windll.kernel32.GetCurrentThread(), 1)  # ABOVE_NORMAL
-        except Exception:
-            pass
         try:
             while not self.stop_event.is_set():
                 raw = ser.readline()
@@ -536,19 +595,32 @@ class ReaderThread(threading.Thread):
             self.connected = False
 
     def _run_demo(self):
-        rng = np.random.default_rng(0)
-        t   = 0.0
-        print("[INFO] Demo mode — synthetic CSI data")
-        while not self.stop_event.is_set():
-            time.sleep(0.01)
-            t  += 0.05
-            sc  = config.MAX_SUBCARRIERS
-            idx = np.arange(sc, dtype=np.float32)
-            p1  = np.exp(-0.5 * ((idx - (sc * .3 + 10 * math.sin(t * .7))) / 6) ** 2)
-            p2  = np.exp(-0.5 * ((idx - (sc * .7 +  8 * math.cos(t * .5))) / 5) ** 2)
-            amp = p1 * .7 + p2 * .5 + rng.uniform(0, .04, sc).astype(np.float32)
-            ph  = t * .8 + idx / sc * 2 * np.pi
-            self._push((amp * (np.cos(ph) + 1j * np.sin(ph))).astype(np.complex64))
+        """
+        Reads frames produced by _demo_generator_fn running in its own subprocess.
+        mp.Queue.get(timeout) releases the GIL while blocking — the Qt/GUI thread
+        runs freely and never competes with frame generation.
+        """
+        sc      = config.MAX_SUBCARRIERS
+        _gen_q  = mp.Queue(maxsize=20)
+        _gen_p  = mp.Process(
+            target=_demo_generator_fn,
+            args=(_gen_q, sc),
+            daemon=True,
+        )
+        _gen_p.start()
+        print("[INFO] Demo mode — GIL-free frame generator subprocess")
+        try:
+            while not self.stop_event.is_set():
+                try:
+                    frame = _gen_q.get(timeout=0.02)   # releases GIL while waiting
+                except Exception:
+                    continue
+                self._push(frame)
+        finally:
+            if _gen_p.is_alive():
+                _gen_p.terminate()
+            _gen_p.join(timeout=2.0)
+            _gen_q.close()
 
 
 # ============================================================================
@@ -672,11 +744,13 @@ class InferenceProcess:
 
     def submit(self, infer_snap, frame_count):
         """Pre-stack frames and send to worker (non-blocking)."""
+        if not infer_snap:
+            return
         try:
-            cm = np.vstack(infer_snap).astype(np.complex64)
+            cm = np.vstack(infer_snap)   # inputs are already complex64 — no copy needed
         except (ValueError, TypeError):
             return
-        # Discard stale pending request
+        # Discard stale pending request then enqueue
         try:
             self._in_q.get_nowait()
         except Exception:
@@ -688,6 +762,8 @@ class InferenceProcess:
 
     def get_result(self):
         """Drain queue and return only the latest result (non-blocking)."""
+        if self._out_q is None:
+            return None
         result = None
         while True:
             try:
@@ -914,6 +990,7 @@ class MonitorPage(QWidget):
         self._current_mode    = "har"
         self._last_fps_level  = None   # guard: only setStyleSheet when fps category changes
         self._last_recent_upd = 0.0    # throttle: recent activity table max 1 Hz
+        self._last_recent_len = -1     # guard: skip rebuild if log didn't change
         self._sc_x            = None   # cached x-axis array for subcarrier bars
         self._build(model_key, port)
 
@@ -1115,19 +1192,21 @@ class MonitorPage(QWidget):
         intensity = state.get("motion_intensity", 0.0)
 
         if self._current_mode == "motion":
-            if intensity < 0.20:
-                motion_label, motion_color = "Calm",   _GREEN
-            elif intensity < 0.45:
-                motion_label, motion_color = "Low",    _YELLOW
-            elif intensity < 0.72:
-                motion_label, motion_color = "Medium", _ORANGE
+            # Model prediction OR signal intensity triggers MOTION display
+            is_motion    = (label == "walk_activity") or (intensity > 0.10)
+            display_conf = conf if label == "walk_activity" else intensity * 100.0
+            if is_motion:
+                self._activity_block.set("MOTION", f"Sensitivity: {display_conf:.1f}%", _ORANGE)
+                self._gauge.set(display_conf, _ORANGE)
+                self._conf_lbl.setText(f"Sensitivity: {display_conf:.1f}%")
+                self._raw_lbl.setText("Movement detected")
+                self._motion_bar.set(intensity, "Motion")
             else:
-                motion_label, motion_color = "High",   _RED
-            self._activity_block.set(motion_label, f"Motion: {int(intensity * 100)}%", motion_color)
-            self._gauge.set(intensity * 100.0, motion_color)
-            self._conf_lbl.setText(f"Motion: {int(intensity * 100)}%")
-            self._raw_lbl.setText(f"Level: {motion_label}")
-            self._motion_bar.set(intensity, motion_label)
+                self._activity_block.set("—", "", _DIM)
+                self._gauge.set(0.0, _DIM)
+                self._conf_lbl.setText("No motion")
+                self._raw_lbl.setText("Idle")
+                self._motion_bar.set(intensity)
         else:
             color = _cc(label)
             self._activity_block.set(_disp(label), f"Raw: {_disp(raw)}", color)
@@ -1176,14 +1255,16 @@ class MonitorPage(QWidget):
         self._sv_frames.setText(f"{fc:,}")
         self._sv_uptime.setText(f"{h:02d}:{m:02d}:{s:02d}")
 
-        log = state.get("log_entries", [])
-        show = len(log) > 0
+        log   = state.get("log_entries", [])
+        n_log = len(log)
+        show  = n_log > 0
         self._no_recent.setVisible(not show)
         self._recent.setVisible(show)
         now = time.monotonic()
-        if show and (now - self._last_recent_upd) >= 1.0:
+        if show and (now - self._last_recent_upd) >= 1.0 and n_log != self._last_recent_len:
             self._last_recent_upd = now
-            n_rows = min(6, len(log))
+            self._last_recent_len = n_log
+            n_rows = min(6, n_log)
             self._recent.setRowCount(n_rows)
             for r, (ts, lbl, cf, _fr) in enumerate(log[:n_rows]):
                 c = _cc(lbl)
@@ -1193,7 +1274,7 @@ class MonitorPage(QWidget):
                 for col, item in enumerate(items):
                     item.setTextAlignment(Qt.AlignCenter)
                     self._recent.setItem(r, col, item)
-                self._recent.setRowHeight(r, 22)
+                    self._recent.setRowHeight(r, 22)
 
 
 # ============================================================================
@@ -1205,6 +1286,7 @@ class SignalViewPage(QWidget):
         super().__init__()
         self.waveform_len = waveform_len
         self._wave_scale  = 1.0
+        self._sc_x        = None   # cached subcarrier x-axis (like MonitorPage)
         self._build()
 
     def _build(self):
@@ -1273,8 +1355,10 @@ class SignalViewPage(QWidget):
 
         n = state.get("n", 1); amp = state.get("last_amp")
         if amp is not None:
-            self._sc_bars.setOpts(x=np.arange(n, dtype=np.float32), height=amp, width=0.8)
-            self._pw_sc.setXRange(-0.5, n - 0.5, padding=0)
+            if self._sc_x is None or len(self._sc_x) != n:
+                self._sc_x = np.arange(n, dtype=np.float32)
+                self._pw_sc.setXRange(-0.5, n - 0.5, padding=0)
+            self._sc_bars.setOpts(x=self._sc_x, height=amp, width=0.8)
 
 
 # ============================================================================
@@ -1288,6 +1372,7 @@ class ActivityLogPage(QWidget):
         self._x_dist          = np.arange(len(classes), dtype=np.float32)
         self._session_start   = time.monotonic()
         self._last_table_upd  = 0.0
+        self._last_table_len  = -1   # guard: skip rebuild if log didn't change
         self._last_avgc_color = None
         self._last_dom_label  = None
         self._build(on_clear)
@@ -1463,13 +1548,15 @@ class ActivityLogPage(QWidget):
             for ti in self._pct_labels:
                 ti.setText("")
 
-        # Log table — refresh at most once per second
-        show = len(log) > 0
+        # Log table — refresh at most once per second, only if log changed
+        n_log = len(log)
+        show  = n_log > 0
         self._table.setVisible(show); self._no_log.setVisible(not show)
         now = time.monotonic()
-        if show and (now - self._last_table_upd) >= 1.0:
+        if show and (now - self._last_table_upd) >= 1.0 and n_log != self._last_table_len:
             self._last_table_upd = now
-            self._table.setRowCount(len(log))
+            self._last_table_len = n_log
+            self._table.setRowCount(n_log)
             for r, (ts, lbl, cf, fr) in enumerate(log):
                 c = _cc(lbl)
                 items = [QTableWidgetItem(ts), QTableWidgetItem(_disp(lbl).upper()),
@@ -1478,7 +1565,7 @@ class ActivityLogPage(QWidget):
                 for col, item in enumerate(items):
                     item.setTextAlignment(Qt.AlignCenter)
                     self._table.setItem(r, col, item)
-                self._table.setRowHeight(r, 22)
+                    self._table.setRowHeight(r, 22)
 
 
 # ============================================================================
@@ -2136,7 +2223,7 @@ class DashboardWindow(QMainWindow):
             "avg_confidence": 0.0, "class_counts": {},
         }
 
-        # Background inference worker (bypasses GIL via multiprocessing)
+        # Background inference worker (separate OS process — fully GIL-free).
         self._infer_worker = InferenceProcess(
             pipeline=pipeline, model=model, le=le, classes=classes,
             window_size=window_size, cutoff=cutoff,
@@ -2227,8 +2314,15 @@ class DashboardWindow(QMainWindow):
         new_dir = config.MODELS_HAR_DIR if mode == "har" else config.MODELS_MOTION_DIR
         self._current_mode = mode
         self._monitor_page.set_mode(mode)
-        # Reset log and distribution chart for the new mode's class set
-        new_classes = _MOTION_LEVELS if mode == "motion" else list(self.classes)
+        # Load new model first so self.classes reflects the target mode's label encoder
+        if new_dir != self.models_dir:
+            self.models_dir = new_dir
+            self._settings_page.refresh_models_dir(new_dir)
+            ok, msg = self.switch_model(self.model_key)
+            if not ok:
+                print(f"[WARN] Mode switch to '{mode}' failed: {msg}")
+        # Reset log using the now-correct class list from the loaded model
+        new_classes = list(self.classes)
         self._log_entries.clear()
         self._class_counts = {c: 0 for c in new_classes}
         self._conf_sum = 0.0; self._total_preds = 0
@@ -2239,13 +2333,6 @@ class DashboardWindow(QMainWindow):
             "avg_confidence": 0.0, "class_counts": {},
         })
         self._log_page.set_mode(new_classes)
-        if new_dir == self.models_dir:
-            return
-        self.models_dir = new_dir
-        self._settings_page.refresh_models_dir(new_dir)
-        ok, msg = self.switch_model(self.model_key)
-        if not ok:
-            print(f"[WARN] Mode switch to '{mode}' failed: {msg}")
 
     def _switch_page(self, idx: int):
         self._stack.setCurrentIndex(idx)
@@ -2308,8 +2395,7 @@ class DashboardWindow(QMainWindow):
                     best_idx      = int(np.argmax(self._ema_probs))
                     smoothed_prob = float(self._ema_probs[best_idx]) * 100.0
                     smoothed_cand = self.classes[best_idx]
-                    if smoothed_prob < self.conf_thresh:
-                        smoothed_cand = "—"
+                    # No uncertain "—" state in HAR — always show the best prediction
 
                     if smoothed_cand == self._hyst_pending:
                         self._hyst_count += 1
@@ -2319,43 +2405,42 @@ class DashboardWindow(QMainWindow):
 
                     if self._hyst_count >= self._hyst_min:
                         now = time.monotonic()
-                        if smoothed_cand == "—":
-                            if self._state["label"] != "—":
-                                self._state.update({
-                                    "label":      "—",
-                                    "raw_label":  "—",
-                                    "confidence": smoothed_prob,
-                                    "all_probs":  self._ema_probs,
-                                })
-                                self._last_record_lbl = ""
-                        elif (smoothed_cand != self._last_record_lbl or
+                        if (smoothed_cand != self._last_record_lbl or
                                 (now - self._last_record_t) >= 4.0):
                             self._last_record_lbl = smoothed_cand
                             self._last_record_t   = now
                             self._record(smoothed_cand, smoothed_prob, self._ema_probs, fc)
 
-        # ── Super Motion mode: signal-based level tracking ───────────────
+        # ── Super Motion mode: hyper-sensitive ML inference ─────────────
         elif self._current_mode == "motion":
-            self._frames_since = 0
-            if motion_intensity < 0.20:   motion_lvl = "calm"
-            elif motion_intensity < 0.45: motion_lvl = "low"
-            elif motion_intensity < 0.72: motion_lvl = "medium"
-            else:                          motion_lvl = "high"
+            if self._frames_since >= self.step:
+                self._frames_since = 0
+                if self.demo and self.pipeline is None:
+                    self._demo_predict(snap["frame_count"])
+                else:
+                    self._infer_worker.submit(self.reader.get_infer_snap(), snap["frame_count"])
 
-            if motion_lvl == self._hyst_pending:
-                self._hyst_count += 1
-            else:
-                self._hyst_pending = motion_lvl
-                self._hyst_count   = 1
+            result = self._infer_worker.get_result()
+            if result is not None:
+                raw_cand, conf_cand, probs_cand, latency, fc = result
+                self._latency_ms = latency
 
-            if self._hyst_count >= self._hyst_min:
-                now = time.monotonic()
-                if (motion_lvl != self._last_record_lbl or
-                        (now - self._last_record_t) >= 4.0):
-                    self._last_record_lbl = motion_lvl
-                    self._last_record_t   = now
-                    self._record(motion_lvl, motion_intensity * 100.0,
-                                 np.array([]), snap["frame_count"])
+                if raw_cand is not None and probs_cand is not None:
+                    best_idx        = int(np.argmax(probs_cand))
+                    best_prob       = float(probs_cand[best_idx]) * 100.0
+                    model_says_walk = (self.classes[best_idx] == "walk_activity")
+
+                    # Hyper-sensitive: model OR signal intensity above low threshold
+                    is_motion   = model_says_walk or motion_intensity > 0.10
+                    motion_cand = "walk_activity" if is_motion else "no_activity"
+                    report_conf = best_prob if model_says_walk else motion_intensity * 100.0
+
+                    now = time.monotonic()
+                    if (motion_cand != self._last_record_lbl or
+                            (now - self._last_record_t) >= 4.0):
+                        self._last_record_lbl = motion_cand
+                        self._last_record_t   = now
+                        self._record(motion_cand, report_conf, probs_cand, fc)
 
         state = {**snap, **self._state, "latency_ms": self._latency_ms,
                  "motion_intensity": motion_intensity,
@@ -2437,6 +2522,18 @@ def main():
     import sys as _sys
     _sys.setswitchinterval(0.001)
 
+    # Set Windows multimedia timer resolution to 1ms.
+    # The default is 15.625ms, which causes QTimer(20ms) to fire every ~30ms
+    # and time.sleep(0.01) to sleep ~15ms — both directly cause frame drops.
+    _winmm = None
+    if os.name == "nt":
+        try:
+            import ctypes
+            _winmm = ctypes.windll.winmm
+            _winmm.timeBeginPeriod(1)
+        except Exception:
+            _winmm = None
+
     args = _parse_args()
     app  = QApplication(sys.argv)
 
@@ -2497,6 +2594,11 @@ def main():
     stop.set()
     win._infer_worker.join(timeout=2.0)
     reader.join(timeout=2.0)
+    if _winmm is not None:
+        try:
+            _winmm.timeEndPeriod(1)
+        except Exception:
+            pass
     sys.exit(code)
 
 

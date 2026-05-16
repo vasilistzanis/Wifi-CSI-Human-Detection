@@ -171,6 +171,13 @@ class ReaderThread(threading.Thread):
 
 
     def run(self):
+        if os.name == "nt":
+            try:
+                import ctypes
+                ctypes.windll.kernel32.SetThreadPriority(
+                    ctypes.windll.kernel32.GetCurrentThread(), 2)  # HIGHEST
+            except Exception:
+                pass
         if self.demo:
             self._run_demo(); return
         ser = None
@@ -212,10 +219,16 @@ class ReaderThread(threading.Thread):
 
 
     def _run_demo(self):
-        rng, ph = np.random.default_rng(0), 0.0
+        rng      = np.random.default_rng(0)
+        ph       = 0.0
+        interval = 1.0 / 100.0
+        next_t   = time.perf_counter()
         print("[INFO]  Demo mode")
         while not self.stop_event.is_set():
-            time.sleep(0.01)
+            next_t += interval
+            remaining = next_t - time.perf_counter()
+            if remaining > 0.001:
+                time.sleep(remaining)
             ph += 0.18
             burst = 1.0 + 2.8 * max(0.0, math.sin(ph * 0.07) ** 8)
             val   = (abs(math.sin(ph) * 0.65 + math.sin(ph * 0.37) * 0.35)
