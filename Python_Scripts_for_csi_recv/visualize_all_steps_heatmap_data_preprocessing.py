@@ -196,7 +196,7 @@ def main():
         (amp_step0, "0. Raw Amplitude\n(with guard/null bands)",          "jet"),
         (amp_step1, "1. Null Bands Removed\n(active subcarriers only)",   "jet"),
         (amp_step2, "2. Hampel Filter\n(spike / outlier removal)",        "jet"),
-        (amp_step3, f"3. Butterworth Low-Pass\n({args.cutoff} Hz cutoff)", "jet"),
+        None,  # step 3: Butterworth — rendered as frequency-domain comparison (see loop)
         (amp_step4, step4_title,                                           step4_cmap),
         (amp_step5, f"5. PCA\n({n_components} components - {explained_var:.0f}% variance)\n(file-local PCA — for illustration)", "viridis"),
         (amp_step6, "6. StandardScaler (Z-score)\nFinal AI Input\n(file-local PCA — for illustration)", "viridis"),
@@ -225,8 +225,66 @@ def main():
     )
 
     # Create a separate window (figure) for each plot
+    n_fft       = amp_step2.shape[0]
+    _freqs      = np.fft.rfftfreq(n_fft, d=1.0 / config.SAMPLING_RATE)
+    _fft_before = np.abs(np.fft.rfft(amp_step2, axis=0))
+    _fft_after  = np.abs(np.fft.rfft(amp_step3, axis=0))
+
     try:
-        for step_num, (data, title, cmap) in enumerate(plots_config):
+        for step_num, entry in enumerate(plots_config):
+            if entry is None:
+                # Step 3: frequency-domain comparison (before vs after Butterworth)
+                _w, _h = config.VISUALIZE_HEATMAP_SIZE
+                fig, (ax_b, ax_a) = plt.subplots(1, 2, figsize=(_w * 2, _h))
+                fig.patch.set_facecolor(STYLE_BG)
+                for _ax in (ax_b, ax_a):
+                    _ax.set_facecolor(STYLE_PANEL)
+                fig.suptitle(global_suptitle, fontsize=11, fontweight='bold',
+                             color=STYLE_TEXT, y=0.96)
+
+                _vmin = np.percentile(_fft_before, 2)
+                _vmax = np.percentile(_fft_before, 98)
+
+                for _ax, _fd, _sub in [
+                    (ax_b, _fft_before,
+                     "3. Butterworth — BEFORE filter\n"
+                     "(Hampel output — input to Butterworth)"),
+                    (ax_a, _fft_after,
+                     f"3. Butterworth — AFTER filter\n"
+                     f"({args.cutoff} Hz cutoff  |  dashed line = cutoff)"),
+                ]:
+                    _im = _ax.imshow(
+                        _fd.T,
+                        aspect="auto",
+                        cmap="jet",
+                        origin="lower",
+                        extent=[_freqs[0], _freqs[-1], -0.5, _fd.shape[1] - 0.5],
+                        vmin=_vmin, vmax=_vmax,
+                        interpolation="nearest",
+                    )
+                    _ax.axvline(x=args.cutoff, color="white", linewidth=1.5,
+                                linestyle="--", alpha=0.85)
+                    _ax.set_title(_sub, fontsize=11, pad=10, color=STYLE_TEXT)
+                    _ax.set_xlabel("Frequency (Hz)", fontsize=9, color=STYLE_TEXT)
+                    _ax.set_ylabel("Subcarrier Index", fontsize=9, color=STYLE_TEXT)
+                    _ax.tick_params(labelsize=8)
+                    _cb = fig.colorbar(_im, ax=_ax, fraction=0.04, pad=0.02)
+                    _cb.ax.tick_params(labelsize=8, colors=STYLE_TEXT)
+                    _cb.outline.set_edgecolor(STYLE_GRID)
+
+                fig.tight_layout(rect=[0, 0, 1, 0.90])
+
+                if args.save:
+                    out_path = file_path.parent / f"{file_path.stem}_step3.png"
+                    try:
+                        fig.savefig(out_path, dpi=150, bbox_inches="tight",
+                                    facecolor=STYLE_BG)
+                        print(f"[FILE] Saved: {out_path}")
+                    except (PermissionError, OSError) as e:
+                        print(f"[WARNING]  Could not save {out_path}: {e}")
+                continue
+
+            data, title, cmap = entry
             fig, ax = plt.subplots(figsize=config.VISUALIZE_HEATMAP_SIZE)
             fig.patch.set_facecolor(STYLE_BG)
             ax.set_facecolor(STYLE_PANEL)

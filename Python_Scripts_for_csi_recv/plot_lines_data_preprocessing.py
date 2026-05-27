@@ -406,23 +406,42 @@ def main():
         save_fig(fig2, 2)
 
 
-        # -- PANEL 3 - Butterworth Low-Pass ----------------------------
-        fig3, ax3 = create_window()
-        for i, sc in enumerate(sc_indices):
-            ax3.plot(t_full, amp_step3[:, sc],
-                     color=SC_COLORS[i], linewidth=1.5, alpha=0.9,
-                     label=f"SC {sc}")
-        style_ax(ax3,
-                 f"3. Butterworth Low-Pass  ({args.cutoff} Hz, 4th order, zero-phase)"
-                 f"  -  noise removed",
-                 "Amplitude (a.u.)")
-        if len(sc_indices) <= 20:
-            ax3.legend(loc="upper right", fontsize=9, ncol=min(len(sc_indices), 5),
-                       framealpha=0.7)
-        else:
-            ax3.text(0.99, 0.96, f"All {len(sc_indices)} Active Subcarriers",
-                     transform=ax3.transAxes, ha='right', va='top', fontsize=10,
-                     bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#cccccc", alpha=0.8))
+        # -- PANEL 3 - Butterworth Low-Pass (Frequency Domain) ---------
+        _n3     = amp_step2.shape[0]
+        _freqs3 = np.fft.rfftfreq(_n3, d=1.0 / args.fs)
+        _fft_b3 = np.abs(np.fft.rfft(amp_step2, axis=0))
+        _fft_a3 = np.abs(np.fft.rfft(amp_step3, axis=0))
+
+        _w3, _h3 = config.PLOT_LINES_PREPROCESSING_SIZE
+        fig3, (ax3_b, ax3_a) = plt.subplots(1, 2, figsize=(_w3 * 2, _h3), sharey=True)
+        fig3.suptitle(global_suptitle, fontsize=12, fontweight='bold',
+                      y=0.96, color="#111111")
+
+        for _ax3, _fd3, _ttl3 in [
+            (ax3_b, _fft_b3,
+             "3. Butterworth — BEFORE filter\n"
+             "(Hampel output — input to Butterworth)"),
+            (ax3_a, _fft_a3,
+             f"3. Butterworth — AFTER filter\n"
+             f"({args.cutoff} Hz cutoff, 4th order  |  red dashed = cutoff)"),
+        ]:
+            for i, sc in enumerate(sc_indices):
+                _ax3.plot(_freqs3, _fd3[:, sc],
+                          color=SC_COLORS[i], linewidth=1.0, alpha=0.75,
+                          label=f"SC {sc}")
+            _ax3.axvline(x=args.cutoff, color="red", linewidth=1.5,
+                         linestyle="--", alpha=0.9, label=f"Cutoff {args.cutoff} Hz")
+            style_ax(_ax3, _ttl3, "Amplitude Spectrum")
+            _ax3.set_xlabel("Frequency (Hz)", fontsize=10, color="#333333")
+            if len(sc_indices) <= 20:
+                _ax3.legend(loc="upper right", fontsize=9,
+                            ncol=min(len(sc_indices), 5), framealpha=0.7)
+            else:
+                _ax3.text(0.99, 0.96, f"All {len(sc_indices)} Active Subcarriers",
+                          transform=_ax3.transAxes, ha='right', va='top', fontsize=10,
+                          bbox=dict(boxstyle="round,pad=0.4", fc="white",
+                                    ec="#cccccc", alpha=0.8))
+
         fig3.tight_layout(rect=[0, 0.05, 1, 0.92])
         save_fig(fig3, 3)
 
