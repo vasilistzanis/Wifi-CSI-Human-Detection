@@ -1,0 +1,260 @@
+Project Overview: ESP32-C6 SISO WiFi CSI Human Sensing System
+
+We are developing a device-free WiFi CSI sensing system for a diploma thesis using ESP32-C6 hardware. The system prioritizes robustness, explainability, and real-world operation over maximum model complexity or benchmark accuracy.
+
+Current Hardware Setup
+
+Devices:
+
+* 2 × ESP32-C6 boards
+
+Roles:
+
+* 1 × Transmitter (TX)
+* 1 × Receiver (RX)
+
+Antennas:
+
+* External 3 dBi antenna on TX
+* External 3 dBi antenna on RX
+
+Wireless configuration:
+
+* IEEE 802.11n (WiFi 4)
+* 40 MHz bandwidth
+* CSI extraction enabled
+
+RF Architecture:
+
+* Single wireless link
+* SISO (Single Input Single Output)
+* 1 TX × 1 RX
+* No MIMO
+* No beamforming
+* No multiple access points
+* No multiple CSI links
+
+Important physical constraint:
+
+The system observes only one wireless channel realization.
+
+Therefore it does not have spatial diversity.
+
+This means:
+
+Reliable:
+
+* motion / no motion detection
+* occupancy / presence estimation
+* binary event detection
+
+Moderately feasible:
+
+* coarse activity recognition
+
+Not expected to generalize strongly:
+
+* fine-grained HAR across unseen environments
+
+This limitation is due to physics and the observation model rather than hardware quality.
+
+Environment
+
+Deployment target:
+
+Real indoor home environments rather than controlled laboratories.
+
+Typical conditions:
+
+* room size approximately 4×5 meters
+* furniture present
+* walls, doors, windows
+* strong multipath propagation
+* LOS and NLOS situations
+* possible neighboring WiFi interference
+
+Testing observations:
+
+The system has been experimentally observed to detect walking activity across long distances (~10–14 meters), including NLOS scenarios with walls and closed doors.
+
+However, this should be treated as an empirical observation rather than a guarantee of generalization.
+
+Human Setup
+
+Primary scenario:
+
+* one moving person
+
+Activities:
+
+* walk_activity
+* no_activity / idle
+
+Multi-person scenarios have not been systematically validated.
+
+Signal Acquisition
+
+CSI stream:
+
+* approximately 100 Hz acquisition rate
+
+Subcarriers:
+
+* 128 total
+* approximately 114 active
+
+Signal Representation
+
+The system intentionally uses:
+
+CSI amplitude only
+
+The system intentionally avoids:
+
+* CSI phase
+* angle of arrival
+* MIMO processing
+* multi-link sensing
+
+Reason:
+
+ESP32 phase measurements are unstable and require heavy calibration, while amplitude is more stable and reproducible.
+
+Current Signal Processing Pipeline
+
+CSI acquisition
+→ preprocessing
+→ statistical feature extraction
+→ ML inference
+→ smoothing
+→ confidence filtering
+→ decision stabilization
+→ activity output
+
+Preprocessing and Features
+
+Current features include:
+
+* mean amplitude
+* variance
+* standard deviation
+* coefficient of variation
+
+Coefficient of variation:
+
+CV = std / mean
+
+Purpose:
+
+Normalize motion intensity relative to signal magnitude.
+
+Temporal processing:
+
+* EMA smoothing
+* sliding windows
+
+Machine Learning Layer
+
+Current task:
+
+Binary classification
+
+Classes:
+
+* walk_activity
+* no_activity
+
+Models evaluated:
+
+* Random Forest
+* SVM
+* ExtraTrees
+* KNN
+* Logistic Regression
+* MLP
+
+Observed performance:
+
+approximately 96–97% test accuracy in current experiments
+
+Training Setup
+
+Dataset:
+
+* approximately 50 samples per class
+* real recordings
+* collected in home environments
+* multiple sessions
+
+No synthetic data used.
+
+Decision Stabilization Layer
+
+Several mechanisms are already included:
+
+1. EMA probability smoothing
+2. Dynamic adaptation for high-confidence predictions
+3. Confidence thresholding
+4. Hysteresis (multiple consecutive predictions required for switching)
+
+Goal:
+
+Stable activity estimation rather than frame-by-frame fluctuations.
+
+Supporting Motion Logic
+
+The system additionally computes motion intensity from raw CSI:
+
+motion_intensity =
+sqrt(variance) / mean
+
+This acts as a lightweight statistical detector of channel perturbation.
+
+Current design prioritizes recall over precision, meaning missed motion events are considered more critical than occasional false positives.
+
+System Design Philosophy
+
+The system intentionally avoids:
+
+* deep architectures
+* classifier stacking
+* PCA pipelines
+* probabilistic fusion frameworks
+* excessive feature engineering
+* unnecessary complexity
+
+The philosophy is:
+
+simple signal processing
+
+* temporal stabilization
+* environment adaptation
+
+instead of:
+
+maximum model complexity
+
+Comparison Relative to Literature
+
+Compared with many CSI-based research systems:
+
+Hardware sophistication:
+Lower (SISO ESP32 vs MIMO/enterprise setups)
+
+Real-world deployment realism:
+Higher (home + NLOS conditions)
+
+Spatial diversity:
+Lower (single RF link)
+
+Environmental variability:
+Higher (realistic home conditions)
+
+Laboratory dependence:
+Lower
+
+The system intentionally favors practical robustness and realistic deployment conditions over benchmark-oriented laboratory setups.
+
+Core thesis statement:
+
+SISO WiFi sensing can provide reliable binary sensing and coarse activity detection when supported by signal stabilization and lightweight inference logic, while generalized fine-grained activity recognition remains fundamentally constrained by lack of spatial diversity.
