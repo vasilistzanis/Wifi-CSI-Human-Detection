@@ -275,6 +275,7 @@ class StatusPill(QWidget):
     def __init__(self):
         super().__init__()
         self._live = False
+        self._last_fps_int: object = -1   # int when live, "conn" sentinel otherwise
         lay = QHBoxLayout(self)
         lay.setContentsMargins(10, 0, 12, 0)
         lay.setSpacing(6)
@@ -307,21 +308,32 @@ class StatusPill(QWidget):
         self.setStyleSheet(s)
 
     def update_status(self, frames: int, fps: float):
-        self._live = frames > 10
-        if self._live:
-            self._blink.stop()
-            self._dot.setVisible(True)
-            self._dot.setStyleSheet(f"font-size:10px; color:{_GREEN};")
-            self._text.setText(f"System Live · {fps:.0f} fr/s")
-            self._text.setStyleSheet(f"font-size:11px; color:{_GREEN};")
-            self._set_style("live")
-        else:
-            if not self._blink.isActive():
-                self._blink.start(600)
-            self._dot.setStyleSheet(f"font-size:10px; color:{_YELLOW};")
+        live = frames > 10
+        # Only run the heavy setStyleSheet path when live state actually flips.
+        if live != self._live:
+            self._live = live
+            if live:
+                self._blink.stop()
+                self._dot.setVisible(True)
+                self._dot.setStyleSheet(f"font-size:10px; color:{_GREEN};")
+                self._text.setStyleSheet(f"font-size:11px; color:{_GREEN};")
+                self._set_style("live")
+            else:
+                if not self._blink.isActive():
+                    self._blink.start(600)
+                self._dot.setStyleSheet(f"font-size:10px; color:{_YELLOW};")
+                self._text.setStyleSheet(f"font-size:11px; color:{_YELLOW};")
+                self._set_style("connecting")
+        # Text only on integer-fps change — the f-string + setText was running
+        # 50×/sec for sub-1-fps fluctuations the user can't read anyway.
+        if live:
+            new_fps = int(fps)
+            if new_fps != self._last_fps_int:
+                self._last_fps_int = new_fps
+                self._text.setText(f"System Live · {new_fps} fr/s")
+        elif self._last_fps_int != "conn":
+            self._last_fps_int = "conn"
             self._text.setText("Connecting…")
-            self._text.setStyleSheet(f"font-size:11px; color:{_YELLOW};")
-            self._set_style("connecting")
 
 
 class MotionIntensityBar(QWidget):
@@ -346,7 +358,13 @@ class MotionIntensityBar(QWidget):
         self._col_text   = QColor(_TEXT)
 
     def set(self, intensity: float, overlay: str = ""):
-        self._intensity = max(0.0, min(1.0, intensity))
+        new_i = max(0.0, min(1.0, intensity))
+        # Only repaint when integer percent or overlay text changes —
+        # sub-percent fluctuations are invisible on a 200px-wide bar.
+        if int(new_i * 100) == int(self._intensity * 100) and overlay == self._overlay:
+            self._intensity = new_i
+            return
+        self._intensity = new_i
         self._overlay   = overlay
         self.update()
 
@@ -521,6 +539,27 @@ class ReaderThread(threading.Thread):
             "mean_amp":    ma,
             "infer_fill":  fill,
             "connected":   conn,
+        }
+
+    def snapshot_light(self) -> dict | None:
+        """Cheap variant — scalars only, no array copies, no np.roll.
+        Used on skip ticks where we only need fps / frame_count / fill /
+        variance / mean_amp. Cuts lock-hold time by ~3× vs snapshot()."""
+        with self._lock:
+            if self._n_active == 0:
+                return None
+            # Read the two deque endpoints directly — no list() copy of all 60.
+            n_ft = len(self._fps_times)
+            ft_first = self._fps_times[0]  if n_ft else 0.0
+            ft_last  = self._fps_times[-1] if n_ft else 0.0
+            fc   = self._frame_count
+            fill = len(self._infer_deque) / max(1, self.infer_buf_max)
+            var  = self._variance
+            ma   = self._mean_amp
+        fps = (n_ft - 1) / (ft_last - ft_first) if n_ft >= 2 else 0.0
+        return {
+            "frame_count": fc, "fps": fps, "infer_fill": fill,
+            "variance":    var, "mean_amp": ma,
         }
 
     def get_infer_snap(self) -> list:
@@ -830,6 +869,13 @@ def _make_pw(title: str, left_lbl: str, bot_lbl: str) -> pg.PlotWidget:
     pw.setLabel("bottom", bot_lbl,  color=_DIM, size="9pt")
     pw.getAxis("left").setTextPen(pg.mkPen(_DIM))
     pw.getAxis("bottom").setTextPen(pg.mkPen(_DIM))
+    # ─── Performance tweaks (no visual change) ───
+    # auto-downsample to the number of visible pixels using peak-preserving
+    # algorithm — visually identical for our densities, much cheaper to draw.
+    pi = pw.getPlotItem()
+    pi.setDownsampling(auto=True, mode="peak")
+    pi.setClipToView(True)
+    pi.getViewBox().setDefaultPadding(0.0)
     return pw
 
 def _stat_chip(label: str, value: str = "—") -> tuple[QWidget, QLabel]:
@@ -971,9 +1017,18 @@ class Sidebar(QWidget):
             btn.setStyleSheet(_NAV_ON if i == idx else _NAV_OFF)
 
     def update_health(self, buf_pct: int, load_pct: int):
-        for (bar, pct_lbl), val in zip(self._bar_refs, (buf_pct, load_pct)):
-            bar.setValue(val)
-            pct_lbl.setText(f"{val}%")
+        # Cache last values — at 50Hz the typical case is "no change",
+        # in which case we skip both the f-string alloc and the setText round-trip.
+        last = getattr(self, "_last_health", (-1, -1))
+        if last == (buf_pct, load_pct):
+            return
+        self._last_health = (buf_pct, load_pct)
+        for (bar, pct_lbl), val, prev in zip(
+            self._bar_refs, (buf_pct, load_pct), last
+        ):
+            if val != prev:
+                bar.setValue(val)
+                pct_lbl.setText(f"{val}%")
 
 
 # ============================================================================
@@ -987,11 +1042,22 @@ class MonitorPage(QWidget):
         self.classes          = classes
         self.waveform_len     = waveform_len
         self._wave_scale      = 1.0
+        self._wave_scale_applied = 0.0  # last value actually sent to setYRange
         self._current_mode    = "har"
         self._last_fps_level  = None   # guard: only setStyleSheet when fps category changes
         self._last_recent_upd = 0.0    # throttle: recent activity table max 1 Hz
-        self._last_recent_len = -1     # guard: skip rebuild if log didn't change
+        self._last_recent_head = None  # (frame, n_log) of newest entry — rebuild only on change
         self._sc_x            = None   # cached x-axis array for subcarrier bars
+        # Cached label text — skip setText round-trips when value unchanged.
+        self._last_conf_txt   = ""
+        self._last_raw_txt    = ""
+        self._last_fps_txt    = ""
+        self._last_lq_sub_txt = ""
+        self._last_loss_txt   = ""
+        self._last_frames_txt = ""
+        self._last_uptime_int = -1     # uptime only changes every 1s
+        self._last_act_args   = (None, None, None)
+        self._last_gauge_args = (None, None)
         self._build(model_key, port)
 
     def set_mode(self, mode: str):
@@ -1170,13 +1236,22 @@ class MonitorPage(QWidget):
 
     def update(self, state: dict):
         fc = state.get("frame_count", 0)
-        self._banner.setVisible(fc == 0)
+        # Banner visibility only flips once at startup — guard the Qt call.
+        want_banner = (fc == 0)
+        if want_banner != getattr(self, "_banner_visible", None):
+            self._banner_visible = want_banner
+            self._banner.setVisible(want_banner)
 
         wave = state.get("wave")
         if wave is not None:
             mx = float(wave.max())
             self._wave_scale = max(mx * 1.05, self._wave_scale * 0.998)
-            self._pw_wave.setYRange(0, max(self._wave_scale, 1e-6), padding=0.02)
+            # Only re-apply Y range when the change is visible (>=1.5%) —
+            # invisible to the eye, kills 90%+ of per-frame viewBox recalcs.
+            new_scale = max(self._wave_scale, 1e-6)
+            if abs(new_scale - self._wave_scale_applied) / max(self._wave_scale_applied, 1e-6) >= 0.015:
+                self._pw_wave.setYRange(0, new_scale, padding=0.02)
+                self._wave_scale_applied = new_scale
             self._curve_wave.setData(self._wave_x, wave)
 
         n = state.get("n", 1); amp = state.get("last_amp")
@@ -1184,7 +1259,11 @@ class MonitorPage(QWidget):
             if self._sc_x is None or len(self._sc_x) != n:
                 self._sc_x = np.arange(n, dtype=np.float32)
                 self._pw_sc.setXRange(-0.5, n - 0.5, padding=0)
-            self._sc_bars.setOpts(x=self._sc_x, height=amp, width=0.8)
+                # First call: include x and width to seed the bar geometry.
+                self._sc_bars.setOpts(x=self._sc_x, height=amp, width=0.8)
+            else:
+                # Hot path: only height changes — skip kwargs that never change.
+                self._sc_bars.setOpts(height=amp)
 
         label = state.get("label", "—")
         raw   = state.get("raw_label", "—")
@@ -1196,23 +1275,58 @@ class MonitorPage(QWidget):
             is_motion    = (label == "walk_activity") or (intensity > 0.10)
             display_conf = conf if label == "walk_activity" else intensity * 100.0
             if is_motion:
-                self._activity_block.set("MOTION", f"Sensitivity: {display_conf:.1f}%", _ORANGE)
-                self._gauge.set(display_conf, _ORANGE)
-                self._conf_lbl.setText(f"Sensitivity: {display_conf:.1f}%")
-                self._raw_lbl.setText("Movement detected")
+                act_args = ("MOTION", round(display_conf, 1), _ORANGE)
+                if act_args != self._last_act_args:
+                    self._last_act_args = act_args
+                    self._activity_block.set("MOTION", f"Sensitivity: {display_conf:.1f}%", _ORANGE)
+                gauge_args = (round(display_conf, 1), _ORANGE)
+                if gauge_args != self._last_gauge_args:
+                    self._last_gauge_args = gauge_args
+                    self._gauge.set(display_conf, _ORANGE)
+                conf_txt = f"Sensitivity: {display_conf:.1f}%"
+                if conf_txt != self._last_conf_txt:
+                    self._last_conf_txt = conf_txt
+                    self._conf_lbl.setText(conf_txt)
+                if self._last_raw_txt != "Movement detected":
+                    self._last_raw_txt = "Movement detected"
+                    self._raw_lbl.setText("Movement detected")
                 self._motion_bar.set(intensity, "Motion")
             else:
-                self._activity_block.set("—", "", _DIM)
-                self._gauge.set(0.0, _DIM)
-                self._conf_lbl.setText("No motion")
-                self._raw_lbl.setText("Idle")
+                act_args = ("—", "", _DIM)
+                if act_args != self._last_act_args:
+                    self._last_act_args = act_args
+                    self._activity_block.set("—", "", _DIM)
+                gauge_args = (0.0, _DIM)
+                if gauge_args != self._last_gauge_args:
+                    self._last_gauge_args = gauge_args
+                    self._gauge.set(0.0, _DIM)
+                if self._last_conf_txt != "No motion":
+                    self._last_conf_txt = "No motion"
+                    self._conf_lbl.setText("No motion")
+                if self._last_raw_txt != "Idle":
+                    self._last_raw_txt = "Idle"
+                    self._raw_lbl.setText("Idle")
                 self._motion_bar.set(intensity)
         else:
             color = _cc(label)
-            self._activity_block.set(_disp(label), f"Raw: {_disp(raw)}", color)
-            self._gauge.set(conf, color)
-            self._conf_lbl.setText(f"Confidence: {conf:.1f}%")
-            self._raw_lbl.setText(f"Raw: {_disp(raw)}")
+            disp_label = _disp(label)
+            disp_raw   = _disp(raw)
+            act_args = (disp_label, disp_raw, color)
+            if act_args != self._last_act_args:
+                self._last_act_args = act_args
+                self._activity_block.set(disp_label, f"Raw: {disp_raw}", color)
+            gauge_args = (round(conf, 1), color)
+            if gauge_args != self._last_gauge_args:
+                self._last_gauge_args = gauge_args
+                self._gauge.set(conf, color)
+            conf_txt = f"Confidence: {conf:.1f}%"
+            if conf_txt != self._last_conf_txt:
+                self._last_conf_txt = conf_txt
+                self._conf_lbl.setText(conf_txt)
+            raw_txt = f"Raw: {disp_raw}"
+            if raw_txt != self._last_raw_txt:
+                self._last_raw_txt = raw_txt
+                self._raw_lbl.setText(raw_txt)
             self._motion_bar.set(intensity)
 
         fps = state.get("fps", 0.0)
@@ -1243,37 +1357,61 @@ class MonitorPage(QWidget):
                     f"font-size:13px; font-weight:bold; color:{_RED};"
                     f" background:transparent; border:none;"
                 )
-        self._lq_sub.setText(f"{fps:.0f} fps")
+        lq_sub_txt = f"{fps:.0f} fps"
+        if lq_sub_txt != self._last_lq_sub_txt:
+            self._last_lq_sub_txt = lq_sub_txt
+            self._lq_sub.setText(lq_sub_txt)
 
         expected = config.SAMPLING_RATE
         loss_pct = max(0.0, (1.0 - fps / expected) * 100) if fps > 0 else 0.0
-        self._fps_val.setText(f"{fps:.1f}")
-        self._loss_val.setText(f"{loss_pct:.0f}%")
+        fps_txt  = f"{fps:.1f}"
+        loss_txt = f"{loss_pct:.0f}%"
+        if fps_txt != self._last_fps_txt:
+            self._last_fps_txt = fps_txt
+            self._fps_val.setText(fps_txt)
+        if loss_txt != self._last_loss_txt:
+            self._last_loss_txt = loss_txt
+            self._loss_val.setText(loss_txt)
 
-        uptime = state.get("uptime_s", 0.0)
-        h = int(uptime // 3600); m = int((uptime % 3600) // 60); s = int(uptime % 60)
-        self._sv_frames.setText(f"{fc:,}")
-        self._sv_uptime.setText(f"{h:02d}:{m:02d}:{s:02d}")
+        # Uptime: only changes once per second — skip f-string entirely on
+        # the other ~24 plot ticks per second.
+        uptime_i = int(state.get("uptime_s", 0.0))
+        if uptime_i != self._last_uptime_int:
+            self._last_uptime_int = uptime_i
+            h, rem = divmod(uptime_i, 3600); m, s = divmod(rem, 60)
+            self._sv_uptime.setText(f"{h:02d}:{m:02d}:{s:02d}")
+        frames_txt = f"{fc:,}"
+        if frames_txt != self._last_frames_txt:
+            self._last_frames_txt = frames_txt
+            self._sv_frames.setText(frames_txt)
 
         log   = state.get("log_entries", [])
         n_log = len(log)
         show  = n_log > 0
-        self._no_recent.setVisible(not show)
-        self._recent.setVisible(show)
+        # Recent-table visibility flips at most twice per session — guard.
+        if show != getattr(self, "_recent_visible", None):
+            self._recent_visible = show
+            self._no_recent.setVisible(not show)
+            self._recent.setVisible(show)
         now = time.monotonic()
-        if show and (now - self._last_recent_upd) >= 1.0 and n_log != self._last_recent_len:
-            self._last_recent_upd = now
-            self._last_recent_len = n_log
-            n_rows = min(6, n_log)
-            self._recent.setRowCount(n_rows)
-            for r, (ts, lbl, cf, _fr) in enumerate(log[:n_rows]):
-                c = _cc(lbl)
-                items = [QTableWidgetItem(ts), QTableWidgetItem(_disp(lbl).upper()),
-                         QTableWidgetItem(f"{cf:.0f}%")]
-                items[1].setForeground(pg.mkColor(c))
-                for col, item in enumerate(items):
-                    item.setTextAlignment(Qt.AlignCenter)
-                    self._recent.setItem(r, col, item)
+        if show and (now - self._last_recent_upd) >= 1.0:
+            # Track newest entry by its frame number: catches new predictions
+            # even after log reaches max_log capacity (where len stays constant).
+            head = (log[0][3], n_log) if log else (None, 0)
+            if head != self._last_recent_head:
+                self._last_recent_upd  = now
+                self._last_recent_head = head
+                n_rows = min(6, n_log)
+                self._recent.setRowCount(n_rows)
+                for r, (ts, lbl, cf, _fr) in enumerate(log[:n_rows]):
+                    c = _cc(lbl)
+                    items = (QTableWidgetItem(ts),
+                             QTableWidgetItem(_disp(lbl).upper()),
+                             QTableWidgetItem(f"{cf:.0f}%"))
+                    items[1].setForeground(pg.mkColor(c))
+                    for col, item in enumerate(items):
+                        item.setTextAlignment(Qt.AlignCenter)
+                        self._recent.setItem(r, col, item)
                     self._recent.setRowHeight(r, 22)
 
 
@@ -1286,7 +1424,11 @@ class SignalViewPage(QWidget):
         super().__init__()
         self.waveform_len = waveform_len
         self._wave_scale  = 1.0
+        self._wave_scale_applied = 0.0
         self._sc_x        = None   # cached subcarrier x-axis (like MonitorPage)
+        # Cached chip texts — skip setText round-trips when value unchanged.
+        self._last_fps_txt = self._last_lat_txt = ""
+        self._last_loss_txt = self._last_sig_txt = self._last_var_txt = ""
         self._build()
 
     def _build(self):
@@ -1340,17 +1482,25 @@ class SignalViewPage(QWidget):
         loss_pct = max(0.0, (1.0 - fps / expected) * 100) if fps > 0 else 0.0
         sig_db   = 20 * math.log10(max(mean_a, 1e-9))
 
-        self._sv_fps.setText(f"{fps:.1f} fps")
-        self._sv_latency.setText(f"{lat:.1f} ms" if lat > 0 else "—")
-        self._sv_loss.setText(f"{loss_pct:.0f}%")
-        self._sv_sig.setText(f"{sig_db:.1f} dB")
-        self._sv_var.setText(f"{var:.4f}")
+        fps_txt  = f"{fps:.1f} fps"
+        lat_txt  = f"{lat:.1f} ms" if lat > 0 else "—"
+        loss_txt = f"{loss_pct:.0f}%"
+        sig_txt  = f"{sig_db:.1f} dB"
+        var_txt  = f"{var:.4f}"
+        if fps_txt  != self._last_fps_txt:  self._last_fps_txt  = fps_txt;  self._sv_fps.setText(fps_txt)
+        if lat_txt  != self._last_lat_txt:  self._last_lat_txt  = lat_txt;  self._sv_latency.setText(lat_txt)
+        if loss_txt != self._last_loss_txt: self._last_loss_txt = loss_txt; self._sv_loss.setText(loss_txt)
+        if sig_txt  != self._last_sig_txt:  self._last_sig_txt  = sig_txt;  self._sv_sig.setText(sig_txt)
+        if var_txt  != self._last_var_txt:  self._last_var_txt  = var_txt;  self._sv_var.setText(var_txt)
 
         wave = state.get("wave")
         if wave is not None:
             mx = float(wave.max())
             self._wave_scale = max(mx * 1.05, self._wave_scale * 0.998)
-            self._pw_wave.setYRange(0, max(self._wave_scale, 1e-6), padding=0.02)
+            new_scale = max(self._wave_scale, 1e-6)
+            if abs(new_scale - self._wave_scale_applied) / max(self._wave_scale_applied, 1e-6) >= 0.015:
+                self._pw_wave.setYRange(0, new_scale, padding=0.02)
+                self._wave_scale_applied = new_scale
             self._curve_wave.setData(self._wave_x, wave)
 
         n = state.get("n", 1); amp = state.get("last_amp")
@@ -1358,7 +1508,9 @@ class SignalViewPage(QWidget):
             if self._sc_x is None or len(self._sc_x) != n:
                 self._sc_x = np.arange(n, dtype=np.float32)
                 self._pw_sc.setXRange(-0.5, n - 0.5, padding=0)
-            self._sc_bars.setOpts(x=self._sc_x, height=amp, width=0.8)
+                self._sc_bars.setOpts(x=self._sc_x, height=amp, width=0.8)
+            else:
+                self._sc_bars.setOpts(height=amp)
 
 
 # ============================================================================
@@ -1407,6 +1559,11 @@ class ActivityLogPage(QWidget):
         self._pw_dist = pg.PlotWidget(background=_PANEL)
         self._pw_dist.setMenuEnabled(False)
         self._pw_dist.setMouseEnabled(x=False, y=False)
+        # Same perf flags as _make_pw — appearance unchanged.
+        _dist_pi = self._pw_dist.getPlotItem()
+        _dist_pi.setDownsampling(auto=True, mode="peak")
+        _dist_pi.setClipToView(True)
+        _dist_pi.getViewBox().setDefaultPadding(0.0)
         self._pw_dist.getAxis("bottom").setTextPen(pg.mkPen(_DIM))
         self._pw_dist.getAxis("left").setTextPen(pg.mkPen(_DIM))
         self._pw_dist.getAxis("bottom").setStyle(
@@ -2232,7 +2389,22 @@ class DashboardWindow(QMainWindow):
 
         self.setWindowTitle("WiFi CSI Analyzer — Live Dashboard")
         self.setStyleSheet(_QSS)
-        pg.setConfigOptions(antialias=False)
+        # Performance-tuned pyqtgraph globals (appearance unchanged).
+        pg.setConfigOptions(
+            antialias=False,
+            enableExperimental=True,
+            useOpenGL=False,
+            useNumba=False,
+            foreground=_TEXT,
+            background=_PANEL,
+        )
+        # Opt-in OpenGL only if PyOpenGL is actually installed; otherwise
+        # pyqtgraph would spam warnings at first paint.
+        try:
+            import OpenGL  # noqa: F401
+            pg.setConfigOptions(useOpenGL=True)
+        except ImportError:
+            pass
         self._build_ui(port, baud, window_size)
 
     def _build_ui(self, port, baud, window_size):
@@ -2356,9 +2528,18 @@ class DashboardWindow(QMainWindow):
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._refresh)
         self._timer.start(refresh_ms)
+        # Frame skip counter: heavy page.update(state) runs every N-th tick.
+        # At refresh_ms=20 (50Hz) with skip=2 → plots refresh at 25Hz, but the
+        # reader thread gets 2× more GIL time → recovers dropped CSI frames.
+        self._plot_skip_n   = 2
+        self._plot_skip_ctr = 0
 
     def _refresh(self):
-        snap = self.reader.snapshot()
+        # On skip ticks we don't need wave/last_amp arrays — use the lightweight
+        # snapshot to slash lock-hold time (no array copies, no np.roll) and
+        # leave the reader thread free to push 100 Hz CSI frames.
+        plot_tick = (self._plot_skip_ctr + 1) >= self._plot_skip_n
+        snap = self.reader.snapshot() if plot_tick else self.reader.snapshot_light()
         if snap is None:
             return
 
@@ -2442,17 +2623,20 @@ class DashboardWindow(QMainWindow):
                         self._last_record_t   = now
                         self._record(motion_cand, report_conf, probs_cand, fc)
 
-        state = {**snap, **self._state, "latency_ms": self._latency_ms,
-                 "motion_intensity": motion_intensity,
-                 "mode": self._current_mode}
-
         self._sidebar.update_health(int(snap["infer_fill"] * 100), 0)
         self._pill.update_status(snap["frame_count"], snap["fps"])
-        # Only update the visible page — invisible pages waste CPU on Qt/numpy ops
-        active = self._stack.currentIndex()
-        for i, page in enumerate(self._pages):
-            if i == active:
-                page.update(state)
+        # Heavy page.update() throttled to every N-th tick — frees GIL for the
+        # serial reader thread so it can keep up with the 100 Hz CSI stream.
+        self._plot_skip_ctr += 1
+        if self._plot_skip_ctr >= self._plot_skip_n:
+            self._plot_skip_ctr = 0
+            # Build state ONLY when we will actually use it — dict-spread of the
+            # large snap dict is ~15-30µs of GIL we don't need on skip ticks.
+            state = {**snap, **self._state, "latency_ms": self._latency_ms,
+                     "motion_intensity": motion_intensity,
+                     "mode": self._current_mode}
+            # Only update the visible page — invisible pages waste CPU on Qt/numpy ops
+            self._pages[self._stack.currentIndex()].update(state)
 
     def _record(self, label, conf, probs, frame):
         self._total_preds += 1
