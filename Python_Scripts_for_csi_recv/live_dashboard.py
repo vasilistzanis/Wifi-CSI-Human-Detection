@@ -21,8 +21,9 @@ Usage
   python live_dashboard.py --demo
 """
 
-import argparse, math, multiprocessing as mp, os, sys, threading, time, warnings
+import argparse, math, multiprocessing as mp, os, sys, time, warnings
 from collections import Counter, deque
+from multiprocessing import shared_memory
 from pathlib import Path
 
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
@@ -47,12 +48,6 @@ from PyQt5.QtWidgets import (
 
 import config
 from plot_window_utils import center_qt_window
-
-try:
-    from csi_parser import parse_csi_line
-    _PARSER_OK = True
-except ImportError:
-    _PARSER_OK = False
 
 _INFERENCE_OK = False
 _IMPORT_ERR   = ""
@@ -435,99 +430,263 @@ def _load_models(models_dir: str, model_key: str):
 
 
 # ============================================================================
-# DEMO FRAME GENERATOR  (runs in its own OS process — own GIL)
+# READER PROCESS  (runs serial/demo ingestion in its own OS process — own core)
 # ============================================================================
+#
+# Shared-state layout written by the reader process, read by the GUI process.
+# Single block of shared memory, viewed through a numpy structured dtype.
+# Lock-protected by an mp.Lock so reader writes and GUI snapshots are atomic.
+def _make_shared_dtype(waveform_len: int, max_subcarriers: int):
+    return np.dtype([
+        ("n_active",    "i4"),
+        ("frame_count", "i8"),
+        ("wave_ptr",    "i4"),
+        ("variance",    "f8"),
+        ("mean_amp",    "f8"),
+        ("connected",   "i4"),
+        ("fps_n",       "i8"),                  # total samples ever recorded
+        ("fps_times",   ("f8", 60)),            # ring buffer of last 60 timestamps
+        ("wave_buf",    ("f4", waveform_len)),
+        ("last_amp",    ("f4", max_subcarriers)),
+    ], align=False)
 
-def _demo_generator_fn(out_q, sc: int) -> None:
+
+def _reader_process_fn(shm_name, lock, stop_event, infer_in_q,
+                       waveform_len, max_subcarriers,
+                       port, baud, demo, rx_buf,
+                       window_size, warmup, step):
     """
-    Generates synthetic CSI frames at 100 Hz in a dedicated subprocess.
-    Runs with its own Python interpreter and GIL — completely decoupled from
-    the Qt/GUI thread, so demo frame timing is never stolen by GUI work.
-    Must be a module-level function (picklable for Windows 'spawn').
+    Reader runs entirely in its own OS process. Owns the serial port (or the
+    demo generator), writes per-frame state to shared memory, and stacks
+    inference windows directly into the inference worker's input queue.
+
+    Because this is a true OS process it has its own GIL — Qt paints, label
+    refreshes and even ML inference in the main process cannot starve it.
     """
     import numpy as _np
-    import math   as _math
-    import time   as _time
-    import os     as _os
+    import time as _time
+    import os as _os
+    import math as _math
+    from collections import deque as _deque
+    from multiprocessing import shared_memory as _shm_mod
 
-    # 1 ms timer resolution so sleep() is accurate on Windows
+    # 1 ms timer resolution + HIGHEST priority on Windows so sleep() and serial
+    # blocking reads wake up promptly.
     if _os.name == "nt":
         try:
             import ctypes as _ctypes
             _ctypes.windll.winmm.timeBeginPeriod(1)
+            _ctypes.windll.kernel32.SetThreadPriority(
+                _ctypes.windll.kernel32.GetCurrentThread(), 2)
         except Exception:
             pass
 
-    rng      = _np.random.default_rng(0)
-    t        = 0.0
-    idx      = _np.arange(sc, dtype=_np.float32)
-    idx_norm = idx / sc
-    interval = 1.0 / 100.0
-    next_t   = _time.perf_counter()
+    shm   = _shm_mod.SharedMemory(name=shm_name)
+    dtype = _make_shared_dtype(waveform_len, max_subcarriers)
+    state = _np.ndarray((), dtype=dtype, buffer=shm.buf)
 
-    while True:
-        next_t   += interval
-        remaining = next_t - _time.perf_counter()
-        if remaining > 0.001:
-            _time.sleep(remaining)
+    infer_buf_size = window_size + warmup
+    infer_deque    = _deque(maxlen=infer_buf_size)
+    frames_since   = 0
 
-        t  += 0.05
-        p1  = _np.exp(-0.5 * ((idx - (sc * .3 + 10 * _math.sin(t * .7))) / 6) ** 2)
-        p2  = _np.exp(-0.5 * ((idx - (sc * .7 +  8 * _math.cos(t * .5))) / 5) ** 2)
-        amp = p1 * .7 + p2 * .5 + rng.uniform(0, .04, sc).astype(_np.float32)
-        ph  = t * .8 + idx_norm * (2 * _math.pi)
-        frame = (amp * (_np.cos(ph) + 1j * _np.sin(ph))).astype(_np.complex64)
+    def _push(cf_frame):
+        nonlocal frames_since
+        n = min(int(cf_frame.size), max_subcarriers)
+        cf = cf_frame[:n].astype(_np.complex64, copy=False)
+        amp = _np.abs(cf)
+        ma  = float(amp.mean())
+        mx  = float(amp.max())
+        amp_norm = amp / mx if mx > 0 else amp
+        now = _time.monotonic()
 
+        with lock:
+            p = int(state["wave_ptr"])
+            state["wave_buf"][p]  = ma
+            state["wave_ptr"]     = (p + 1) % waveform_len
+            state["last_amp"][:n] = amp_norm
+            if n > int(state["n_active"]):
+                state["n_active"] = n
+            state["frame_count"] += 1
+
+            fps_n = int(state["fps_n"])
+            state["fps_times"][fps_n % 60] = now
+            state["fps_n"] = fps_n + 1
+
+            prev_var = float(state["variance"])
+            prev_ma  = float(state["mean_amp"])
+            state["variance"] = prev_var * 0.97 + (ma - prev_ma) ** 2 * 0.03
+            state["mean_amp"] = prev_ma  * 0.97 + ma * 0.03
+            fc = int(state["frame_count"])
+
+        # Inference scheduling lives here — fully decoupled from the GUI.
+        infer_deque.append(cf_frame)
+        frames_since += 1
+        if frames_since >= step and len(infer_deque) >= window_size:
+            frames_since = 0
+            try:
+                cm = _np.vstack(list(infer_deque))
+                try:
+                    infer_in_q.get_nowait()       # drop stale pending
+                except Exception:
+                    pass
+                infer_in_q.put_nowait((cm, fc))
+            except Exception:
+                pass
+
+    def _run_demo():
+        sc       = max_subcarriers
+        rng      = _np.random.default_rng(0)
+        t        = 0.0
+        idx      = _np.arange(sc, dtype=_np.float32)
+        idx_norm = idx / sc
+        interval = 1.0 / 100.0
+        next_t   = _time.perf_counter()
+        with lock:
+            state["connected"] = 1
+        while not stop_event.is_set():
+            next_t   += interval
+            remaining = next_t - _time.perf_counter()
+            if remaining > 0.001:
+                _time.sleep(remaining)
+            t  += 0.05
+            p1  = _np.exp(-0.5 * ((idx - (sc * .3 + 10 * _math.sin(t * .7))) / 6) ** 2)
+            p2  = _np.exp(-0.5 * ((idx - (sc * .7 +  8 * _math.cos(t * .5))) / 5) ** 2)
+            amp = p1 * .7 + p2 * .5 + rng.uniform(0, .04, sc).astype(_np.float32)
+            ph  = t * .8 + idx_norm * (2 * _math.pi)
+            frame = (amp * (_np.cos(ph) + 1j * _np.sin(ph))).astype(_np.complex64)
+            _push(frame)
+
+    def _run_serial():
         try:
-            out_q.put_nowait(frame)
+            import serial
+            from csi_parser import parse_csi_line as _parse
+        except ImportError:
+            print("[ERROR] pyserial / csi_parser missing → demo mode")
+            _run_demo()
+            return
+        ser = None
+        try:
+            ser = serial.Serial(port, baud, timeout=0.5)
+            if _os.name == "nt" and hasattr(ser, "set_buffer_size"):
+                ser.set_buffer_size(rx_size=rx_buf)
+            ser.reset_input_buffer()
+            with lock:
+                state["connected"] = 1
+            print(f"[OK]  Connected: {port} @ {baud}")
+        except Exception as e:
+            print(f"[ERROR] {e}  → demo mode")
+            _run_demo()
+            return
+        try:
+            while not stop_event.is_set():
+                raw = ser.readline()
+                if not raw:
+                    continue
+                line = raw.decode("utf-8", errors="ignore").strip()
+                if not line.startswith("CSI_DATA"):
+                    continue
+                frame = _parse(line)
+                if frame is not None:
+                    _push(frame)
+        finally:
+            if ser and ser.is_open:
+                ser.close()
+            with lock:
+                state["connected"] = 0
+
+    try:
+        if demo:
+            _run_demo()
+        else:
+            _run_serial()
+    finally:
+        try:
+            shm.close()
         except Exception:
-            pass  # queue full — skip frame, don't block generator
+            pass
 
 
-# ============================================================================
-# READER THREAD
-# ============================================================================
+class ReaderProcess:
+    """
+    GUI-side handle for the reader child process. Exposes the same snapshot()
+    shape as the old ReaderThread so the existing pages and refresh loop work
+    unchanged. State is read via a structured numpy view over shared memory.
+    """
 
-class ReaderThread(threading.Thread):
-    def __init__(self, port, baud, demo, stop_event,
-                 waveform_len: int, infer_buf_size: int, rx_buf: int):
-        super().__init__(daemon=True)
-        self.port = port;  self.baud = baud;  self.demo = demo
-        self.stop_event    = stop_event
+    def __init__(self, port, baud, demo, waveform_len, rx_buf,
+                 window_size, warmup, step):
+        self.port          = port
+        self.baud          = baud
+        self.demo          = demo
         self.waveform_len  = waveform_len
         self.rx_buf        = rx_buf
-        self._lock         = threading.Lock()
-        self._frame_count  = 0
-        self._n_active     = 0
-        self._fps_times    = deque(maxlen=60)
+        self._window_size  = window_size
+        self._warmup       = warmup
+        self._step         = step
+        self._max_sc       = config.MAX_SUBCARRIERS
+        self.infer_buf_max = window_size + warmup
         self._start_time   = time.monotonic()
-        self._wave_buf     = np.zeros(waveform_len, dtype=np.float32)
-        self._wave_ptr     = 0
-        self._last_amp     = np.zeros(config.MAX_SUBCARRIERS, dtype=np.float32)
-        self._variance     = 0.0
-        self._mean_amp     = 0.0
-        self._infer_deque  = deque(maxlen=infer_buf_size)
-        self.infer_buf_max = infer_buf_size
-        self.connected     = False
+
+        self._dtype = _make_shared_dtype(waveform_len, self._max_sc)
+        size = self._dtype.itemsize
+        self._shm = shared_memory.SharedMemory(create=True, size=size)
+        # Zero-init the block so the structured view reads sane defaults.
+        self._shm.buf[:size] = b"\x00" * size
+        self._state = np.ndarray((), dtype=self._dtype, buffer=self._shm.buf)
+
+        self._lock        = mp.Lock()
+        self._stop_event  = mp.Event()
+        self._infer_in_q  = mp.Queue(maxsize=2)
+        self._proc        = None
+
+    @property
+    def infer_in_q(self):
+        """The inference input queue — handed to InferenceProcess so the reader
+        can push windows directly without going through the GUI thread."""
+        return self._infer_in_q
+
+    @property
+    def connected(self) -> bool:
+        with self._lock:
+            return bool(int(self._state["connected"]))
+
+    def start(self):
+        self._proc = mp.Process(
+            target=_reader_process_fn,
+            args=(self._shm.name, self._lock, self._stop_event, self._infer_in_q,
+                  self.waveform_len, self._max_sc,
+                  self.port, self.baud, self.demo, self.rx_buf,
+                  self._window_size, self._warmup, self._step),
+            daemon=True,
+        )
+        self._proc.start()
 
     def snapshot(self) -> dict | None:
-        # Hold the lock only to copy scalars and cheap arrays, not for numpy ops
         with self._lock:
-            if self._n_active == 0:
+            n = int(self._state["n_active"])
+            if n == 0:
                 return None
-            ft       = list(self._fps_times)
-            wave_buf = self._wave_buf.copy()
-            wave_ptr = self._wave_ptr
-            amp_snap = self._last_amp[:self._n_active].copy()
-            n        = self._n_active
-            fc       = self._frame_count
-            fill     = len(self._infer_deque) / max(1, self.infer_buf_max)
-            conn     = self.connected
-            var      = self._variance
-            ma       = self._mean_amp
-        # FPS computed outside the lock — avoids holding it for a Python division
-        fps = (len(ft) - 1) / (ft[-1] - ft[0]) if len(ft) >= 2 else 0.0
-        # np.roll allocates outside the lock — reader thread can push freely
+            fc       = int(self._state["frame_count"])
+            wave_ptr = int(self._state["wave_ptr"])
+            wave_buf = self._state["wave_buf"].copy()
+            amp_snap = self._state["last_amp"][:n].copy()
+            fps_n    = int(self._state["fps_n"])
+            ft_buf   = self._state["fps_times"].copy()
+            var      = float(self._state["variance"])
+            ma       = float(self._state["mean_amp"])
+            conn     = bool(int(self._state["connected"]))
+
+        # FPS from the most recent min(fps_n, 60) timestamps in the ring.
+        if fps_n >= 2:
+            n_valid   = min(fps_n, 60)
+            last_idx  = (fps_n - 1) % 60
+            first_idx = (fps_n - n_valid) % 60
+            ft_last   = float(ft_buf[last_idx])
+            ft_first  = float(ft_buf[first_idx])
+            fps = (n_valid - 1) / (ft_last - ft_first) if ft_last > ft_first else 0.0
+        else:
+            fps = 0.0
+
         return {
             "wave":        np.roll(wave_buf, -wave_ptr),
             "last_amp":    amp_snap,
@@ -537,129 +696,29 @@ class ReaderThread(threading.Thread):
             "uptime_s":    time.monotonic() - self._start_time,
             "variance":    var,
             "mean_amp":    ma,
-            "infer_fill":  fill,
+            # Reader owns the inference window now — we report fullness as the
+            # ratio of "ready" (have window_size frames) to keep the existing
+            # sidebar buffer bar meaningful.
+            "infer_fill":  min(1.0, fc / max(1, self._window_size)),
             "connected":   conn,
         }
 
-    def snapshot_light(self) -> dict | None:
-        """Cheap variant — scalars only, no array copies, no np.roll.
-        Used on skip ticks where we only need fps / frame_count / fill /
-        variance / mean_amp. Cuts lock-hold time by ~3× vs snapshot()."""
-        with self._lock:
-            if self._n_active == 0:
-                return None
-            # Read the two deque endpoints directly — no list() copy of all 60.
-            n_ft = len(self._fps_times)
-            ft_first = self._fps_times[0]  if n_ft else 0.0
-            ft_last  = self._fps_times[-1] if n_ft else 0.0
-            fc   = self._frame_count
-            fill = len(self._infer_deque) / max(1, self.infer_buf_max)
-            var  = self._variance
-            ma   = self._mean_amp
-        fps = (n_ft - 1) / (ft_last - ft_first) if n_ft >= 2 else 0.0
-        return {
-            "frame_count": fc, "fps": fps, "infer_fill": fill,
-            "variance":    var, "mean_amp": ma,
-        }
-
-    def get_infer_snap(self) -> list:
-        """Return a copy of the inference deque — call only when submitting for inference."""
-        with self._lock:
-            return list(self._infer_deque)
-
-    def _push(self, cf_frame: np.ndarray):
-        n        = min(cf_frame.size, config.MAX_SUBCARRIERS)
-        cf       = cf_frame[:n].astype(np.complex64, copy=False)
-        amp      = np.abs(cf)
-        ma       = float(amp.mean())
-        mx       = float(amp.max())           # computed outside the lock
-        amp_norm = amp / mx if mx > 0 else amp  # normalise outside the lock
-        with self._lock:
-            p = self._wave_ptr
-            self._wave_buf[p]  = ma
-            self._wave_ptr     = (p + 1) % self.waveform_len
-            self._last_amp[:n] = amp_norm
-            self._n_active     = max(self._n_active, n)
-            self._frame_count += 1
-            self._fps_times.append(time.monotonic())
-            self._variance  = self._variance * 0.97 + (ma - self._mean_amp) ** 2 * 0.03
-            self._mean_amp  = self._mean_amp * 0.97 + ma * 0.03
-            self._infer_deque.append(cf_frame)
-
-    def run(self):
-        # Raise OS thread priority first — applies to both demo and hardware paths.
-        # HIGHEST (2) ensures this thread preempts the Qt/GUI thread immediately
-        # after waking from sleep, preventing the 1-2ms scheduling delay that
-        # causes frame rate to drop from 100 Hz to ~80 Hz.
-        if os.name == "nt":
-            try:
-                import ctypes
-                ctypes.windll.kernel32.SetThreadPriority(
-                    ctypes.windll.kernel32.GetCurrentThread(), 2)  # HIGHEST
-            except Exception:
-                pass
-
-        if self.demo:
-            self.connected = True
-            self._run_demo()
-            return
-        ser = None
+    def stop(self):
+        self._stop_event.set()
+        if self._proc is not None:
+            self._proc.join(timeout=2.0)
+            if self._proc.is_alive():
+                self._proc.terminate()
+                self._proc.join(timeout=1.0)
         try:
-            import serial
-            ser = serial.Serial(self.port, self.baud, timeout=0.5)
-            if os.name == "nt" and hasattr(ser, "set_buffer_size"):
-                ser.set_buffer_size(rx_size=self.rx_buf)
-            ser.reset_input_buffer()
-            self.connected = True
-            print(f"[OK]  Connected: {self.port} @ {self.baud}")
-        except Exception as e:
-            print(f"[ERROR] {e}  → demo mode")
-            self.connected = True
-            self._run_demo()
-            return
-        try:
-            while not self.stop_event.is_set():
-                raw = ser.readline()
-                if not raw:
-                    continue
-                line = raw.decode("utf-8", errors="ignore").strip()
-                if not line.startswith("CSI_DATA"):
-                    continue
-                frame = parse_csi_line(line) if _PARSER_OK else None
-                if frame is not None:
-                    self._push(frame)
-        finally:
-            if ser and ser.is_open:
-                ser.close()
-            self.connected = False
+            self._shm.close()
+            self._shm.unlink()
+        except Exception:
+            pass
 
-    def _run_demo(self):
-        """
-        Reads frames produced by _demo_generator_fn running in its own subprocess.
-        mp.Queue.get(timeout) releases the GIL while blocking — the Qt/GUI thread
-        runs freely and never competes with frame generation.
-        """
-        sc      = config.MAX_SUBCARRIERS
-        _gen_q  = mp.Queue(maxsize=20)
-        _gen_p  = mp.Process(
-            target=_demo_generator_fn,
-            args=(_gen_q, sc),
-            daemon=True,
-        )
-        _gen_p.start()
-        print("[INFO] Demo mode — GIL-free frame generator subprocess")
-        try:
-            while not self.stop_event.is_set():
-                try:
-                    frame = _gen_q.get(timeout=0.02)   # releases GIL while waiting
-                except Exception:
-                    continue
-                self._push(frame)
-        finally:
-            if _gen_p.is_alive():
-                _gen_p.terminate()
-            _gen_p.join(timeout=2.0)
-            _gen_q.close()
+    def join(self, timeout=2.0):
+        if self._proc is not None:
+            self._proc.join(timeout=timeout)
 
 
 # ============================================================================
@@ -756,21 +815,25 @@ def _inference_worker_fn(in_q, out_q, pipeline, model, le, classes,
 
 
 class InferenceProcess:
-    """Manages a child process for CSI inference (bypasses GIL)."""
+    """Manages a child process for CSI inference (bypasses GIL).
 
-    def __init__(self, pipeline, model, le, classes, window_size, cutoff):
+    The input queue is supplied externally (owned by the ReaderProcess) so
+    inference windows go reader → inference directly without ever touching
+    the GUI's GIL. The output queue is owned by this class and polled by GUI.
+    """
+
+    def __init__(self, in_q, pipeline, model, le, classes, window_size, cutoff):
+        self._in_q        = in_q
         self._pipeline    = pipeline
         self._model       = model
         self._le          = le
         self._classes     = list(classes)
         self._window_size = window_size
         self._cutoff      = cutoff
-        self._in_q  = None
         self._out_q = None
         self._proc  = None
 
     def start(self):
-        self._in_q  = mp.Queue(maxsize=2)
         self._out_q = mp.Queue(maxsize=8)
         self._proc  = mp.Process(
             target=_inference_worker_fn,
@@ -780,24 +843,6 @@ class InferenceProcess:
             daemon=True,
         )
         self._proc.start()
-
-    def submit(self, infer_snap, frame_count):
-        """Pre-stack frames and send to worker (non-blocking)."""
-        if not infer_snap:
-            return
-        try:
-            cm = np.vstack(infer_snap)   # inputs are already complex64 — no copy needed
-        except (ValueError, TypeError):
-            return
-        # Discard stale pending request then enqueue
-        try:
-            self._in_q.get_nowait()
-        except Exception:
-            pass
-        try:
-            self._in_q.put_nowait((cm, frame_count))
-        except Exception:
-            pass
 
     def get_result(self):
         """Drain queue and return only the latest result (non-blocking)."""
@@ -821,11 +866,10 @@ class InferenceProcess:
         self._proc.join(timeout=3.0)
         if self._proc.is_alive():
             self._proc.terminate()
-        for q in (self._in_q, self._out_q):
-            try:
-                q.close()
-            except Exception:
-                pass
+        try:
+            self._out_q.close()
+        except Exception:
+            pass
 
     def restart(self, pipeline, model, le, classes):
         """Stop old worker and start a new one with updated model."""
@@ -1234,6 +1278,29 @@ class MonitorPage(QWidget):
     def set_model_name(self, model_key: str):
         self._sv_model.setText(_MODEL_NAMES.get(model_key, model_key))
 
+    def update_curves(self, snap: dict):
+        """Light per-tick update — only the live plots. Called every timer tick
+        for smooth visual refresh; the heavy text/gauges/recent table go through
+        update() at a lower cadence."""
+        wave = snap.get("wave")
+        if wave is not None:
+            mx = float(wave.max())
+            self._wave_scale = max(mx * 1.05, self._wave_scale * 0.998)
+            new_scale = max(self._wave_scale, 1e-6)
+            if abs(new_scale - self._wave_scale_applied) / max(self._wave_scale_applied, 1e-6) >= 0.015:
+                self._pw_wave.setYRange(0, new_scale, padding=0.02)
+                self._wave_scale_applied = new_scale
+            self._curve_wave.setData(self._wave_x, wave)
+
+        n = snap.get("n", 1); amp = snap.get("last_amp")
+        if amp is not None:
+            if self._sc_x is None or len(self._sc_x) != n:
+                self._sc_x = np.arange(n, dtype=np.float32)
+                self._pw_sc.setXRange(-0.5, n - 0.5, padding=0)
+                self._sc_bars.setOpts(x=self._sc_x, height=amp, width=0.8)
+            else:
+                self._sc_bars.setOpts(height=amp)
+
     def update(self, state: dict):
         fc = state.get("frame_count", 0)
         # Banner visibility only flips once at startup — guard the Qt call.
@@ -1241,29 +1308,6 @@ class MonitorPage(QWidget):
         if want_banner != getattr(self, "_banner_visible", None):
             self._banner_visible = want_banner
             self._banner.setVisible(want_banner)
-
-        wave = state.get("wave")
-        if wave is not None:
-            mx = float(wave.max())
-            self._wave_scale = max(mx * 1.05, self._wave_scale * 0.998)
-            # Only re-apply Y range when the change is visible (>=1.5%) —
-            # invisible to the eye, kills 90%+ of per-frame viewBox recalcs.
-            new_scale = max(self._wave_scale, 1e-6)
-            if abs(new_scale - self._wave_scale_applied) / max(self._wave_scale_applied, 1e-6) >= 0.015:
-                self._pw_wave.setYRange(0, new_scale, padding=0.02)
-                self._wave_scale_applied = new_scale
-            self._curve_wave.setData(self._wave_x, wave)
-
-        n = state.get("n", 1); amp = state.get("last_amp")
-        if amp is not None:
-            if self._sc_x is None or len(self._sc_x) != n:
-                self._sc_x = np.arange(n, dtype=np.float32)
-                self._pw_sc.setXRange(-0.5, n - 0.5, padding=0)
-                # First call: include x and width to seed the bar geometry.
-                self._sc_bars.setOpts(x=self._sc_x, height=amp, width=0.8)
-            else:
-                # Hot path: only height changes — skip kwargs that never change.
-                self._sc_bars.setOpts(height=amp)
 
         label = state.get("label", "—")
         raw   = state.get("raw_label", "—")
@@ -1473,6 +1517,27 @@ class SignalViewPage(QWidget):
         self._pw_wave.setXRange(0, wl, padding=0)
         root.addWidget(self._pw_wave, stretch=2)
 
+    def update_curves(self, snap: dict):
+        """Light per-tick update — only the live plots (see MonitorPage)."""
+        wave = snap.get("wave")
+        if wave is not None:
+            mx = float(wave.max())
+            self._wave_scale = max(mx * 1.05, self._wave_scale * 0.998)
+            new_scale = max(self._wave_scale, 1e-6)
+            if abs(new_scale - self._wave_scale_applied) / max(self._wave_scale_applied, 1e-6) >= 0.015:
+                self._pw_wave.setYRange(0, new_scale, padding=0.02)
+                self._wave_scale_applied = new_scale
+            self._curve_wave.setData(self._wave_x, wave)
+
+        n = snap.get("n", 1); amp = snap.get("last_amp")
+        if amp is not None:
+            if self._sc_x is None or len(self._sc_x) != n:
+                self._sc_x = np.arange(n, dtype=np.float32)
+                self._pw_sc.setXRange(-0.5, n - 0.5, padding=0)
+                self._sc_bars.setOpts(x=self._sc_x, height=amp, width=0.8)
+            else:
+                self._sc_bars.setOpts(height=amp)
+
     def update(self, state: dict):
         fps      = state.get("fps", 0.0)
         lat      = state.get("latency_ms", 0.0)
@@ -1492,25 +1557,6 @@ class SignalViewPage(QWidget):
         if loss_txt != self._last_loss_txt: self._last_loss_txt = loss_txt; self._sv_loss.setText(loss_txt)
         if sig_txt  != self._last_sig_txt:  self._last_sig_txt  = sig_txt;  self._sv_sig.setText(sig_txt)
         if var_txt  != self._last_var_txt:  self._last_var_txt  = var_txt;  self._sv_var.setText(var_txt)
-
-        wave = state.get("wave")
-        if wave is not None:
-            mx = float(wave.max())
-            self._wave_scale = max(mx * 1.05, self._wave_scale * 0.998)
-            new_scale = max(self._wave_scale, 1e-6)
-            if abs(new_scale - self._wave_scale_applied) / max(self._wave_scale_applied, 1e-6) >= 0.015:
-                self._pw_wave.setYRange(0, new_scale, padding=0.02)
-                self._wave_scale_applied = new_scale
-            self._curve_wave.setData(self._wave_x, wave)
-
-        n = state.get("n", 1); amp = state.get("last_amp")
-        if amp is not None:
-            if self._sc_x is None or len(self._sc_x) != n:
-                self._sc_x = np.arange(n, dtype=np.float32)
-                self._pw_sc.setXRange(-0.5, n - 0.5, padding=0)
-                self._sc_bars.setOpts(x=self._sc_x, height=amp, width=0.8)
-            else:
-                self._sc_bars.setOpts(height=amp)
 
 
 # ============================================================================
@@ -2345,7 +2391,7 @@ class SettingsPage(QWidget):
 # ============================================================================
 
 class DashboardWindow(QMainWindow):
-    def __init__(self, *, reader: ReaderThread,
+    def __init__(self, *, reader: "ReaderProcess",
                  pipeline, le, model, classes: list, model_key: str,
                  window_size: int, step: int, ema_alpha: float,
                  conf_thresh: float, cutoff: float, refresh_ms: int,
@@ -2381,7 +2427,10 @@ class DashboardWindow(QMainWindow):
         }
 
         # Background inference worker (separate OS process — fully GIL-free).
+        # Input queue is owned by the reader process, so reader pushes inference
+        # windows directly: GUI never carries them across processes.
         self._infer_worker = InferenceProcess(
+            in_q=reader.infer_in_q,
             pipeline=pipeline, model=model, le=le, classes=classes,
             window_size=window_size, cutoff=cutoff,
         )
@@ -2517,7 +2566,10 @@ class DashboardWindow(QMainWindow):
                 motion_intensity = min(1.0, math.sqrt(snap.get("variance", 0.0)) / ma * 4.0)
             state = {**snap, **self._state, "latency_ms": self._latency_ms,
                      "motion_intensity": motion_intensity, "mode": self._current_mode}
-            self._pages[idx].update(state)
+            page = self._pages[idx]
+            if hasattr(page, "update_curves"):
+                page.update_curves(snap)
+            page.update(state)
 
     def _clear_log(self):
         self._log_entries.clear()
@@ -2535,11 +2587,11 @@ class DashboardWindow(QMainWindow):
         self._plot_skip_ctr = 0
 
     def _refresh(self):
-        # On skip ticks we don't need wave/last_amp arrays — use the lightweight
-        # snapshot to slash lock-hold time (no array copies, no np.roll) and
-        # leave the reader thread free to push 100 Hz CSI frames.
-        plot_tick = (self._plot_skip_ctr + 1) >= self._plot_skip_n
-        snap = self.reader.snapshot() if plot_tick else self.reader.snapshot_light()
+        # Full snapshot every tick — we now feed update_curves() on every tick
+        # for smooth wave/bar visuals at the full timer rate. The wave_buf copy
+        # is ~200 floats under the lock; the lock-hold delta vs snapshot_light()
+        # is microseconds and doesn't hurt the 100 Hz reader.
+        snap = self.reader.snapshot()
         if snap is None:
             return
 
@@ -2555,13 +2607,13 @@ class DashboardWindow(QMainWindow):
             motion_intensity = 0.0
 
         # ── HAR mode: ML inference ───────────────────────────────────────
+        # Real inference is scheduled inside the reader process. The GUI only
+        # drives the synthetic demo predictor (random labels) when no model
+        # is loaded.
         if self._current_mode == "har":
-            if self._frames_since >= self.step:
+            if self.demo and self.pipeline is None and self._frames_since >= self.step:
                 self._frames_since = 0
-                if self.demo and self.pipeline is None:
-                    self._demo_predict(snap["frame_count"])
-                else:
-                    self._infer_worker.submit(self.reader.get_infer_snap(), snap["frame_count"])
+                self._demo_predict(snap["frame_count"])
 
             result = self._infer_worker.get_result()
             if result is not None:
@@ -2594,12 +2646,9 @@ class DashboardWindow(QMainWindow):
 
         # ── Super Motion mode: hyper-sensitive ML inference ─────────────
         elif self._current_mode == "motion":
-            if self._frames_since >= self.step:
+            if self.demo and self.pipeline is None and self._frames_since >= self.step:
                 self._frames_since = 0
-                if self.demo and self.pipeline is None:
-                    self._demo_predict(snap["frame_count"])
-                else:
-                    self._infer_worker.submit(self.reader.get_infer_snap(), snap["frame_count"])
+                self._demo_predict(snap["frame_count"])
 
             result = self._infer_worker.get_result()
             if result is not None:
@@ -2625,18 +2674,21 @@ class DashboardWindow(QMainWindow):
 
         self._sidebar.update_health(int(snap["infer_fill"] * 100), 0)
         self._pill.update_status(snap["frame_count"], snap["fps"])
-        # Heavy page.update() throttled to every N-th tick — frees GIL for the
-        # serial reader thread so it can keep up with the 100 Hz CSI stream.
+        # Smooth-tick path: visible page's live plots refresh every tick
+        # (cheap setData/setOpts). The heavy text/gauges/recent-table update
+        # is throttled to every N-th tick to keep GIL pressure low so the
+        # reader thread can sustain 100 Hz CSI frames.
+        visible_page = self._pages[self._stack.currentIndex()]
+        if hasattr(visible_page, "update_curves"):
+            visible_page.update_curves(snap)
+
         self._plot_skip_ctr += 1
         if self._plot_skip_ctr >= self._plot_skip_n:
             self._plot_skip_ctr = 0
-            # Build state ONLY when we will actually use it — dict-spread of the
-            # large snap dict is ~15-30µs of GIL we don't need on skip ticks.
             state = {**snap, **self._state, "latency_ms": self._latency_ms,
                      "motion_intensity": motion_intensity,
                      "mode": self._current_mode}
-            # Only update the visible page — invisible pages waste CPU on Qt/numpy ops
-            self._pages[self._stack.currentIndex()].update(state)
+            visible_page.update(state)
 
     def _record(self, label, conf, probs, frame):
         self._total_preds += 1
@@ -2750,12 +2802,10 @@ def main():
     else:
         print("[INFO] Demo mode — no model loaded")
 
-    infer_buf_size = args.window + args.warmup
-    stop           = threading.Event()
-    reader         = ReaderThread(
+    reader = ReaderProcess(
         port=args.port, baud=args.baud, demo=args.demo,
-        stop_event=stop, waveform_len=args.waveform_len,
-        infer_buf_size=infer_buf_size, rx_buf=args.rx_buf,
+        waveform_len=args.waveform_len, rx_buf=args.rx_buf,
+        window_size=args.window, warmup=args.warmup, step=args.step,
     )
     reader.start()
 
@@ -2775,9 +2825,10 @@ def main():
     win.show()
 
     code = app.exec_()
-    stop.set()
-    win._infer_worker.join(timeout=2.0)
-    reader.join(timeout=2.0)
+    # Stop reader first so it stops pushing into the inference queue, then
+    # poison-pill the inference worker.
+    reader.stop()
+    win._infer_worker.stop()
     if _winmm is not None:
         try:
             _winmm.timeEndPeriod(1)

@@ -187,7 +187,7 @@ VISUALIZE_ML_PIPELINE_SIZE     = FIGURE_SIZE
 # live_dashboard.py defaults
 # ------------------------------------------------------------------------------
 DASHBOARD_WAVEFORM_LEN  = 200
-DASHBOARD_REFRESH_MS    = 20
+DASHBOARD_REFRESH_MS    = 10     # 100 Hz GUI timer — experimental, matches CSI rate
 DASHBOARD_STEP_SIZE     = 15      # 15 frames = 150ms between predictions
 DASHBOARD_EMA_ALPHA     = 0.6     # EMA factor for soft probability smoothing (1.0 = no smoothing)
 DASHBOARD_CONF_THRESH   = 70.0    # Minimum confidence % to switch state (otherwise holds previous state)
