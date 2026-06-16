@@ -258,7 +258,7 @@ LOGGER_ACTIVITY_PRESETS: dict[str, dict] = {
     },
     "idle": {
         "output_dir": "datasets/no_activity",
-        "duration":   120,
+        "duration":   60,
         "wait":       5,
         "label_prefix": "no_activity",
     },
