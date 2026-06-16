@@ -315,6 +315,15 @@ PREPROCESSING_USE_DIFF = True
 
 
 # ------------------------------------------------------------------------------
+# experiment_runner.py defaults
+# ------------------------------------------------------------------------------
+EXPERIMENT_OUTPUT_DIR = "models/experiments"
+EXPERIMENT_MODELS = ["rf"]
+ABLATION_PCA_RANGE = [5, 10, 15, 20]
+ABLATION_WINDOW_RANGE = [50, 100, 150]
+
+
+# ------------------------------------------------------------------------------
 # Script-specific CLI defaults
 # ------------------------------------------------------------------------------
 SCRIPT_DEFAULTS = {
@@ -376,6 +385,25 @@ SCRIPT_DEFAULTS = {
         "cv_folds": CV_FOLDS,
         "cutoff": FILTER_CUTOFF_HZ,
         "models_dir": MODELS_DIR,
+    },
+    "experiment_runner": {
+        "data_dir": DATASETS_DIR,
+        "classes": list(TARGET_CLASSES),
+        "experiment": "all",
+        "model": list(EXPERIMENT_MODELS),
+        "output_dir": EXPERIMENT_OUTPUT_DIR,
+        "window_size": WINDOW_SIZE,
+        "step": PIPELINE_STEP_SIZE,
+        "fs": SAMPLING_RATE,
+        "pca": N_PCA_COMPONENTS,
+        "cutoff": FILTER_CUTOFF_HZ,
+        "seed": RANDOM_SEED,
+        "n_augments": N_AUGMENTS,
+        "cv_folds": CV_FOLDS,
+        "simulate": False,
+        "save": False,
+        "ablation_pca": list(ABLATION_PCA_RANGE),
+        "ablation_window": list(ABLATION_WINDOW_RANGE),
     },
     "explain_model_characteristics": {
         "model": "rf",
