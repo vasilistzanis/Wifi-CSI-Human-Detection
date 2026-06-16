@@ -629,7 +629,7 @@ def build_dataset(
         pipeline_kwargs = {'fs': config.SAMPLING_RATE, 'use_diff': True}
 
     _fs     = float(pipeline_kwargs.get('fs', config.SAMPLING_RATE))  # ΑΛΛΑΓΗ
-    _cutoff = float(cutoff)                            # ΑΛΛΑΓΗ — passed to bandwidth-limited FFT features
+    _cutoff = float(cutoff) if cutoff is not None else None                            # ΑΛΛΑΓΗ — passed to bandwidth-limited FFT features
 
     do_augment = bool(augment_techniques)  # empty list / None -> no augmentation
     if do_augment:
@@ -673,7 +673,7 @@ def build_dataset(
         'test_recording_ratio': float(test_recording_ratio),
         'random_seed': int(random_seed),
         'n_pca': int(n_pca),
-        'cutoff': float(cutoff),
+        'cutoff': float(cutoff) if cutoff is not None else None,
         'simulation_mode': bool(simulation_mode or CSIPipeline is None),
         'train_files': {},
         'test_files': {},
