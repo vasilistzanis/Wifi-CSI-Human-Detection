@@ -296,7 +296,7 @@ def extract_features_from_window(window: np.ndarray, fs: float = config.SAMPLING
         freqs           = np.fft.rfftfreq(len(col), d=1.0 / fs)
         fft_power       = fft_vals ** 2
 
-        active_mask_fft  = freqs <= cutoff_hz                    # ΑΛΛΑΓΗ — e.g. bins 0–10 Hz
+        active_mask_fft  = (freqs <= cutoff_hz) if cutoff_hz is not None else np.ones_like(freqs, dtype=bool)                    # ΑΛΛΑΓΗ — e.g. bins 0–10 Hz
         fft_vals_active  = fft_vals[active_mask_fft]             # ΑΛΛΑΓΗ — e.g. 11 bins
         freqs_active     = freqs[active_mask_fft]                # ΑΛΛΑΓΗ
 

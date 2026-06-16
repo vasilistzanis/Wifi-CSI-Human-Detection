@@ -239,9 +239,10 @@ class CSIPipeline:
         from scipy.signal import sosfiltfilt
 
         nyquist = self.fs / 2.0
-        if cutoff >= nyquist:
-            print(f"[WARNING] Lowpass cutoff {cutoff} Hz >= Nyquist {nyquist:.1f} Hz "
-                  f"- skipping filter")
+        if cutoff is None or cutoff >= nyquist:
+            if cutoff is not None:
+                print(f"[WARNING] Lowpass cutoff {cutoff} Hz >= Nyquist {nyquist:.1f} Hz "
+                      f"- skipping filter")
             return data
 
         sos = butter(4, cutoff / nyquist, btype='low', output='sos')
