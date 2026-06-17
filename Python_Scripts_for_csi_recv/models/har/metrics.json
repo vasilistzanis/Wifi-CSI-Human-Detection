@@ -1,0 +1,373 @@
+{
+  "svm": {
+    "cv_accuracy_mean": 0.9515,
+    "cv_accuracy_std": 0.0283,
+    "cv_scores": [
+      0.9648,
+      0.9165,
+      0.9765,
+      0.9812,
+      0.9185
+    ],
+    "train_accuracy": 0.9808,
+    "test_accuracy": 0.968,
+    "test_f1_macro": 0.968,
+    "confusion_matrix": [
+      [
+        1062,
+        36
+      ],
+      [
+        34,
+        1057
+      ]
+    ],
+    "classes": [
+      "no_activity",
+      "walk_activity"
+    ],
+    "feature_importances": [],
+    "cv_splitter": "StratifiedGroupKFold",
+    "feature_vector_version": "5"
+  },
+  "rf": {
+    "cv_accuracy_mean": 0.9579,
+    "cv_accuracy_std": 0.0246,
+    "cv_scores": [
+      0.973,
+      0.9372,
+      0.9752,
+      0.9838,
+      0.9203
+    ],
+    "train_accuracy": 0.9977,
+    "test_accuracy": 0.9698,
+    "test_f1_macro": 0.9698,
+    "confusion_matrix": [
+      [
+        1062,
+        36
+      ],
+      [
+        30,
+        1061
+      ]
+    ],
+    "classes": [
+      "no_activity",
+      "walk_activity"
+    ],
+    "feature_importances": [
+      {
+        "name": "PC1_fft_mean",
+        "importance": 0.07985005898416579
+      },
+      {
+        "name": "PC2_waveform_length",
+        "importance": 0.07965984624877263
+      },
+      {
+        "name": "PC1_min",
+        "importance": 0.07057008154403532
+      },
+      {
+        "name": "PC2_fft_mean",
+        "importance": 0.06352811502688287
+      },
+      {
+        "name": "PC1_max",
+        "importance": 0.044404306020760474
+      },
+      {
+        "name": "PC1_waveform_length",
+        "importance": 0.04042095601282196
+      },
+      {
+        "name": "PC2_std",
+        "importance": 0.03860906244828281
+      },
+      {
+        "name": "PC1_range",
+        "importance": 0.037676997116982094
+      },
+      {
+        "name": "PC5_waveform_length",
+        "importance": 0.036059352132982024
+      },
+      {
+        "name": "PC2_energy",
+        "importance": 0.03602972595505066
+      }
+    ],
+    "cv_splitter": "StratifiedGroupKFold",
+    "feature_vector_version": "5"
+  },
+  "et": {
+    "cv_accuracy_mean": 0.9541,
+    "cv_accuracy_std": 0.0288,
+    "cv_scores": [
+      0.978,
+      0.9152,
+      0.9752,
+      0.9794,
+      0.9228
+    ],
+    "train_accuracy": 0.9817,
+    "test_accuracy": 0.9712,
+    "test_f1_macro": 0.9712,
+    "confusion_matrix": [
+      [
+        1060,
+        38
+      ],
+      [
+        25,
+        1066
+      ]
+    ],
+    "classes": [
+      "no_activity",
+      "walk_activity"
+    ],
+    "feature_importances": [
+      {
+        "name": "PC2_waveform_length",
+        "importance": 0.06240794515205754
+      },
+      {
+        "name": "PC5_waveform_length",
+        "importance": 0.04569357258674038
+      },
+      {
+        "name": "PC5_fft_mean",
+        "importance": 0.035801114982301846
+      },
+      {
+        "name": "PC1_min",
+        "importance": 0.035648283158447425
+      },
+      {
+        "name": "PC2_std",
+        "importance": 0.03558244206861698
+      },
+      {
+        "name": "PC2_max",
+        "importance": 0.03446964261427354
+      },
+      {
+        "name": "PC5_std",
+        "importance": 0.033879047778611074
+      },
+      {
+        "name": "PC1_fft_mean",
+        "importance": 0.031384242049905205
+      },
+      {
+        "name": "PC5_min",
+        "importance": 0.029637180778845484
+      },
+      {
+        "name": "PC1_std",
+        "importance": 0.02928573551472836
+      }
+    ],
+    "cv_splitter": "StratifiedGroupKFold",
+    "feature_vector_version": "5"
+  },
+  "knn": {
+    "cv_accuracy_mean": 0.9296,
+    "cv_accuracy_std": 0.0442,
+    "cv_scores": [
+      0.9365,
+      0.8982,
+      0.9714,
+      0.9794,
+      0.8625
+    ],
+    "train_accuracy": 1.0,
+    "test_accuracy": 0.9356,
+    "test_f1_macro": 0.9356,
+    "confusion_matrix": [
+      [
+        1043,
+        55
+      ],
+      [
+        86,
+        1005
+      ]
+    ],
+    "classes": [
+      "no_activity",
+      "walk_activity"
+    ],
+    "feature_importances": [],
+    "cv_splitter": "StratifiedGroupKFold",
+    "feature_vector_version": "5"
+  },
+  "lr": {
+    "cv_accuracy_mean": 0.9501,
+    "cv_accuracy_std": 0.0321,
+    "cv_scores": [
+      0.9761,
+      0.9139,
+      0.9759,
+      0.9769,
+      0.9079
+    ],
+    "train_accuracy": 0.9805,
+    "test_accuracy": 0.9685,
+    "test_f1_macro": 0.9685,
+    "confusion_matrix": [
+      [
+        1059,
+        39
+      ],
+      [
+        30,
+        1061
+      ]
+    ],
+    "classes": [
+      "no_activity",
+      "walk_activity"
+    ],
+    "feature_importances": [],
+    "cv_splitter": "StratifiedGroupKFold",
+    "feature_vector_version": "5"
+  },
+  "gb": {
+    "cv_accuracy_mean": 0.9565,
+    "cv_accuracy_std": 0.0248,
+    "cv_scores": [
+      0.9742,
+      0.9384,
+      0.9733,
+      0.98,
+      0.9166
+    ],
+    "train_accuracy": 0.9902,
+    "test_accuracy": 0.9717,
+    "test_f1_macro": 0.9717,
+    "confusion_matrix": [
+      [
+        1059,
+        39
+      ],
+      [
+        23,
+        1068
+      ]
+    ],
+    "classes": [
+      "no_activity",
+      "walk_activity"
+    ],
+    "feature_importances": [
+      {
+        "name": "PC2_waveform_length",
+        "importance": 0.9158971020508708
+      },
+      {
+        "name": "PC1_waveform_length",
+        "importance": 0.02065953491895862
+      },
+      {
+        "name": "PC1_fft_std",
+        "importance": 0.007271399694152509
+      },
+      {
+        "name": "PC5_waveform_length",
+        "importance": 0.004656489070969182
+      },
+      {
+        "name": "PC3_min",
+        "importance": 0.0035787920407611873
+      },
+      {
+        "name": "PC8_fft_mean",
+        "importance": 0.003221151554849026
+      },
+      {
+        "name": "PC8_min",
+        "importance": 0.003051905193302744
+      },
+      {
+        "name": "PC10_peak_prominence",
+        "importance": 0.002882244878399065
+      },
+      {
+        "name": "PC1_peak_prominence",
+        "importance": 0.002138647501399942
+      },
+      {
+        "name": "PC3_energy",
+        "importance": 0.0020824953126040405
+      }
+    ],
+    "cv_splitter": "StratifiedGroupKFold",
+    "feature_vector_version": "5"
+  },
+  "mlp": {
+    "cv_accuracy_mean": 0.9452,
+    "cv_accuracy_std": 0.0291,
+    "cv_scores": [
+      0.961,
+      0.9114,
+      0.9702,
+      0.975,
+      0.9085
+    ],
+    "train_accuracy": 1.0,
+    "test_accuracy": 0.9653,
+    "test_f1_macro": 0.9653,
+    "confusion_matrix": [
+      [
+        1061,
+        37
+      ],
+      [
+        39,
+        1052
+      ]
+    ],
+    "classes": [
+      "no_activity",
+      "walk_activity"
+    ],
+    "feature_importances": [],
+    "cv_splitter": "StratifiedGroupKFold",
+    "feature_vector_version": "5"
+  },
+  "nb": {
+    "cv_accuracy_mean": 0.6231,
+    "cv_accuracy_std": 0.0742,
+    "cv_scores": [
+      0.656,
+      0.5113,
+      0.7371,
+      0.5931,
+      0.6179
+    ],
+    "train_accuracy": 0.648,
+    "test_accuracy": 0.6126,
+    "test_f1_macro": 0.5527,
+    "confusion_matrix": [
+      [
+        1071,
+        27
+      ],
+      [
+        821,
+        270
+      ]
+    ],
+    "classes": [
+      "no_activity",
+      "walk_activity"
+    ],
+    "feature_importances": [],
+    "cv_splitter": "StratifiedGroupKFold",
+    "feature_vector_version": "5"
+  }
+}
