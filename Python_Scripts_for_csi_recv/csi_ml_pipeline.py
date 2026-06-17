@@ -599,6 +599,7 @@ def build_dataset(
     test_files_override: dict | None = None,
     pipeline_override = None,
     label_encoder_override = None,
+    exclude_features: list[str] = None,
 ) -> tuple:
     """
     Load recordings, preprocess, extract features.
@@ -987,6 +988,22 @@ def build_dataset(
     X_train      = np.array(X_tr,      dtype=np.float32)
     X_train_orig = np.array(X_tr_orig, dtype=np.float32)
     X_test       = np.array(X_te,      dtype=np.float32)
+    
+    if exclude_features:
+        from csi_ml_pipeline import _get_feature_names, _classify_feature
+        all_feat_names = _get_feature_names(n_pca, n_stats)
+        keep_indices = []
+        for i, name in enumerate(all_feat_names):
+            stat_name = name.split('_', 1)[1] if '_' in name else name
+            group_name = _classify_feature(name)
+            if stat_name not in exclude_features and group_name not in exclude_features:
+                keep_indices.append(i)
+        
+        X_train = X_train[:, keep_indices]
+        X_test = X_test[:, keep_indices]
+        X_train_orig = X_train_orig[:, keep_indices]
+        print(f"   [FILTER] Excluded {len(all_feat_names) - len(keep_indices)} features out of {len(all_feat_names)}")
+
     y_train      = np.array(y_tr,      dtype=np.int32)
     y_train_orig = np.array(y_tr_orig, dtype=np.int32)
     y_test       = np.array(y_te,      dtype=np.int32)

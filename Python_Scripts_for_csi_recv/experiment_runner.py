@@ -584,6 +584,69 @@ def run_ablation(
             "step": base_step,
         })
 
+    # ---- Feature Ablations ----
+    grid.append({
+        "name": "Only Time-Domain Features",
+        "use_diff": True,
+        "augment": list(ALL_AUGMENT_TECHNIQUES),
+        "pca": base_pca,
+        "window_size": base_window,
+        "cutoff": base_cutoff,
+        "step": base_step,
+        "exclude_features": ["FFT"],
+    })
+    grid.append({
+        "name": "Only Frequency-Domain Features",
+        "use_diff": True,
+        "augment": list(ALL_AUGMENT_TECHNIQUES),
+        "pca": base_pca,
+        "window_size": base_window,
+        "cutoff": base_cutoff,
+        "step": base_step,
+        "exclude_features": ["Statistical", "Temporal"],
+    })
+    grid.append({
+        "name": "No Zero-Crossing Rate",
+        "use_diff": True,
+        "augment": list(ALL_AUGMENT_TECHNIQUES),
+        "pca": base_pca,
+        "window_size": base_window,
+        "cutoff": base_cutoff,
+        "step": base_step,
+        "exclude_features": ["zcr"],
+    })
+
+    # ---- Double Combinations ----
+    grid.append({
+        "name": "No Diff + No Augment",
+        "use_diff": False,
+        "augment": [],
+        "pca": base_pca,
+        "window_size": base_window,
+        "cutoff": base_cutoff,
+        "step": base_step,
+    })
+    grid.append({
+        "name": "No Filter + No Augment",
+        "use_diff": True,
+        "augment": [],
+        "pca": base_pca,
+        "window_size": base_window,
+        "cutoff": None,
+        "step": base_step,
+    })
+
+    # ---- Lowpass 5Hz ----
+    grid.append({
+        "name": "Filter=5.0",
+        "use_diff": True,
+        "augment": list(ALL_AUGMENT_TECHNIQUES),
+        "pca": base_pca,
+        "window_size": base_window,
+        "cutoff": 5.0,
+        "step": base_step,
+    })
+
     # ---- Minimalistic Configuration ----
     grid.append({
         "name": "No Diff + No Augment + No Filter",
@@ -617,6 +680,8 @@ def run_ablation(
         kwargs["window_size"] = cfg["window_size"]
         kwargs["cutoff"] = cfg["cutoff"]
         kwargs["step"] = cfg["step"]
+        if "exclude_features" in cfg:
+            kwargs["exclude_features"] = cfg["exclude_features"]
 
         try:
             (X_train, X_train_orig, X_test,
