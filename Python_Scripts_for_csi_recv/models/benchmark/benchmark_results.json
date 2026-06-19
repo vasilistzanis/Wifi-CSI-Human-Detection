@@ -1,0 +1,124 @@
+{
+  "generated_at": "2026-06-19T23:35:40",
+  "system_info": {
+    "os": "Windows 10 (64bit)",
+    "cpu": "AMD64 Family 23 Model 96 Stepping 1, AuthenticAMD",
+    "python": "3.11.9",
+    "numpy": "2.4.4",
+    "pandas": "3.0.2",
+    "sklearn": "1.8.0"
+  },
+  "config": {
+    "window_size": 100,
+    "filter_warmup": 50,
+    "buffer_size": 150,
+    "step_size": 50,
+    "sampling_rate_hz": 100.0,
+    "budget_ms": 500.0,
+    "n_pca": 10,
+    "n_stats": 25,
+    "feature_dim": 250,
+    "n_warmup": 20,
+    "n_benchmark": 200,
+    "data_source": "datasets\\walk_activity\\walk_activity_11_room1_vasilis_1777802888.txt",
+    "training_repeats": 1,
+    "train_samples": 7964,
+    "classes": [
+      "no_activity",
+      "walk_activity"
+    ],
+    "feature_vector_version": "5",
+    "seed": 42,
+    "feature_extraction_global": {
+      "mean_ms": 12.7007,
+      "p95_ms": 19.025,
+      "n_samples": 1200
+    }
+  },
+  "results": [
+    {
+      "model": "Gradient Boosting",
+      "source": "saved",
+      "training_time_s": 106.9077,
+      "model_size_kb": 263.758,
+      "inference_mean_ms": 0.4037,
+      "inference_p95_ms": 0.5732,
+      "feat_mean_ms": 10.8067,
+      "feat_p95_ms": 13.5412,
+      "total_mean_ms": 11.2104,
+      "total_p95_ms": 13.9572,
+      "pct_budget_p95": 2.791,
+      "joblib_path": "models\\gb.joblib"
+    },
+    {
+      "model": "Logistic Reg",
+      "source": "saved",
+      "training_time_s": 0.2347,
+      "model_size_kb": 9.063,
+      "inference_mean_ms": 0.345,
+      "inference_p95_ms": 0.5435,
+      "feat_mean_ms": 11.6973,
+      "feat_p95_ms": 15.2651,
+      "total_mean_ms": 12.0423,
+      "total_p95_ms": 15.6956,
+      "pct_budget_p95": 3.139,
+      "joblib_path": "models\\lr.joblib"
+    },
+    {
+      "model": "SVM (RBF)",
+      "source": "saved",
+      "training_time_s": 11.3951,
+      "model_size_kb": 6286.856,
+      "inference_mean_ms": 1.1322,
+      "inference_p95_ms": 1.6604,
+      "feat_mean_ms": 12.1571,
+      "feat_p95_ms": 14.7442,
+      "total_mean_ms": 13.2893,
+      "total_p95_ms": 16.0887,
+      "pct_budget_p95": 3.218,
+      "joblib_path": "models\\svm.joblib"
+    },
+    {
+      "model": "K-NN",
+      "source": "saved",
+      "training_time_s": 0.0298,
+      "model_size_kb": 39204.967,
+      "inference_mean_ms": 8.2867,
+      "inference_p95_ms": 9.9722,
+      "feat_mean_ms": 11.8189,
+      "feat_p95_ms": 15.394,
+      "total_mean_ms": 20.1057,
+      "total_p95_ms": 24.7976,
+      "pct_budget_p95": 4.96,
+      "joblib_path": "models\\knn.joblib"
+    },
+    {
+      "model": "Random Forest",
+      "source": "saved",
+      "training_time_s": 0.786,
+      "model_size_kb": 3669.712,
+      "inference_mean_ms": 33.777,
+      "inference_p95_ms": 48.742,
+      "feat_mean_ms": 13.7642,
+      "feat_p95_ms": 18.6014,
+      "total_mean_ms": 47.5412,
+      "total_p95_ms": 66.0365,
+      "pct_budget_p95": 13.207,
+      "joblib_path": "models\\rf.joblib"
+    },
+    {
+      "model": "Extra Trees",
+      "source": "saved",
+      "training_time_s": 0.3225,
+      "model_size_kb": 2632.196,
+      "inference_mean_ms": 38.578,
+      "inference_p95_ms": 51.1759,
+      "feat_mean_ms": 15.9599,
+      "feat_p95_ms": 21.5835,
+      "total_mean_ms": 54.5379,
+      "total_p95_ms": 72.8671,
+      "pct_budget_p95": 14.573,
+      "joblib_path": "models\\et.joblib"
+    }
+  ]
+}
