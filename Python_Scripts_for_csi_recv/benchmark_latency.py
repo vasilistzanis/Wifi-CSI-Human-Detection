@@ -127,6 +127,18 @@ def load_or_build_models(models_dir: Path, seed: int = config.RANDOM_SEED) -> di
     return result
 
 
+def stamp_path(path: Path, ts: str) -> Path:
+    """Insert a timestamp before the file extension.
+
+    Example: stamp_path(Path("dir/foo.json"), "2026-06-19_23-15-42")
+             -> Path("dir/foo_2026-06-19_23-15-42.json")
+    Idempotent: a path that already contains the same timestamp is left alone.
+    """
+    if ts in path.stem:
+        return path
+    return path.with_name(f"{path.stem}_{ts}{path.suffix}")
+
+
 def get_model_size_kb(path: Path) -> float | None:
     """Return the .joblib file size in KB, or None if the file does not exist."""
     try:
@@ -361,6 +373,11 @@ def main():
     if args.only and args.skip:
         print("[WARN] Both --only and --skip given; --only takes precedence, --skip ignored.")
         args.skip = []
+
+    # Run-wide timestamp baked into every output filename so a new run never
+    # overwrites a previous one.  Filesystem-safe form: YYYY-MM-DD_HH-MM-SS.
+    run_ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    print(f"\n[INFO] Run timestamp: {run_ts}")
 
 
     print("\n" + "="*52)
@@ -764,19 +781,23 @@ def main():
         "results": report_rows,
     }
     output_dir.mkdir(parents=True, exist_ok=True)
-    write_json_report(output_dir / "benchmark_results.json", payload)
-    write_markdown_report(output_dir / "benchmark_results.md", payload)
+    json_path = stamp_path(output_dir / "benchmark_results.json", run_ts)
+    md_path   = stamp_path(output_dir / "benchmark_results.md",   run_ts)
+    write_json_report(json_path, payload)
+    write_markdown_report(md_path, payload)
 
     if args.save:
-        # Save CSV (legacy raw timings)
+        # Save CSV (legacy raw timings) — timestamped like the report files.
+        csv_path = stamp_path(Path(args.output_csv), run_ts)
         df_raw = pd.DataFrame(all_results)
-        Path(args.output_csv).parent.mkdir(parents=True, exist_ok=True)
-        df_raw.to_csv(args.output_csv, index=False)
-        print(f"[SAVE] Raw timings CSV   -> {args.output_csv}")
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        df_raw.to_csv(csv_path, index=False)
+        print(f"[SAVE] Raw timings CSV   -> {csv_path}")
 
         # Save Plot
-        Path(args.output_plot).parent.mkdir(parents=True, exist_ok=True)
-        plot_comparison(df_comp, args.output_plot, budget_ms=budget_ms)
+        plot_path = stamp_path(Path(args.output_plot), run_ts)
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        plot_comparison(df_comp, plot_path, budget_ms=budget_ms)
     else:
         print("[INFO] CSV + plot skipped (use --save to also export them).")
 
