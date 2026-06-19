@@ -450,6 +450,8 @@ class CSIPipeline:
 # STANDALONE TEST
 # ----------------------------------------------------------------------------
 if __name__ == "__main__":
+    from logging_setup import setup_run_log
+    setup_run_log(__file__)
     if len(sys.argv) > 1:
         csv_path = Path(sys.argv[1])
         print(f"\n[FILE] Loading: {csv_path}")

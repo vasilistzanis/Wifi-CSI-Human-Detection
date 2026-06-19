@@ -692,4 +692,6 @@ def main():
 
 
 if __name__ == "__main__":
+    from logging_setup import setup_run_log
+    setup_run_log(__file__)
     main()
