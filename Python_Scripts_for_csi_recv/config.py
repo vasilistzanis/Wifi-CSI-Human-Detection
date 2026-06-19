@@ -278,10 +278,9 @@ LIVE_PREDICT_FPS_WINDOW = 60
 # ------------------------------------------------------------------------------
 # benchmark_latency.py defaults
 # ------------------------------------------------------------------------------
-BENCHMARK_SIMULATE = False
 BENCHMARK_SAVE = False
-BENCHMARK_WARMUP_RUNS = 10
-BENCHMARK_RUNS = 50
+BENCHMARK_WARMUP_RUNS = 20
+BENCHMARK_RUNS = 200
 
 
 # ------------------------------------------------------------------------------
@@ -337,7 +336,6 @@ SCRIPT_DEFAULTS = {
         "out_dir": None,
     },
     "benchmark_latency": {
-        "simulate": BENCHMARK_SIMULATE,
         "save": BENCHMARK_SAVE,
         "output_csv": LATENCY_OUTPUT_CSV,
         "output_plot": LATENCY_OUTPUT_PLOT,
