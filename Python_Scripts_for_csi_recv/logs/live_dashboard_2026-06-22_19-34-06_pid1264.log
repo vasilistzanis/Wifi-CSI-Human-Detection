@@ -1,0 +1,16 @@
+========================================================================
+  LOG FILE  : C:\Diplomatiki_2026\WIFI CSI PROJECT\Python_Scripts_for_csi_recv\logs\live_dashboard_2026-06-22_19-34-06_pid1264.log
+  Script    : live_dashboard
+  Started   : 2026-06-22T19:34:06
+  CWD       : C:\Diplomatiki_2026\WIFI CSI PROJECT\Python_Scripts_for_csi_recv
+  Python    : 3.11.9
+  PID       : 1264
+  Args      : live_dashboard.py
+========================================================================
+
+[OK]  Model: rf  classes=[np.str_('no_activity'), np.str_('walk_activity')]
+
+========================================================================
+  Finished  : 2026-06-22T19:35:46
+  Duration  : 0:01:40.452399
+========================================================================
