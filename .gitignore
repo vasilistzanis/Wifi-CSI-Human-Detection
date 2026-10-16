@@ -37,7 +37,7 @@ Thumbs.db
 *.jpeg
 *.gif
 *.docx
-*.pdf
+
 
 # Python / Machine Learning Models & Artifacts
 __pycache__/
