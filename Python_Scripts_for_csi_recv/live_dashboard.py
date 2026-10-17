@@ -21,7 +21,7 @@ Usage
   python live_dashboard.py --demo
 """
 
-import argparse, math, multiprocessing as mp, os, sys, time, warnings
+import argparse, math, multiprocessing as mp, os, sys, threading, time, warnings
 from collections import Counter, deque
 from multiprocessing import shared_memory
 from pathlib import Path
@@ -467,6 +467,8 @@ def _reader_process_fn(shm_name, lock, stop_event, infer_in_q,
     import time as _time
     import os as _os
     import math as _math
+    import queue as _queue
+    import threading as _threading
     from collections import deque as _deque
     from multiprocessing import shared_memory as _shm_mod
 
@@ -488,6 +490,63 @@ def _reader_process_fn(shm_name, lock, stop_event, infer_in_q,
     infer_buf_size = window_size + warmup
     infer_deque    = _deque(maxlen=infer_buf_size)
     frames_since   = 0
+    forward_queue = None
+    forward_failed = _threading.Event()
+
+    def _start_api_forwarder():
+        server_url = _os.environ.get("CSI_SERVER_URL", "").strip()
+        token = _os.environ.get("CSI_EDGE_TOKEN", "")
+        if not server_url and not token:
+            return None
+        if not server_url or len(token) < 32:
+            print(
+                "[ERROR] API forwarding disabled: set CSI_SERVER_URL and "
+                "CSI_EDGE_TOKEN (32+ characters) together."
+            )
+            return None
+
+        try:
+            from csi_forwarding import send_with_retry, validate_server_url
+            validate_server_url(server_url)
+        except (ImportError, ValueError) as exc:
+            print(f"[ERROR] API forwarding disabled: {exc}")
+            return None
+
+        frames = _queue.Queue(maxsize=5000)
+
+        def _send_batches():
+            try:
+                while not stop_event.is_set() or not frames.empty():
+                    try:
+                        first = frames.get(timeout=0.25)
+                    except _queue.Empty:
+                        continue
+                    batch = [first]
+                    deadline = _time.monotonic() + 0.1
+                    while len(batch) < 10 and _time.monotonic() < deadline:
+                        try:
+                            batch.append(
+                                frames.get(timeout=max(0.01, deadline - _time.monotonic()))
+                            )
+                        except _queue.Empty:
+                            break
+                    accepted = send_with_retry(server_url, token, batch)
+                    if accepted != len(batch):
+                        print(f"[ERROR] API accepted {accepted} of {len(batch)} CSI frames.")
+                    else:
+                        print(f"Forwarded {accepted} CSI frames to API.")
+            except (RuntimeError, ValueError, OSError) as exc:
+                forward_failed.set()
+                print(f"[ERROR] API forwarding stopped: {exc}")
+
+        sender = _threading.Thread(
+            target=_send_batches,
+            name="csi-api-forwarder",
+            daemon=True,
+        )
+        sender.start()
+        print(f"[OK]  API forwarding enabled: {server_url}")
+        return frames
 
     def _push(cf_frame):
         nonlocal frames_since
@@ -557,6 +616,7 @@ def _reader_process_fn(shm_name, lock, stop_event, infer_in_q,
             _push(frame)
 
     def _run_serial():
+        nonlocal forward_queue
         try:
             import serial
             from csi_parser import parse_csi_line as _parse
@@ -565,6 +625,7 @@ def _reader_process_fn(shm_name, lock, stop_event, infer_in_q,
             _run_demo()
             return
         ser = None
+        dropped_api_frames = 0
         try:
             ser = serial.Serial(port, baud, timeout=0.5)
             if _os.name == "nt" and hasattr(ser, "set_buffer_size"):
@@ -573,6 +634,7 @@ def _reader_process_fn(shm_name, lock, stop_event, infer_in_q,
             with lock:
                 state["connected"] = 1
             print(f"[OK]  Connected: {port} @ {baud}")
+            forward_queue = _start_api_forwarder()
         except Exception as e:
             print(f"[ERROR] {e}  → demo mode")
             _run_demo()
@@ -585,6 +647,16 @@ def _reader_process_fn(shm_name, lock, stop_event, infer_in_q,
                 line = raw.decode("utf-8", errors="ignore").strip()
                 if not line.startswith("CSI_DATA"):
                     continue
+                if forward_queue is not None and not forward_failed.is_set():
+                    try:
+                        forward_queue.put_nowait(line)
+                    except _queue.Full:
+                        dropped_api_frames += 1
+                        if dropped_api_frames == 1 or dropped_api_frames % 100 == 0:
+                            print(
+                                "[ERROR] API forwarding queue is full; "
+                                f"{dropped_api_frames} CSI frames dropped from API forwarding."
+                            )
                 frame = _parse(line)
                 if frame is not None:
                     _push(frame)
@@ -2526,9 +2598,40 @@ class DashboardWindow(QMainWindow):
             self._sysinfo_page.set_classes(self.classes)
             self._monitor_page.set_model_name(model_key)
             self._sysinfo_page.set_model_name(model_key)
+            self._sync_model_with_api(model_key)
             return True, f"'{_MODEL_NAMES.get(model_key, model_key)}' is now active"
         except Exception as e:
             return False, str(e)
+
+    def _sync_model_with_api(self, model_key: str) -> None:
+        server_url = os.environ.get("CSI_SERVER_URL", "").strip()
+        token = os.environ.get("CSI_EDGE_TOKEN", "")
+        if not server_url and not token:
+            return
+        if not server_url or len(token) < 32:
+            print(
+                "[ERROR] API model synchronization disabled: set CSI_SERVER_URL "
+                "and CSI_EDGE_TOKEN (32+ characters) together."
+            )
+            return
+
+        def _send_model_update():
+            try:
+                from csi_forwarding import (
+                    send_model_with_retry,
+                    validate_server_url,
+                )
+                validate_server_url(server_url)
+                synced_model = send_model_with_retry(server_url, token, model_key)
+                print(f"[OK]  API inference model synchronized: {synced_model}")
+            except (ImportError, RuntimeError, ValueError) as exc:
+                print(f"[ERROR] API model synchronization failed: {exc}")
+
+        threading.Thread(
+            target=_send_model_update,
+            name="csi-api-model-sync",
+            daemon=True,
+        ).start()
 
     def switch_mode_dir(self, mode: str):
         """Switch models directory between HAR (models/har) and Super Motion (models/motion)."""
@@ -2725,7 +2828,12 @@ class DashboardWindow(QMainWindow):
 
 def _parse_args():
     d = config.get_script_defaults("live_dashboard")
-    p = argparse.ArgumentParser(description="CSI Live HAR Dashboard")
+    p = argparse.ArgumentParser(
+        description=(
+            "CSI Live HAR Dashboard. Set CSI_SERVER_URL and CSI_EDGE_TOKEN "
+            "to forward serial frames to the web API."
+        )
+    )
     p.add_argument("-p", "--port",      default=d["port"])
     p.add_argument("--baud",    type=int,   default=d["baud"])
     p.add_argument("--models_dir",          default=d["models_dir"])
@@ -2820,6 +2928,7 @@ def main():
         demo=args.demo, models_dir=args.models_dir,
         hyst_count=args.hyst_count,
     )
+    win._sync_model_with_api(args.model)
     center_qt_window(win, w=1440, h=840)
     win.start_timer(args.refresh)
     win.show()

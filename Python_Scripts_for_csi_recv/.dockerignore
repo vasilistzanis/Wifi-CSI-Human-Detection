@@ -1,0 +1,16 @@
+datasets/
+logs/
+.git/
+.venv/
+**/__pycache__/
+web_app/.env
+web_app/data/
+models/
+espressif wifi csi visualization/
+models/benchmark/
+models/experiments/
+models/motion/
+models/plots/
+models/*.joblib
+models/*.csv
+models/*.png

@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+import json
+import time
+import urllib.error
+import urllib.request
+from collections.abc import Sequence
+from urllib.parse import urlsplit
+
+
+def validate_server_url(server_url: str) -> None:
+    parsed = urlsplit(server_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Server URL must start with http:// or https://.")
+    if parsed.username or parsed.password or parsed.fragment:
+        raise ValueError("Server URL must not contain credentials or a URL fragment.")
+    if parsed.scheme != "https" and parsed.hostname not in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise ValueError("Use HTTPS for non-local API servers.")
+
+
+def _send_batch(server_url: str, token: str, frames: Sequence[str]) -> int:
+    body = json.dumps({"frames": list(frames)}).encode("utf-8")
+    request = urllib.request.Request(
+        f"{server_url.rstrip('/')}/api/ingest",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        if response.status != 200:
+            raise RuntimeError(f"CSI API returned HTTP {response.status}.")
+        result = json.loads(response.read())
+    return int(result.get("accepted", 0))
+
+
+def _send_model(server_url: str, token: str, model: str) -> str:
+    body = json.dumps({"model": model}).encode("utf-8")
+    request = urllib.request.Request(
+        f"{server_url.rstrip('/')}/api/edge/model",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        if response.status != 200:
+            raise RuntimeError(f"CSI API returned HTTP {response.status}.")
+        result = json.loads(response.read())
+    return str(result["model"])
+
+
+def send_with_retry(
+    server_url: str,
+    token: str,
+    frames: Sequence[str],
+) -> int:
+    delay = 1.0
+    while True:
+        try:
+            return _send_batch(server_url, token, frames)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (400, 401, 403, 413, 422):
+                raise RuntimeError(
+                    f"CSI API rejected the batch (HTTP {exc.code})."
+                ) from exc
+            print(f"CSI API returned HTTP {exc.code}; retrying in {delay:.0f}s.")
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            print(f"CSI API unavailable ({exc}); retrying in {delay:.0f}s.")
+        time.sleep(delay)
+        delay = min(delay * 2, 10.0)
+
+
+def send_model_with_retry(server_url: str, token: str, model: str) -> str:
+    delay = 1.0
+    while True:
+        try:
+            return _send_model(server_url, token, model)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (400, 401, 403, 404, 413, 422):
+                raise RuntimeError(
+                    f"CSI API rejected the model update (HTTP {exc.code})."
+                ) from exc
+            print(f"CSI API returned HTTP {exc.code}; retrying in {delay:.0f}s.")
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            print(f"CSI API unavailable ({exc}); retrying in {delay:.0f}s.")
+        time.sleep(delay)
+        delay = min(delay * 2, 10.0)

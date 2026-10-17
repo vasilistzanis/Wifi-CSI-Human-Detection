@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1220">
+  <link rel="stylesheet" href="/static/app.css">
+  <title>WiFi CSI Human Detection</title>
+</head>
+<body>
+  <main class="wrap">
+    <section id="login" class="panel login">
+      <h1>WiFi CSI Human Detection</h1>
+      <p class="subtitle">Sign in to the monitoring dashboard.</p>
+      <form id="login-form">
+        <label for="username">Username</label>
+        <input id="username" autocomplete="username" required minlength="3" maxlength="64">
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Sign in</button>
+        <div id="login-error" class="error" role="alert"></div>
+      </form>
+    </section>
+
+    <section id="dashboard" class="hidden">
+      <header>
+        <div>
+          <h1>WiFi CSI Human Detection</h1>
+          <p class="subtitle">Live activity recognition from ESP32 CSI data</p>
+        </div>
+        <div class="topline">
+          <span class="pill"><span id="device-dot" class="dot"></span><span id="device-state">Connecting</span></span>
+          <button id="logout" class="secondary" type="button">Sign out</button>
+        </div>
+      </header>
+      <div class="grid">
+        <article class="panel metric"><div class="label">Current inference model</div><div id="model" class="value">—</div></article>
+        <article class="panel metric"><div class="label">CSI frames</div><div id="frames" class="value">0</div></article>
+        <article class="panel metric"><div class="label">Input rate</div><div id="fps" class="value">0 Hz</div></article>
+        <article class="panel wide activity">
+          <div>
+            <div class="label">Current activity</div>
+            <div id="activity" class="activity-name">Waiting for data</div>
+            <div id="confidence" class="confidence">Connect the edge collector to begin.</div>
+          </div>
+          <div id="probabilities" class="bars"></div>
+        </article>
+        <article class="panel metric"><div class="label">Valid frames buffered</div><div id="buffer" class="value">0</div></article>
+      </div>
+      <section id="session-list-panel" class="panel section">
+        <h2>Activity sessions</h2>
+        <p class="muted">Sessions start when CSI data arrives and close 15 seconds after data stops.</p>
+        <div id="empty-sessions" class="empty">No activity sessions have been recorded yet.</div>
+        <table id="sessions-table" class="hidden">
+          <thead><tr><th>Started</th><th>Duration</th><th>CSI frames</th><th>Predictions</th><th>State</th><th></th></tr></thead>
+          <tbody id="sessions"></tbody>
+        </table>
+      </section>
+      <section id="session-detail" class="panel section hidden" aria-live="polite">
+        <div class="section-heading">
+          <div>
+            <h2 id="session-title">Session details</h2>
+            <p id="session-period" class="muted"></p>
+          </div>
+          <button id="sessions-back" class="secondary" type="button">All sessions</button>
+        </div>
+        <div id="session-metrics" class="detail-metrics"></div>
+        <h3>Activity statistics by model</h3>
+        <div id="empty-statistics" class="empty">No model predictions recorded for this session yet.</div>
+        <table id="statistics-table" class="hidden">
+          <thead><tr><th>Activity</th><th>Model</th><th>Predictions</th><th>Avg. confidence</th><th>Avg. class probability</th></tr></thead>
+          <tbody id="statistics"></tbody>
+        </table>
+        <h3>Model changes</h3>
+        <div id="empty-settings" class="empty">No settings changes recorded in this session.</div>
+        <table id="settings-table" class="hidden">
+          <thead><tr><th>Time</th><th>Setting</th><th>From</th><th>To</th></tr></thead>
+          <tbody id="settings-changes"></tbody>
+        </table>
+        <h3>Prediction timeline</h3>
+        <div id="empty-timeline" class="empty">No sampled timeline entries for this session.</div>
+        <table id="timeline-table" class="hidden">
+          <thead><tr><th>Time</th><th>Activity</th><th>Model</th><th>Confidence</th><th>Frame</th></tr></thead>
+          <tbody id="timeline"></tbody>
+        </table>
+      </section>
+      <section class="panel section">
+        <h2>Recent predictions</h2>
+        <div id="empty-history" class="empty">No predictions have been received yet.</div>
+        <table id="history-table" class="hidden">
+          <thead><tr><th>Time</th><th>Activity</th><th>Model</th><th>Confidence</th><th>Frame</th></tr></thead>
+          <tbody id="history"></tbody>
+        </table>
+      </section>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

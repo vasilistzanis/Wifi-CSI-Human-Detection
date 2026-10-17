@@ -86,3 +86,13 @@ pip install -r requirements.txt
 - **Hardware:** 2x ESP32-C6 Microcontrollers
 - **Firmware:** ESP-IDF v5.0+
 - **Python:** `numpy`, `scipy`, `pandas`, `scikit-learn`, `joblib`, `matplotlib`, `seaborn`, `pyqtgraph`, `PyQt5`, `pyserial`, `pywavelets`
+
+## Browser dashboard and cloud API
+
+The Python project includes an optional web application in
+[`Python_Scripts_for_csi_recv/web_app/`](Python_Scripts_for_csi_recv/web_app/):
+a FastAPI API, an authenticated browser dashboard, and an edge collector for
+the computer connected to the ESP32 serial port. The collector forwards CSI
+frames to the cloud API over HTTPS, where the existing model performs live
+inference. See the [web application setup guide](Python_Scripts_for_csi_recv/README.md#web-application-cloud-api--browser-dashboard)
+for Docker deployment and collector setup.
