@@ -250,6 +250,12 @@ def _bootstrap_admin() -> None:
             "Set CSI_ADMIN_USERNAME to a 3-64 character username using letters, "
             "numbers, '.', '_', '@' or '-'."
         )
+    with _connect_db() as connection:
+        existing_user = connection.execute(
+            "SELECT 1 FROM users WHERE username = ?", (ADMIN_USERNAME,)
+        ).fetchone()
+    if existing_user is not None:
+        return
     if len(ADMIN_PASSWORD) < 12:
         raise RuntimeError("CSI_ADMIN_PASSWORD must contain at least 12 characters.")
     _create_user(ADMIN_USERNAME, ADMIN_PASSWORD)

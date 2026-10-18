@@ -132,37 +132,36 @@ In VS Code, select `Python_Scripts_for_csi_recv/.venv/bin/python` using
 the system interpreter and report the web dependencies as missing even though
 they are installed in this virtual environment.
 
-Edit `web_app/.env`: replace both `CHANGE_ME` values, set
-`CSI_COOKIE_SECURE=false` for local HTTP, and keep the local allowed-host and
-origin values. Then start the API:
+Edit `web_app/.env`: set the administrator username and password, set a
+random `CSI_EDGE_TOKEN` (at least 32 characters), and set
+`CSI_COOKIE_SECURE=false` for local HTTP. Keep the local allowed-host and
+origin values. The `.env` file is ignored by Git and should remain private.
+After the one-time setup, start the API from one terminal:
+
+```bash
+./start_api.sh
+```
+
+Open `http://127.0.0.1:8000`. To run the desktop `live_dashboard.py` and send
+the same serial CSI stream to the API, open a second terminal and run:
+
+```bash
+./start_dashboard.sh
+```
+
+The scripts load the same local `.env` automatically. The dashboard reads the
+serial port once, forwards frames in the background, and synchronizes model
+changes from the desktop app to the API. The browser shows the current model
+as read-only. Set `CSI_SERIAL_PORT` in `.env` to use a different serial port.
+Do not run the standalone collector at the same time because both programs
+would compete for the serial device. If using only the browser dashboard, run
+the standalone collector from this directory instead:
 
 ```bash
 set -a
 source web_app/.env
 set +a
-.venv/bin/python -m uvicorn web_app.server:app --host 127.0.0.1 --port 8000
-```
-
-Open `http://127.0.0.1:8000`. To run the desktop `live_dashboard.py` and send
-the same serial CSI stream to the API, start the dashboard with these
-environment variables. The dashboard reads the serial port once, forwards
-frames in the background, and synchronizes model changes from the desktop app
-to the API. The browser shows the current model as read-only. Do not run the
-standalone collector at the same time because both programs would compete for
-the serial device:
-
-```bash
-CSI_SERVER_URL=http://127.0.0.1:8000 \
-CSI_EDGE_TOKEN='the-same-random-secret-as-the-api' \
-.venv/bin/python live_dashboard.py --port /dev/ttyACM0 --model rf
-```
-
-If using only the browser dashboard, run the standalone collector instead:
-
-```bash
-CSI_SERVER_URL=http://127.0.0.1:8000 \
-CSI_EDGE_TOKEN='the-same-random-secret-as-the-api' \
-.venv/bin/python -m web_app.collector --port /dev/ttyACM0
+.venv/bin/python -m web_app.collector --port "${CSI_SERIAL_PORT:-/dev/ttyACM0}"
 ```
 
 On Linux, the account needs permission to access the serial device, commonly

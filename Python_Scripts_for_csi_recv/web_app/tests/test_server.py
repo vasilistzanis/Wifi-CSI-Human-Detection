@@ -185,6 +185,21 @@ def test_password_reset_revokes_existing_sessions(
     ).status_code == 200
 
 
+def test_bootstrap_existing_admin_does_not_require_or_reset_password(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert client.get("/healthz").status_code == 200
+    monkeypatch.setattr(server, "ADMIN_USERNAME", "test-admin")
+    monkeypatch.setattr(server, "ADMIN_PASSWORD", "")
+
+    server._bootstrap_admin()
+
+    assert server._authenticate_user(
+        "test-admin", "test-password-is-long-enough"
+    )
+
+
 def test_model_selection_is_authenticated_and_updates_status(client: TestClient) -> None:
     assert client.get("/api/models").status_code == 401
     assert client.post("/api/settings/model", json={"model": "svm"}).status_code == 401
