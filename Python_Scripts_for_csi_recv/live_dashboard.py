@@ -23,6 +23,7 @@ Usage
 
 import argparse, math, multiprocessing as mp, os, sys, threading, time, warnings
 from collections import Counter, deque
+import queue
 from multiprocessing import shared_memory
 from pathlib import Path
 
@@ -40,9 +41,10 @@ from PyQt5.QtGui import (
     QBrush, QColor, QFont, QLinearGradient, QPainter, QPen,
 )
 from PyQt5.QtWidgets import (
-    QApplication, QButtonGroup, QHBoxLayout, QHeaderView, QLabel,
+    QApplication, QButtonGroup, QDoubleSpinBox, QFormLayout, QHBoxLayout,
+    QFrame, QHeaderView, QLabel,
     QMainWindow, QPushButton, QProgressBar, QRadioButton,
-    QStackedWidget, QTableWidget, QTableWidgetItem,
+    QScrollArea, QSpinBox, QStackedWidget, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -454,7 +456,7 @@ def _make_shared_dtype(waveform_len: int, max_subcarriers: int):
 def _reader_process_fn(shm_name, lock, stop_event, infer_in_q,
                        waveform_len, max_subcarriers,
                        port, baud, demo, rx_buf,
-                       window_size, warmup, step):
+                       window_size, warmup, step, infer_enabled):
     """
     Reader runs entirely in its own OS process. Owns the serial port (or the
     demo generator), writes per-frame state to shared memory, and stacks
@@ -577,20 +579,20 @@ def _reader_process_fn(shm_name, lock, stop_event, infer_in_q,
             state["mean_amp"] = prev_ma  * 0.97 + ma * 0.03
             fc = int(state["frame_count"])
 
-        # Inference scheduling lives here — fully decoupled from the GUI.
-        infer_deque.append(cf_frame)
-        frames_since += 1
-        if frames_since >= step and len(infer_deque) >= window_size:
-            frames_since = 0
-            try:
-                cm = _np.vstack(list(infer_deque))
+        if infer_enabled:
+            infer_deque.append(cf_frame)
+            frames_since += 1
+            if frames_since >= step and len(infer_deque) >= window_size:
+                frames_since = 0
                 try:
-                    infer_in_q.get_nowait()       # drop stale pending
+                    cm = _np.vstack(list(infer_deque))
+                    try:
+                        infer_in_q.get_nowait()
+                    except Exception:
+                        pass
+                    infer_in_q.put_nowait((cm, fc))
                 except Exception:
                     pass
-                infer_in_q.put_nowait((cm, fc))
-            except Exception:
-                pass
 
     def _run_demo():
         sc       = max_subcarriers
@@ -686,7 +688,7 @@ class ReaderProcess:
     """
 
     def __init__(self, port, baud, demo, waveform_len, rx_buf,
-                 window_size, warmup, step):
+                 window_size, warmup, step, infer_enabled=True):
         self.port          = port
         self.baud          = baud
         self.demo          = demo
@@ -695,6 +697,7 @@ class ReaderProcess:
         self._window_size  = window_size
         self._warmup       = warmup
         self._step         = step
+        self._infer_enabled = infer_enabled
         self._max_sc       = config.MAX_SUBCARRIERS
         self.infer_buf_max = window_size + warmup
         self._start_time   = time.monotonic()
@@ -728,7 +731,8 @@ class ReaderProcess:
             args=(self._shm.name, self._lock, self._stop_event, self._infer_in_q,
                   self.waveform_len, self._max_sc,
                   self.port, self.baud, self.demo, self.rx_buf,
-                  self._window_size, self._warmup, self._step),
+                  self._window_size, self._warmup, self._step,
+                  self._infer_enabled),
             daemon=True,
         )
         self._proc.start()
@@ -2109,7 +2113,9 @@ class SystemInfoPage(QWidget):
 
 class SettingsPage(QWidget):
     def __init__(self, models_dir: str, current_model: str, on_deploy,
-                 current_mode: str = "har", on_mode_change=None):
+                 current_mode: str = "har", on_mode_change=None,
+                 runtime_settings: dict | None = None,
+                 on_runtime_settings=None, api_enabled: bool = False):
         super().__init__()
         self._models_dir      = models_dir
         self._current         = current_model
@@ -2118,6 +2124,12 @@ class SettingsPage(QWidget):
         self._current_mode    = current_mode
         self._selected_mode   = current_mode
         self._on_mode_change  = on_mode_change
+        self._runtime_settings = runtime_settings or {}
+        self._on_runtime_settings = on_runtime_settings
+        self._api_enabled = api_enabled
+        self._runtime_dirty = False
+        self._runtime_request_pending = False
+        self._runtime_controls: dict[str, QWidget] = {}
         self._radios: dict[str, QRadioButton] = {}
         self._status_pills: dict[str, QLabel] = {}
         self._build()
@@ -2128,7 +2140,13 @@ class SettingsPage(QWidget):
         return [(k, pipeline_ok and (d / f"{k}.joblib").exists()) for k in config.MODEL_KEYS]
 
     def _build(self):
-        root = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        content = QWidget()
+        root = QVBoxLayout(content)
         root.setContentsMargins(24, 16, 24, 16); root.setSpacing(16)
 
         h1 = QLabel("Settings")
@@ -2329,7 +2347,71 @@ class SettingsPage(QWidget):
         mv.addLayout(deploy_row)
 
         root.addWidget(mc)
+
+        runtime_card = _card()
+        runtime_layout = QVBoxLayout(runtime_card)
+        runtime_layout.setContentsMargins(20, 16, 20, 16)
+        runtime_layout.setSpacing(10)
+        runtime_layout.addWidget(_hdr("RUNTIME INFERENCE SETTINGS"))
+        form = QFormLayout()
+        form.setHorizontalSpacing(18)
+        form.setVerticalSpacing(8)
+        defaults = {
+            "window_size": config.WINDOW_SIZE,
+            "step_size": config.PREDICTION_STEP_SIZE,
+            "warmup_frames": config.FILTER_WARMUP,
+            "cutoff": config.FILTER_CUTOFF_HZ,
+            "ema_alpha": config.DASHBOARD_EMA_ALPHA,
+            "conf_thresh": config.DASHBOARD_CONF_THRESH,
+            "hyst_count": config.DASHBOARD_HYST_COUNT,
+            "motion_threshold": 0.10,
+        }
+        defaults.update(self._runtime_settings)
+        controls = (
+            ("window_size", "Window size", 10, 1000, 1),
+            ("step_size", "Prediction step", 1, 1000, 1),
+            ("warmup_frames", "Filter warm-up frames", 0, 1000, 1),
+            ("cutoff", "Filter cutoff (Hz)", 0.1, 50.0, 0.1),
+            ("ema_alpha", "EMA smoothing (HAR)", 0.01, 1.0, 0.05),
+            ("conf_thresh", "Confidence threshold (HAR, %)", 0.0, 100.0, 1.0),
+            ("hyst_count", "Hysteresis confirmations", 1, 100, 1),
+            ("motion_threshold", "Motion trigger threshold", 0.01, 1.0, 0.01),
+        )
+        for key, label, minimum, maximum, step in controls:
+            if key in {"cutoff", "ema_alpha", "conf_thresh", "motion_threshold"}:
+                control = QDoubleSpinBox()
+                control.setDecimals(2)
+            else:
+                control = QSpinBox()
+            control.setRange(minimum, maximum)
+            control.setSingleStep(step)
+            control.setValue(defaults[key])
+            control.setEnabled(self._api_enabled)
+            control.setStyleSheet(
+                f"background:{_DARK2}; color:{_TEXT}; border:1px solid {_BORDER};"
+                "border-radius:4px; padding:4px;"
+            )
+            control.valueChanged.connect(self._mark_runtime_dirty)
+            self._runtime_controls[key] = control
+            form.addRow(label, control)
+        runtime_layout.addLayout(form)
+        self._runtime_apply_btn = QPushButton("Apply inference settings")
+        self._runtime_apply_btn.setEnabled(self._api_enabled)
+        self._runtime_apply_btn.clicked.connect(self._apply_runtime_settings)
+        runtime_layout.addWidget(self._runtime_apply_btn, alignment=Qt.AlignRight)
+        self._runtime_status_lbl = QLabel(
+            "Changes are saved by the API and shared with the web dashboard."
+            if self._api_enabled
+            else "Connect the API to edit authoritative inference settings."
+        )
+        self._runtime_status_lbl.setStyleSheet(
+            f"font-size:10px; color:{_DIM}; background:transparent; border:none;"
+        )
+        runtime_layout.addWidget(self._runtime_status_lbl)
+        root.addWidget(runtime_card)
         root.addStretch()
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
 
     def _on_mode_radio(self, key: str, checked: bool):
         if checked:
@@ -2407,6 +2489,26 @@ class SettingsPage(QWidget):
             )
         self._deploy_btn.setEnabled(self._selected != self._current)
 
+    def _mark_runtime_dirty(self, *_args):
+        self._runtime_dirty = True
+        self._runtime_apply_btn.setEnabled(self._api_enabled)
+        self._runtime_status_lbl.setText("Unsaved inference settings.")
+        self._runtime_status_lbl.setStyleSheet(
+            f"font-size:10px; color:{_YELLOW}; background:transparent; border:none;"
+        )
+
+    def _apply_runtime_settings(self):
+        if not self._api_enabled or self._on_runtime_settings is None:
+            return
+        values = {
+            key: control.value()
+            for key, control in self._runtime_controls.items()
+        }
+        self._runtime_request_pending = True
+        self._runtime_apply_btn.setEnabled(False)
+        self._runtime_status_lbl.setText("Applying settings to the API…")
+        self._on_runtime_settings(values)
+
     def refresh_models_dir(self, new_dir: str):
         """Re-scan a new models directory and update all model row states."""
         self._models_dir = new_dir
@@ -2425,6 +2527,7 @@ class SettingsPage(QWidget):
                 f"QWidget{{background:{row_bg}; border-radius:6px;"
                 f" border:1px solid {row_border};}}"
             )
+
             # Name label color
             self._model_name_lbls[key].setStyleSheet(
                 f"font-size:13px; font-weight:bold;"
@@ -2454,6 +2557,75 @@ class SettingsPage(QWidget):
             f"font-size:11px; color:{_DIM}; background:transparent; border:none;"
         )
 
+    def apply_remote_state(
+        self,
+        model_key: str,
+        mode: str,
+        settings: dict | None = None,
+        models_by_mode: dict | None = None,
+    ):
+        self._current = self._selected = model_key
+        self._current_mode = self._selected_mode = mode
+        available_models = set((models_by_mode or {}).get(mode, ()))
+        available_modes = set((models_by_mode or {}).keys())
+        for key, radio in self._radios.items():
+            if available_modes:
+                radio.setEnabled(key in available_models)
+            radio.setChecked(key == model_key)
+        for key, radio in self._mode_radios.items():
+            if available_modes:
+                radio.setEnabled(bool((models_by_mode or {}).get(key)))
+            radio.setChecked(key == mode)
+        for key, pill in self._status_pills.items():
+            pill.setText(
+                "ACTIVE" if key == model_key
+                else "READY" if key in available_models
+                else "NOT TRAINED" if available_modes
+                else "READY"
+            )
+        for key, pill in self._mode_pills.items():
+            pill.setText("ACTIVE" if key == mode else "READY")
+        self._deploy_btn.setEnabled(False)
+        self._mode_btn.setEnabled(False)
+        mode_name = "HAR Mode" if mode == "har" else "Super Motion"
+        self._mode_status_lbl.setText(f"Active: {mode_name}")
+        if not isinstance(settings, dict):
+            return
+        keys = tuple(self._runtime_controls)
+        matches = all(
+            abs(float(self._runtime_controls[key].value()) - float(settings[key])) < 0.005
+            for key in keys
+            if key in settings
+        ) and all(key in settings for key in keys)
+        if matches:
+            self._runtime_dirty = False
+            self._runtime_request_pending = False
+            self._runtime_apply_btn.setEnabled(False)
+            self._runtime_status_lbl.setText("Saved and active on the API.")
+        elif not self._runtime_dirty:
+            for key, control in self._runtime_controls.items():
+                if key not in settings:
+                    continue
+                control.blockSignals(True)
+                control.setValue(settings[key])
+                control.blockSignals(False)
+            self._runtime_apply_btn.setEnabled(False)
+            self._runtime_status_lbl.setText("Current settings from the API.")
+        elif not self._runtime_request_pending:
+            self._runtime_apply_btn.setEnabled(self._api_enabled)
+
+    def show_api_error(self, message: str):
+        self._status_lbl.setText(f"✗  API: {message}")
+        self._status_lbl.setStyleSheet(
+            f"font-size:11px; color:{_RED}; background:transparent; border:none;"
+        )
+        self._runtime_status_lbl.setText(f"API error: {message}")
+        self._runtime_request_pending = False
+        self._runtime_apply_btn.setEnabled(self._api_enabled)
+        self._runtime_status_lbl.setStyleSheet(
+            f"font-size:10px; color:{_RED}; background:transparent; border:none;"
+        )
+
     def update(self, state: dict):
         pass
 
@@ -2468,7 +2640,8 @@ class DashboardWindow(QMainWindow):
                  window_size: int, step: int, ema_alpha: float,
                  conf_thresh: float, cutoff: float, refresh_ms: int,
                  max_log: int, port: str, baud: int, demo: bool,
-                 models_dir: str, hyst_count: int = config.DASHBOARD_HYST_COUNT):
+                 models_dir: str, hyst_count: int = config.DASHBOARD_HYST_COUNT,
+                 api_enabled: bool = False):
         super().__init__()
         self.reader      = reader
         self.pipeline    = pipeline; self.le = le; self.model = model
@@ -2477,7 +2650,9 @@ class DashboardWindow(QMainWindow):
         self.window_size = window_size; self.step = step; self.cutoff = cutoff
         self.ema_alpha   = ema_alpha; self.conf_thresh = conf_thresh
         self.max_log     = max_log; self.demo = demo
+        self.api_enabled = api_enabled
         self._hyst_min   = hyst_count
+        self.motion_threshold = 0.10
 
         self._current_mode    = "har"
         self._ema_probs       = np.zeros(len(classes), dtype=np.float32)
@@ -2497,16 +2672,20 @@ class DashboardWindow(QMainWindow):
             "log_entries": [], "total_predictions": 0,
             "avg_confidence": 0.0, "class_counts": {},
         }
+        self._api_status_queue: queue.Queue = queue.Queue(maxsize=1)
+        self._api_error_queue: queue.Queue = queue.Queue(maxsize=1)
+        self._api_stop_event = threading.Event()
+        self._api_thread: threading.Thread | None = None
+        self._last_api_prediction = ""
 
-        # Background inference worker (separate OS process — fully GIL-free).
-        # Input queue is owned by the reader process, so reader pushes inference
-        # windows directly: GUI never carries them across processes.
-        self._infer_worker = InferenceProcess(
-            in_q=reader.infer_in_q,
-            pipeline=pipeline, model=model, le=le, classes=classes,
-            window_size=window_size, cutoff=cutoff,
-        )
-        self._infer_worker.start()
+        self._infer_worker = None
+        if not self.api_enabled:
+            self._infer_worker = InferenceProcess(
+                in_q=reader.infer_in_q,
+                pipeline=pipeline, model=model, le=le, classes=classes,
+                window_size=window_size, cutoff=cutoff,
+            )
+            self._infer_worker.start()
 
         self.setWindowTitle("WiFi CSI Analyzer — Live Dashboard")
         self.setStyleSheet(_QSS)
@@ -2559,6 +2738,18 @@ class DashboardWindow(QMainWindow):
             self.models_dir, self.model_key, self.switch_model,
             current_mode=self._current_mode,
             on_mode_change=self.switch_mode_dir,
+            runtime_settings={
+                "window_size": self.window_size,
+                "step_size": self.step,
+                "warmup_frames": config.FILTER_WARMUP,
+                "cutoff": self.cutoff,
+                "ema_alpha": self.ema_alpha,
+                "conf_thresh": self.conf_thresh,
+                "hyst_count": self._hyst_min,
+                "motion_threshold": 0.10,
+            },
+            on_runtime_settings=self._apply_runtime_settings,
+            api_enabled=self.api_enabled,
         )
         self._log_page = ActivityLogPage(self.classes, self._clear_log)
         self._pages = [
@@ -2574,7 +2765,167 @@ class DashboardWindow(QMainWindow):
         right.addWidget(self._stack, 1)
         root.addLayout(right, 1)
 
+    @staticmethod
+    def _queue_latest(target: queue.Queue, value):
+        try:
+            target.put_nowait(value)
+        except queue.Full:
+            try:
+                target.get_nowait()
+            except queue.Empty:
+                pass
+            target.put_nowait(value)
+
+    def _start_api_poller(self):
+        if not self.api_enabled or self._api_thread is not None:
+            return
+
+        server_url = os.environ.get("CSI_SERVER_URL", "").strip()
+        token = os.environ.get("CSI_EDGE_TOKEN", "")
+
+        def _poll():
+            from csi_forwarding import get_edge_status
+
+            last_error = 0.0
+            while not self._api_stop_event.is_set():
+                try:
+                    self._queue_latest(
+                        self._api_status_queue,
+                        get_edge_status(server_url, token),
+                    )
+                    last_error = 0.0
+                except (
+                    RuntimeError,
+                    ValueError,
+                    OSError,
+                    TimeoutError,
+                    ConnectionError,
+                ) as exc:
+                    now = time.monotonic()
+                    if now - last_error >= 10.0:
+                        message = f"status unavailable: {exc}"
+                        print(f"[ERROR] API {message}")
+                        self._queue_latest(self._api_error_queue, message)
+                        last_error = now
+                self._api_stop_event.wait(0.5)
+
+        self._api_thread = threading.Thread(
+            target=_poll,
+            name="csi-api-status-poll",
+            daemon=True,
+        )
+        self._api_thread.start()
+
+    def stop_background_tasks(self):
+        self._api_stop_event.set()
+        if self._api_thread is not None:
+            self._api_thread.join(timeout=2)
+
+    def _apply_api_status(self, status: dict):
+        self._api_status = status
+        classes = [str(label) for label in status.get("classes", [])]
+        if classes and classes != self.classes:
+            self.classes = classes
+            self._class_counts = {label: 0 for label in classes}
+            self._ema_probs = np.zeros(len(classes), dtype=np.float32)
+            self._sysinfo_page.set_classes(classes)
+            self._log_page.set_mode(classes)
+
+        model_key = str(status.get("model", self.model_key))
+        mode = str(status.get("mode", self._current_mode))
+        if model_key in config.MODEL_KEYS:
+            self.model_key = model_key
+        if mode in {"har", "motion"}:
+            self._current_mode = mode
+            models_dir = (
+                config.MODELS_HAR_DIR if mode == "har" else config.MODELS_MOTION_DIR
+            )
+            if models_dir != self.models_dir:
+                self.models_dir = models_dir
+                self._settings_page.refresh_models_dir(models_dir)
+            self._monitor_page.set_mode(mode)
+        settings = status.get("settings", {})
+        self._settings_page.apply_remote_state(
+            self.model_key,
+            self._current_mode,
+            settings if isinstance(settings, dict) else None,
+            status.get("available_models_by_mode"),
+        )
+        self._monitor_page.set_model_name(self.model_key)
+        self._sysinfo_page.set_model_name(self.model_key)
+
+        if isinstance(settings, dict):
+            self.window_size = int(settings.get("window_size", self.window_size))
+            self.step = int(settings.get("step_size", self.step))
+            self.cutoff = float(settings.get("cutoff", self.cutoff))
+            self.ema_alpha = float(settings.get("ema_alpha", self.ema_alpha))
+            self.conf_thresh = float(settings.get("conf_thresh", self.conf_thresh))
+            self._hyst_min = int(settings.get("hyst_count", self._hyst_min))
+            self.motion_threshold = float(
+                settings.get("motion_threshold", self.motion_threshold)
+            )
+
+        prediction = status.get("latest_prediction")
+        if not isinstance(prediction, dict):
+            self._last_api_prediction = ""
+            self._state.update(
+                {
+                    "label": "—",
+                    "raw_label": "—",
+                    "confidence": 0.0,
+                    "all_probs": np.zeros(len(self.classes), dtype=np.float32),
+                }
+            )
+            return
+        created_at = str(prediction.get("created_at", ""))
+        if not created_at or created_at == self._last_api_prediction:
+            return
+        self._last_api_prediction = created_at
+        label = str(prediction.get("label", "—"))
+        confidence = float(prediction.get("confidence", 0.0))
+        probability_map = prediction.get("probabilities", {})
+        probabilities = np.asarray(
+            [float(probability_map.get(name, 0.0)) / 100.0 for name in self.classes],
+            dtype=np.float32,
+        )
+        frame_count = int(prediction.get("frame_count", status.get("frames_received", 0)))
+        self._state.update(
+            {
+                "label": label,
+                "raw_label": label,
+                "confidence": confidence,
+                "all_probs": probabilities,
+            }
+        )
+        now = time.monotonic()
+        if (
+            label != self._last_record_lbl
+            or now - self._last_record_t >= 4.0
+        ):
+            self._last_record_lbl = label
+            self._last_record_t = now
+            self._record(label, confidence, probabilities, frame_count)
+
+    def _consume_api_state(self):
+        status = None
+        while True:
+            try:
+                status = self._api_status_queue.get_nowait()
+            except queue.Empty:
+                break
+        if status is not None:
+            self._apply_api_status(status)
+        try:
+            error = self._api_error_queue.get_nowait()
+        except queue.Empty:
+            return
+        self._settings_page.show_api_error(error)
+
     def switch_model(self, model_key: str) -> tuple[bool, str]:
+        if self.api_enabled:
+            self.model_key = model_key
+            self._sync_settings_with_api({"model": model_key}, "model")
+            return True, f"Requesting API model '{model_key}'"
         try:
             pipeline, le, model = _load_models(self.models_dir, model_key)
             self.pipeline  = pipeline
@@ -2588,7 +2939,8 @@ class DashboardWindow(QMainWindow):
             self._hyst_pending    = ""
             self._hyst_count      = 0
             # Restart inference process with new model
-            self._infer_worker.restart(pipeline, model, le, self.classes)
+            if self._infer_worker is not None:
+                self._infer_worker.restart(pipeline, model, le, self.classes)
             # Reset displayed prediction so stale label doesn't persist
             self._state.update({
                 "label": "—", "raw_label": "—",
@@ -2598,44 +2950,69 @@ class DashboardWindow(QMainWindow):
             self._sysinfo_page.set_classes(self.classes)
             self._monitor_page.set_model_name(model_key)
             self._sysinfo_page.set_model_name(model_key)
-            self._sync_model_with_api(model_key)
             return True, f"'{_MODEL_NAMES.get(model_key, model_key)}' is now active"
         except Exception as e:
             return False, str(e)
 
-    def _sync_model_with_api(self, model_key: str) -> None:
+    def _sync_settings_with_api(self, settings: dict, setting_name: str) -> None:
         server_url = os.environ.get("CSI_SERVER_URL", "").strip()
         token = os.environ.get("CSI_EDGE_TOKEN", "")
-        if not server_url and not token:
-            return
-        if not server_url or len(token) < 32:
-            print(
-                "[ERROR] API model synchronization disabled: set CSI_SERVER_URL "
-                "and CSI_EDGE_TOKEN (32+ characters) together."
-            )
+        if not self.api_enabled:
             return
 
-        def _send_model_update():
+        def _send_settings_update():
             try:
                 from csi_forwarding import (
-                    send_model_with_retry,
+                    send_settings_with_retry,
                     validate_server_url,
                 )
                 validate_server_url(server_url)
-                synced_model = send_model_with_retry(server_url, token, model_key)
-                print(f"[OK]  API inference model synchronized: {synced_model}")
-            except (ImportError, RuntimeError, ValueError) as exc:
-                print(f"[ERROR] API model synchronization failed: {exc}")
+                status = send_settings_with_retry(server_url, token, settings)
+                self._queue_latest(self._api_status_queue, status)
+                print(f"[OK]  API inference {setting_name} synchronized.")
+            except (
+                ImportError,
+                RuntimeError,
+                ValueError,
+                OSError,
+                TimeoutError,
+                ConnectionError,
+            ) as exc:
+                message = f"{setting_name} update failed: {exc}"
+                print(f"[ERROR] API {message}")
+                self._queue_latest(self._api_error_queue, message)
 
         threading.Thread(
-            target=_send_model_update,
-            name="csi-api-model-sync",
+            target=_send_settings_update,
+            name="csi-api-settings-sync",
             daemon=True,
         ).start()
 
+    def _apply_runtime_settings(self, settings: dict):
+        self._sync_settings_with_api(settings, "inference settings")
+
     def switch_mode_dir(self, mode: str):
         """Switch models directory between HAR (models/har) and Super Motion (models/motion)."""
+        if mode not in {"har", "motion"}:
+            return
         new_dir = config.MODELS_HAR_DIR if mode == "har" else config.MODELS_MOTION_DIR
+        if self.api_enabled:
+            selected_model = self.model_key
+            model_path = config.resolve_project_path(new_dir) / f"{selected_model}.joblib"
+            if not model_path.is_file():
+                selected_model = "rf"
+            self._current_mode = mode
+            self.model_key = selected_model
+            self._monitor_page.set_mode(mode)
+            if new_dir != self.models_dir:
+                self.models_dir = new_dir
+                self._settings_page.refresh_models_dir(new_dir)
+            self._sync_settings_with_api(
+                {"mode": mode, "model": selected_model},
+                "inference mode",
+            )
+            self._log_page.set_mode(list(self.classes))
+            return
         self._current_mode = mode
         self._monitor_page.set_mode(mode)
         # Load new model first so self.classes reflects the target mode's label encoder
@@ -2680,6 +3057,7 @@ class DashboardWindow(QMainWindow):
         self._conf_sum = 0.0; self._total_preds = 0
 
     def start_timer(self, refresh_ms: int):
+        self._start_api_poller()
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._refresh)
         self._timer.start(refresh_ms)
@@ -2713,7 +3091,9 @@ class DashboardWindow(QMainWindow):
         # Real inference is scheduled inside the reader process. The GUI only
         # drives the synthetic demo predictor (random labels) when no model
         # is loaded.
-        if self._current_mode == "har":
+        if self.api_enabled:
+            self._consume_api_state()
+        elif self._current_mode == "har":
             if self.demo and self.pipeline is None and self._frames_since >= self.step:
                 self._frames_since = 0
                 self._demo_predict(snap["frame_count"])
@@ -2881,10 +3261,28 @@ def main():
     args = _parse_args()
     app  = QApplication(sys.argv)
 
+    server_url = os.environ.get("CSI_SERVER_URL", "").strip()
+    edge_token = os.environ.get("CSI_EDGE_TOKEN", "")
+    api_enabled = bool(server_url and len(edge_token) >= 32 and not args.demo)
+    if bool(server_url) != bool(edge_token):
+        print(
+            "[ERROR] API mirror disabled: set CSI_SERVER_URL and "
+            "CSI_EDGE_TOKEN together."
+        )
+    elif server_url and len(edge_token) < 32:
+        print("[ERROR] API mirror disabled: CSI_EDGE_TOKEN must be 32+ characters.")
+    elif api_enabled:
+        try:
+            from csi_forwarding import validate_server_url
+            validate_server_url(server_url)
+        except (ImportError, ValueError) as exc:
+            print(f"[ERROR] API mirror disabled: {exc}")
+            api_enabled = False
+
     pipeline = le = model = None
     classes  = list(config.get_enabled_training_classes())
 
-    if not args.demo:
+    if not args.demo and not api_enabled:
         if not _INFERENCE_OK:
             print(f"[ERROR] Missing inference deps: {_IMPORT_ERR}")
             print("        Run with --demo to preview without a model.")
@@ -2914,6 +3312,7 @@ def main():
         port=args.port, baud=args.baud, demo=args.demo,
         waveform_len=args.waveform_len, rx_buf=args.rx_buf,
         window_size=args.window, warmup=args.warmup, step=args.step,
+        infer_enabled=not api_enabled,
     )
     reader.start()
 
@@ -2927,8 +3326,25 @@ def main():
         max_log=args.max_log, port=args.port, baud=args.baud,
         demo=args.demo, models_dir=args.models_dir,
         hyst_count=args.hyst_count,
+        api_enabled=api_enabled,
     )
-    win._sync_model_with_api(args.model)
+    if api_enabled:
+        defaults = config.get_script_defaults("live_dashboard")
+        launch_settings = {}
+        for argument, setting in (
+            ("model", "model"),
+            ("window", "window_size"),
+            ("step", "step_size"),
+            ("warmup", "warmup_frames"),
+            ("cutoff", "cutoff"),
+            ("ema_alpha", "ema_alpha"),
+            ("conf_thresh", "conf_thresh"),
+            ("hyst_count", "hyst_count"),
+        ):
+            if getattr(args, argument) != defaults[argument]:
+                launch_settings[setting] = getattr(args, argument)
+        if launch_settings:
+            win._sync_settings_with_api(launch_settings, "launch configuration")
     center_qt_window(win, w=1440, h=840)
     win.start_timer(args.refresh)
     win.show()
@@ -2937,7 +3353,9 @@ def main():
     # Stop reader first so it stops pushing into the inference queue, then
     # poison-pill the inference worker.
     reader.stop()
-    win._infer_worker.stop()
+    win.stop_background_tasks()
+    if win._infer_worker is not None:
+        win._infer_worker.stop()
     if _winmm is not None:
         try:
             _winmm.timeEndPeriod(1)

@@ -96,3 +96,64 @@ def test_send_model_posts_model_with_bearer_token(
     assert captured["authorization"] == "Bearer test-edge-token"
     assert captured["payload"] == {"model": "svm"}
     assert captured["timeout"] == 15
+
+
+def test_shared_edge_client_sends_settings_and_reads_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[dict[str, object]] = []
+
+    class Response:
+        status = 200
+
+        def __init__(self, result: dict) -> None:
+            self.result = result
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(self.result).encode()
+
+    def fake_urlopen(request: urllib.request.Request, timeout: float) -> Response:
+        captured.append(
+            {
+                "url": request.full_url,
+                "method": request.get_method(),
+                "authorization": request.get_header("Authorization"),
+                "payload": json.loads(request.data) if request.data else None,
+                "timeout": timeout,
+            }
+        )
+        if request.get_method() == "POST":
+            return Response({"model": "rf", "mode": "motion"})
+        return Response({"model": "rf", "mode": "motion"})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    settings = {"mode": "motion", "model": "rf", "window_size": 100}
+
+    assert csi_forwarding._send_settings(
+        "http://127.0.0.1:8000", "test-edge-token", settings
+    ) == {"model": "rf", "mode": "motion"}
+    assert csi_forwarding.get_edge_status(
+        "http://127.0.0.1:8000", "test-edge-token"
+    ) == {"model": "rf", "mode": "motion"}
+    assert captured == [
+        {
+            "url": "http://127.0.0.1:8000/api/edge/settings",
+            "method": "POST",
+            "authorization": "Bearer test-edge-token",
+            "payload": settings,
+            "timeout": 15,
+        },
+        {
+            "url": "http://127.0.0.1:8000/api/edge/status",
+            "method": "GET",
+            "authorization": "Bearer test-edge-token",
+            "payload": None,
+            "timeout": 5,
+        },
+    ]

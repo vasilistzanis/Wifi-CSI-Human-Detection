@@ -3,7 +3,7 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     CSI_DB_PATH=/data/app.sqlite3 \
-    CSI_MODEL_DIR=/models \
+    CSI_MODEL_DIR=/models/har \
     XDG_CACHE_HOME=/tmp/.cache \
     MPLCONFIGDIR=/tmp/matplotlib \
     CSI_COOKIE_SECURE=true

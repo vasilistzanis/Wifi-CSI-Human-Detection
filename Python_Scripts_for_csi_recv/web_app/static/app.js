@@ -71,9 +71,21 @@ function connectEvents() {
 
 function renderStatus(status) {
   $("model").textContent = (status.model || "—").toUpperCase();
+  $("mode").textContent = status.mode === "motion" ? "Super Motion" : "HAR";
   $("frames").textContent = Number(status.frames_received || 0).toLocaleString();
   $("fps").textContent = `${Number(status.fps || 0).toFixed(1)} Hz`;
   $("buffer").textContent = `${status.buffered_frames || 0} / ${status.buffer_capacity || 0}`;
+  const settings = status.settings || {};
+  $("inference-settings").textContent = [
+    `Window ${settings.window_size ?? status.window_size ?? "—"}`,
+    `step ${settings.step_size ?? "—"}`,
+    `warm-up ${settings.warmup_frames ?? "—"}`,
+    `cutoff ${settings.cutoff ?? "—"} Hz`,
+    `EMA ${settings.ema_alpha ?? "—"}`,
+    `confidence threshold ${settings.conf_thresh ?? "—"}%`,
+    `hysteresis ${settings.hyst_count ?? "—"}`,
+    `motion trigger ${settings.motion_threshold ?? "—"}`,
+  ].join(" · ");
   $("device-state").textContent = status.device_connected ? "Device online" : "Waiting for device";
   $("device-dot").parentElement.className = `pill ${status.device_connected ? "online" : "offline"}`;
   if (status.latest_prediction) {

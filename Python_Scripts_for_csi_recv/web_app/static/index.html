@@ -35,6 +35,7 @@
       </header>
       <div class="grid">
         <article class="panel metric"><div class="label">Current inference model</div><div id="model" class="value">—</div></article>
+        <article class="panel metric"><div class="label">Inference mode</div><div id="mode" class="value">—</div></article>
         <article class="panel metric"><div class="label">CSI frames</div><div id="frames" class="value">0</div></article>
         <article class="panel metric"><div class="label">Input rate</div><div id="fps" class="value">0 Hz</div></article>
         <article class="panel wide activity">
@@ -42,6 +43,7 @@
             <div class="label">Current activity</div>
             <div id="activity" class="activity-name">Waiting for data</div>
             <div id="confidence" class="confidence">Connect the edge collector to begin.</div>
+            <div id="inference-settings" class="confidence"></div>
           </div>
           <div id="probabilities" class="bars"></div>
         </article>
@@ -71,7 +73,7 @@
           <thead><tr><th>Activity</th><th>Model</th><th>Predictions</th><th>Avg. confidence</th><th>Avg. class probability</th></tr></thead>
           <tbody id="statistics"></tbody>
         </table>
-        <h3>Model changes</h3>
+        <h3>Inference settings changes</h3>
         <div id="empty-settings" class="empty">No settings changes recorded in this session.</div>
         <table id="settings-table" class="hidden">
           <thead><tr><th>Time</th><th>Setting</th><th>From</th><th>To</th></tr></thead>

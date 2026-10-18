@@ -6,12 +6,13 @@ services:
     env_file:
       - .env
     environment:
-      CSI_MODEL_DIR: /models
+      CSI_MODEL_DIR: /models/har
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - csi_app_data:/data
-      - ../models/har:/models:ro
+      - ../models/har:/models/har:ro
+      - ../models/motion:/models/motion:ro
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=32m

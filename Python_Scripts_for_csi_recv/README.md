@@ -110,12 +110,13 @@ root:
 
 ```bash
 git lfs install
-git lfs pull --include="Python_Scripts_for_csi_recv/models/har/**"
+git lfs pull --include="Python_Scripts_for_csi_recv/models/har/**,Python_Scripts_for_csi_recv/models/motion/**"
 ```
 
 The API deliberately rejects LFS pointer text instead of reporting a vague
 model-unpickling error. The container image does not copy model artifacts;
-Compose mounts `models/har/` read-only at runtime.
+Compose mounts `models/har/` and `models/motion/` read-only at runtime. Any
+mode without downloaded trained artifacts is disabled in the desktop settings.
 
 ### Run locally without Docker
 
@@ -149,10 +150,16 @@ the same serial CSI stream to the API, open a second terminal and run:
 ./start_dashboard.sh
 ```
 
-The scripts load the same local `.env` automatically. The dashboard reads the
-serial port once, forwards frames in the background, and synchronizes model
-changes from the desktop app to the API. The browser shows the current model
-as read-only. Set `CSI_SERIAL_PORT` in `.env` to use a different serial port.
+The scripts load the same local `.env` automatically. The desktop reads the
+serial port once and forwards raw frames in the background. When the API is
+configured, it is the only inference engine: model/mode selection and runtime
+inference settings are applied there, and both the desktop and browser display
+the API's prediction. This prevents the two interfaces from producing
+different results. The desktop Settings page controls model, mode, and runtime
+inference parameters; those settings are persisted by the API and broadcast to
+the browser. Non-default dashboard command-line options can override runtime
+parameters at startup. The browser is a read-only live mirror plus session history. Set
+`CSI_SERIAL_PORT` in `.env` to use a different serial port.
 Do not run the standalone collector at the same time because both programs
 would compete for the serial device. If using only the browser dashboard, run
 the standalone collector from this directory instead:

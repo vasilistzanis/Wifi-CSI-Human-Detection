@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import numpy as np
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -24,6 +25,17 @@ class FakeInferenceEngine:
     def __init__(self) -> None:
         self.clients = set()
         self.model_key = "rf"
+        self.mode_key = "har"
+        self.settings = {
+            "window_size": 100,
+            "step_size": 10,
+            "warmup_frames": 50,
+            "cutoff": 10.0,
+            "ema_alpha": 0.6,
+            "conf_thresh": 70.0,
+            "hyst_count": 2,
+            "motion_threshold": 0.1,
+        }
         self.activity_session_id = None
         self.events = []
 
@@ -36,9 +48,15 @@ class FakeInferenceEngine:
             "buffer_capacity": 150,
             "fps": 0.0,
             "model": self.model_key,
+            "mode": self.mode_key,
             "available_models": ["rf", "svm"],
+            "available_models_by_mode": {
+                "har": ["rf", "svm"],
+                "motion": ["rf", "svm"],
+            },
             "classes": ["no_activity", "walk_activity"],
             "window_size": 100,
+            "settings": self.settings,
             "session_id": self.activity_session_id,
             "latest_prediction": None,
         }
@@ -62,6 +80,20 @@ class FakeInferenceEngine:
                     "new_value": model,
                 },
             }
+        )
+        return status
+
+    async def update_settings(self, values: dict) -> dict:
+        if values.get("mode", self.mode_key) not in {"har", "motion"}:
+            raise ValueError("Mode must be either 'har' or 'motion'.")
+        if "model" in values:
+            self.model_key = values["model"]
+        if "mode" in values:
+            self.mode_key = values["mode"]
+        self.settings = {**self.status()["settings"], **values}
+        status = self.status()
+        await self.broadcast(
+            {"type": "settings_changed", "status": status, "change": values}
         )
         return status
 
@@ -242,6 +274,138 @@ def test_edge_model_sync_requires_edge_token_and_broadcasts_change(
         json={"model": "unknown"},
         headers={"Authorization": f"Bearer {server.EDGE_TOKEN}"},
     ).status_code == 422
+
+
+def test_edge_status_and_runtime_settings_require_edge_token(
+    client: TestClient,
+) -> None:
+    assert client.get("/api/edge/status").status_code == 401
+    assert client.post(
+        "/api/edge/settings",
+        json={"mode": "motion"},
+    ).status_code == 401
+
+    headers = {"Authorization": "Bearer test-only-edge-token-with-at-least-32-characters"}
+    status = client.get("/api/edge/status", headers=headers)
+    assert status.status_code == 200
+    assert status.json()["mode"] == "har"
+
+    updated = client.post(
+        "/api/edge/settings",
+        json={"mode": "motion", "model": "svm", "window_size": 120},
+        headers=headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["mode"] == "motion"
+    assert updated.json()["model"] == "svm"
+    assert updated.json()["settings"]["window_size"] == 120
+    assert client.app.state.inference_engine.events[-1]["type"] == "settings_changed"
+
+    invalid = client.post(
+        "/api/edge/settings",
+        json={"mode": "other"},
+        headers=headers,
+    )
+    assert invalid.status_code == 422
+
+
+def test_inference_engine_persists_runtime_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server, "DB_PATH", tmp_path / "runtime.sqlite3")
+    server._initialize_database()
+    loaded_modes: list[str] = []
+
+    class Encoder:
+        classes_ = ["no_activity", "walk_activity"]
+
+    def fake_load(model: str, mode: str):
+        loaded_modes.append(mode)
+        return object(), Encoder(), object(), Encoder.classes_
+
+    monkeypatch.setattr(server, "_load_model_artifacts", fake_load)
+    engine = server.InferenceEngine()
+    status = asyncio.run(
+        engine.update_settings(
+            {
+                "mode": "motion",
+                "window_size": 120,
+                "step_size": 15,
+                "ema_alpha": 0.4,
+                "motion_threshold": 0.2,
+            }
+        )
+    )
+
+    assert loaded_modes == ["har", "motion"]
+    assert status["mode"] == "motion"
+    assert status["settings"]["window_size"] == 120
+    assert status["settings"]["step_size"] == 15
+    assert status["settings"]["ema_alpha"] == 0.4
+    assert status["settings"]["motion_threshold"] == 0.2
+    assert server._get_runtime_settings()["mode"] == "motion"
+    assert server._get_runtime_settings()["window_size"] == "120"
+    restarted = server.InferenceEngine()
+    assert restarted.mode_key == "motion"
+    assert restarted.window_size == 120
+    assert restarted.motion_threshold == 0.2
+
+
+def test_api_engine_uses_one_configured_prediction_for_live_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server, "DB_PATH", tmp_path / "inference.sqlite3")
+    server._initialize_database()
+
+    class Pipeline:
+        _fitted_n_subcarriers = 4
+
+    class Encoder:
+        classes_ = ["no_activity", "walk_activity"]
+
+    monkeypatch.setattr(
+        server,
+        "_load_model_artifacts",
+        lambda _model, _mode: (Pipeline(), Encoder(), object(), Encoder.classes_),
+    )
+    monkeypatch.setattr(server, "parse_csi_line", lambda _line: np.ones(4, np.complex64))
+    monkeypatch.setattr(
+        server,
+        "run_inference",
+        lambda *_args: (
+            "walk_activity",
+            90.0,
+            np.asarray([0.1, 0.9], dtype=np.float32),
+        ),
+    )
+    monkeypatch.setattr(server, "_save_activity_stat", lambda _prediction: None)
+    monkeypatch.setattr(server, "_save_prediction", lambda _prediction: None)
+    monkeypatch.setattr(server, "_update_activity_session", lambda *_args: None)
+    engine = server.InferenceEngine()
+    asyncio.run(
+        engine.update_settings(
+            {
+                "window_size": 10,
+                "step_size": 1,
+                "warmup_frames": 0,
+                "cutoff": 8.5,
+                "hyst_count": 1,
+                "conf_thresh": 0,
+            }
+        )
+    )
+
+    result = asyncio.run(engine.process_batch(["frame"] * 12))
+
+    prediction = result["latest_prediction"]
+    assert prediction["label"] == "walk_activity"
+    assert prediction["model"] == engine.model_key
+    assert prediction["mode"] == engine.mode_key
+    assert prediction["frame_count"] == 12
+    assert prediction["probabilities"]["walk_activity"] > 0
+    assert engine.status()["latest_prediction"] == prediction
 
 
 def test_activity_session_closes_after_fifteen_idle_seconds(
