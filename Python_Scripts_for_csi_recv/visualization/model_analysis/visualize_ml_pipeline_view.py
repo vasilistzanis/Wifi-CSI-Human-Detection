@@ -15,11 +15,11 @@ Modes
 
 Usage
 -----
-  python visualize_ml_pipeline_view.py
-  python visualize_ml_pipeline_view.py --file datasets/walk_activity/walk_activity_01_vasilis_.txt
-  python visualize_ml_pipeline_view.py --compare
-  python visualize_ml_pipeline_view.py --features --file datasets/no_activity/no_activity_livroom_01_1776088773.txt
-  python visualize_ml_pipeline_view.py --save --no-show
+  python -m visualization.model_analysis.visualize_ml_pipeline_view
+  python -m visualization.model_analysis.visualize_ml_pipeline_view --file datasets/walk_activity/walk_activity_01_vasilis_.txt
+  python -m visualization.model_analysis.visualize_ml_pipeline_view --compare
+  python -m visualization.model_analysis.visualize_ml_pipeline_view --features --file datasets/no_activity/no_activity_livroom_01_1776088773.txt
+  python -m visualization.model_analysis.visualize_ml_pipeline_view --save --no-show
 """
 
 import sys
@@ -32,7 +32,7 @@ import numpy as np
 from csi_parser import configure_console_output
 configure_console_output()
 
-from plot_window_utils import setup_matplotlib, show_all
+from visualization.shared.plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
@@ -51,7 +51,9 @@ except ImportError as e:
 # STYLE  (matches thesis palette)
 # -----------------------------------------------------------------------
 
-from plot_styles import STYLE, PCA_COLORS, CLASS_COLORS, _apply_style
+from visualization.shared.plot_styles import (
+    STYLE, PCA_COLORS, CLASS_COLORS, _apply_style,
+)
 
 
 def _save_fig(fig, save_dir: Path, name: str):

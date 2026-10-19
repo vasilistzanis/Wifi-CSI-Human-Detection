@@ -13,7 +13,7 @@ The system is designed with a strict pipeline architecture, ensuring zero data l
 1. **Collect Data:** Use `csi_logger.py` to record activities.
 2. **Train Models:** Use `csi_ml_pipeline.py` to build the `CSIPipeline` (DSP) and train classifiers.
 3. **Live Inference:** Use `live_predict.py` to load the exact artifacts and predict live data.
-4. **Explain & Validate:** Use `explain_model_characteristics.py` to validate ML logic (XAI).
+4. **Explain & Validate:** Use `visualization/model_analysis/explain_model_characteristics.py` to validate ML logic (XAI).
 
 ---
 
@@ -27,7 +27,7 @@ The system is designed with a strict pipeline architecture, ensuring zero data l
 ## 📂 Project Structure
 
 ### 1. Data Acquisition & Parsing
-- **`csi_logger.py`**: Reads raw serial output from the ESP32 and exports strictly formatted CSV files with headers. Handles packet chunking and sleep intervals.
+- **`apps/csi_logger.py`**: Reads raw serial output from the ESP32 and exports strictly formatted CSV files with headers. The root-level `csi_logger.py` remains a compatibility launcher.
 - **`csi_parser.py`**: The core string-to-matrix parser. Contains the centralized `SeqStats` and `SeqTransition` logic for robust packet loss, gap, and reset tracking across the entire codebase.
 
 ### 2. Signal Processing & Machine Learning
@@ -35,23 +35,42 @@ The system is designed with a strict pipeline architecture, ensuring zero data l
 - **`csi_ml_pipeline.py`**: The training engine. Loads datasets, applies physical data augmentations (noise, shift, scale, time-warp), strictly fits the `CSIPipeline` on training data only (Zero Leakage), trains multiple ML classifiers (RF, SVM, KNN, etc.), and exports `.joblib` artifacts.
 
 ### 3. Real-Time Inference & Dashboards
-- **`live_predict.py`**: The production inference script. Loads the saved model and pipeline artifacts, reads live serial data, and outputs human activity predictions in real-time.
-- **`live_dashboard.py`**: A comprehensive, high-performance `PyQtGraph` dashboard showing live amplitude, subcarrier variance, and motion thresholds.
-- **`live_sensing_1.py`**: A specialized visualization focusing on motion energy and dynamic color mapping.
-- **`live_data_visualization.py`**: A basic waterfall/heatmap monitor for raw CSI streams.
+- **`apps/live_predict.py`**: The production inference script. Loads saved artifacts, reads live serial data, and outputs human activity predictions in real time. The root-level `live_predict.py` also keeps its import API available to the web application.
+- **`apps/live_dashboard.py`**: Desktop CLI and startup implementation. The dashboard UI/runtime modules live in `apps/desktop/`. The root-level `live_dashboard.py` remains a compatibility launcher.
+- **`apps/desktop/dashboard_window.py`**: Main desktop window, runtime coordination, and page switching.
+- **`apps/desktop/dashboard_monitor.py` / `dashboard_pages.py` / `dashboard_settings.py`**: Individual dashboard screens.
+- **`apps/desktop/dashboard_widgets.py`**: Shared UI helpers, sidebar, and reusable custom widgets.
+- **`apps/desktop/desktop_reader.py`**: Serial/demo reader process and shared-memory snapshots for the desktop.
+- **`apps/desktop/desktop_models.py`**: Loading and validation of desktop model artifacts.
+- **`apps/desktop/dashboard_theme.py`**: Shared desktop colors, labels, and stylesheets.
+- **`apps/live_sensing_1.py`**: A specialized live visualization focusing on motion energy and dynamic color mapping. The root-level `live_sensing_1.py` remains a compatibility launcher.
+- **`apps/live_csi_dual_view.py`**: A live two-window view of the CSI stream, with a root compatibility launcher.
 
 ### 4. Explainable AI (XAI) & Profiling
-- **`explain_model_characteristics.py`**: Generates publication-ready XAI charts (Feature Group Importance, Permutation Importance) to explain exactly *why* the model makes its decisions. Evaluates FFT and Statistical feature domains.
-- **`benchmark_latency.py`**: Profiles the end-to-end latency of the DSP and ML inference steps to guarantee real-time performance capabilities.
+- **`visualization/model_analysis/explain_model_characteristics.py`**: Generates publication-ready XAI charts (Feature Group Importance, Permutation Importance) to explain exactly *why* the model makes its decisions. Evaluates FFT and Statistical feature domains.
+- **`experiments/benchmark_latency.py`**: Profiles end-to-end latency of the DSP and ML inference steps; a root-level launcher preserves the existing command.
+- **`experiments/experiment_runner.py`**: Runs cross-subject, cross-environment, and ablation experiments; a root-level launcher preserves the existing command.
 
 ### 5. Thesis & Publication Plotting
-- **`all_plot_figures.py`**: Generates 7 core scientific figures (Amplitude, Heatmap, SC Profile, Energy/Variance, Spectrogram, Phase, Synchronized Motion Analysis). Integrates the exact `CSIPipeline` to mirror the ML data state, and includes a `--compare` mode for side-by-side class analysis.
-- **`plot_lines_data_preprocessing.py`**: Generates 7 separate 2D line windows visualizing the exact effect of every single DSP step on the signal.
-- **`visualize_all_steps_heatmap_data_preprocessing.py`**: Generates 7 separate heatmap windows showing the spatial-temporal transformations of the pipeline.
-- **`plot_data_augmentation.py`**: Visualizes the exact augmentation functions used during training (Noise, Shift, Scale, Time-Warp) on filtered CSI waveforms. Supports `--class-label` to show class-aware parameter constraints (walk_activity/no_activity).
-- **`plot_ml_results.py`**: Plots the output metrics and confusion matrices of the ML models. *(Note: Requires running `csi_ml_pipeline.py --save_model` first)*
-- **`plot_advanced_metrics.py`**: Generates ROC curves, per-class accuracy bar charts, and advanced evaluation figures from saved model artifacts.
-- **`visualize_ml_pipeline_view.py`**: Loads the saved `csi_pipeline.joblib` and visualises each DSP step, PCA scatter plots, and the final feature vector — for thesis illustration.
+Offline plotting tools live under `visualization/`, grouped by purpose:
+
+- **`visualization/signal_processing/`**: `all_plot_figures` generates seven scientific figures and supports `--compare`; `plot_lines_data_preprocessing` and `visualize_all_steps_heatmap_data_preprocessing` show each DSP stage.
+- **`visualization/augmentation/`**: `plot_data_augmentation` visualizes the training augmentation functions on filtered CSI waveforms.
+- **`visualization/model_analysis/`**: `plot_ml_results` and `plot_advanced_metrics` show model evaluation; `visualize_ml_pipeline_view` visualizes the fitted pipeline; `explain_model_characteristics` generates XAI charts.
+- **`visualization/shared/`**: Shared plotting styles and Matplotlib/Qt window helpers.
+
+Runnable application implementations are grouped in `apps/`, with the desktop
+dashboard internals under `apps/desktop/`; heavier model
+evaluation and research runners are grouped in `experiments/`. Small root-level
+Python launchers preserve existing commands such as `python live_dashboard.py`
+and `python benchmark_latency.py`.
+
+Run plotting tools from this directory using module syntax, for example:
+
+```bash
+.venv/bin/python -m visualization.signal_processing.all_plot_figures --file datasets/walk_activity/walk_activity_01_vasilis_.txt
+.venv/bin/python -m visualization.model_analysis.plot_ml_results
+```
 
 ---
 
@@ -84,13 +103,13 @@ python live_predict.py --port COM6
 
 **5. Explain Model Decisions (XAI):**
 ```bash
-python explain_model_characteristics.py --models_dir ./models --classes walk_activity no_activity
+.venv/bin/python -m visualization.model_analysis.explain_model_characteristics --models_dir ./models --classes walk_activity no_activity
 ```
 
 **6. Generate Thesis Plots:**
 ```bash
-python plot_ml_results.py
-python all_plot_figures.py --file datasets/walk_activity/walk_activity_01_vasilis_.txt
+.venv/bin/python -m visualization.model_analysis.plot_ml_results
+.venv/bin/python -m visualization.signal_processing.all_plot_figures --file datasets/walk_activity/walk_activity_01_vasilis_.txt
 ```
 
 ## Web application (cloud API + browser dashboard)
@@ -101,6 +120,10 @@ computer attached to the ESP32, reads the existing serial `CSI_DATA` stream,
 and forwards batches over HTTPS. The cloud API runs the existing trained
 pipeline and publishes live predictions to authenticated browser sessions.
 No firmware changes are required.
+
+For a beginner-friendly, detailed explanation of the system, API, storage,
+Docker, Nginx, security boundaries, deployment flow, and current limitations,
+see [SYSTEM_AUDIT_BEGINNER.md](SYSTEM_AUDIT_BEGINNER.md).
 
 ### Start the cloud API
 
@@ -244,7 +267,7 @@ disabled by default; enable it only in a trusted environment with
 
 ### Tests
 
-Run the focused API/authentication/ingest tests with:
+Run the focused API, authentication, ingest, forwarding, serial, and desktop inference tests with:
 
 ```bash
 .venv/bin/python -m pytest -q web_app/tests

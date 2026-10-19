@@ -25,7 +25,7 @@ import numpy as np
 from csi_parser import configure_console_output
 configure_console_output()
 
-from plot_window_utils import setup_matplotlib, show_all
+from visualization.shared.plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler

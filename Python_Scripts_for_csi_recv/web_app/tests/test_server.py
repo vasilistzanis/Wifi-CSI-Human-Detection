@@ -18,7 +18,7 @@ os.environ.setdefault("CSI_COOKIE_SECURE", "false")
 os.environ.setdefault("CSI_ALLOWED_HOSTS", "testserver")
 os.environ.setdefault("CSI_ALLOWED_ORIGINS", "http://testserver")
 
-from web_app import server
+from web_app import inference, persistence, server
 
 
 class FakeInferenceEngine:
@@ -109,7 +109,7 @@ class FakeInferenceEngine:
 
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(server, "DB_PATH", tmp_path / "test.sqlite3")
+    monkeypatch.setattr(persistence, "DB_PATH", tmp_path / "test.sqlite3")
     monkeypatch.setattr(server, "InferenceEngine", FakeInferenceEngine)
     with TestClient(server.app) as test_client:
         yield test_client
@@ -205,7 +205,7 @@ def test_password_reset_revokes_existing_sessions(
     assert login.status_code == 200
     assert client.get("/api/auth/me").status_code == 200
 
-    server.set_user_password("test-admin", "another-password-is-long-enough")
+    persistence.set_user_password("test-admin", "another-password-is-long-enough")
     assert client.get("/api/auth/me").status_code == 401
     assert client.post(
         "/api/auth/login",
@@ -222,12 +222,12 @@ def test_bootstrap_existing_admin_does_not_require_or_reset_password(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert client.get("/healthz").status_code == 200
-    monkeypatch.setattr(server, "ADMIN_USERNAME", "test-admin")
-    monkeypatch.setattr(server, "ADMIN_PASSWORD", "")
+    monkeypatch.setattr(persistence, "ADMIN_USERNAME", "test-admin")
+    monkeypatch.setattr(persistence, "ADMIN_PASSWORD", "")
 
-    server._bootstrap_admin()
+    persistence._bootstrap_admin()
 
-    assert server._authenticate_user(
+    assert persistence._authenticate_user(
         "test-admin", "test-password-is-long-enough"
     )
 
@@ -313,8 +313,8 @@ def test_inference_engine_persists_runtime_settings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(server, "DB_PATH", tmp_path / "runtime.sqlite3")
-    server._initialize_database()
+    monkeypatch.setattr(persistence, "DB_PATH", tmp_path / "runtime.sqlite3")
+    persistence._initialize_database()
     loaded_modes: list[str] = []
 
     class Encoder:
@@ -324,7 +324,7 @@ def test_inference_engine_persists_runtime_settings(
         loaded_modes.append(mode)
         return object(), Encoder(), object(), Encoder.classes_
 
-    monkeypatch.setattr(server, "_load_model_artifacts", fake_load)
+    monkeypatch.setattr(inference, "_load_model_artifacts", fake_load)
     engine = server.InferenceEngine()
     status = asyncio.run(
         engine.update_settings(
@@ -344,8 +344,8 @@ def test_inference_engine_persists_runtime_settings(
     assert status["settings"]["step_size"] == 15
     assert status["settings"]["ema_alpha"] == 0.4
     assert status["settings"]["motion_threshold"] == 0.2
-    assert server._get_runtime_settings()["mode"] == "motion"
-    assert server._get_runtime_settings()["window_size"] == "120"
+    assert persistence._get_runtime_settings()["mode"] == "motion"
+    assert persistence._get_runtime_settings()["window_size"] == "120"
     restarted = server.InferenceEngine()
     assert restarted.mode_key == "motion"
     assert restarted.window_size == 120
@@ -356,8 +356,8 @@ def test_api_engine_uses_one_configured_prediction_for_live_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(server, "DB_PATH", tmp_path / "inference.sqlite3")
-    server._initialize_database()
+    monkeypatch.setattr(persistence, "DB_PATH", tmp_path / "inference.sqlite3")
+    persistence._initialize_database()
 
     class Pipeline:
         _fitted_n_subcarriers = 4
@@ -366,13 +366,13 @@ def test_api_engine_uses_one_configured_prediction_for_live_state(
         classes_ = ["no_activity", "walk_activity"]
 
     monkeypatch.setattr(
-        server,
+        inference,
         "_load_model_artifacts",
         lambda _model, _mode: (Pipeline(), Encoder(), object(), Encoder.classes_),
     )
-    monkeypatch.setattr(server, "parse_csi_line", lambda _line: np.ones(4, np.complex64))
+    monkeypatch.setattr(inference, "parse_csi_line", lambda _line: np.ones(4, np.complex64))
     monkeypatch.setattr(
-        server,
+        inference,
         "run_inference",
         lambda *_args: (
             "walk_activity",
@@ -380,9 +380,9 @@ def test_api_engine_uses_one_configured_prediction_for_live_state(
             np.asarray([0.1, 0.9], dtype=np.float32),
         ),
     )
-    monkeypatch.setattr(server, "_save_activity_stat", lambda _prediction: None)
-    monkeypatch.setattr(server, "_save_prediction", lambda _prediction: None)
-    monkeypatch.setattr(server, "_update_activity_session", lambda *_args: None)
+    monkeypatch.setattr(inference, "_save_activity_stat", lambda _prediction: None)
+    monkeypatch.setattr(inference, "_save_prediction", lambda _prediction: None)
+    monkeypatch.setattr(inference, "_update_activity_session", lambda *_args: None)
     engine = server.InferenceEngine()
     asyncio.run(
         engine.update_settings(
@@ -421,7 +421,7 @@ def test_activity_session_closes_after_fifteen_idle_seconds(
     engine.status = lambda: {"session_id": engine.activity_session_id}
     closed_sessions: list[tuple[int, str]] = []
     monkeypatch.setattr(
-        server,
+        inference,
         "_close_activity_session",
         lambda session_id, ended_at: closed_sessions.append((session_id, ended_at)),
     )
@@ -440,14 +440,14 @@ def test_activity_session_detail_contains_per_class_and_model_statistics(
     now = datetime.now(UTC)
     started_at = now.isoformat()
     later = (now + timedelta(seconds=12)).isoformat()
-    with server._connect_db() as connection:
+    with persistence._connect_db() as connection:
         cursor = connection.execute(
             "INSERT INTO activity_sessions "
             "(started_at, last_frame_at, total_frames) VALUES (?, ?, ?)",
             (started_at, later, 1200),
         )
         session_id = int(cursor.lastrowid)
-    server._save_activity_stat(
+    persistence._save_activity_stat(
         {
             "session_id": session_id,
             "label": "walk_activity",
@@ -457,7 +457,7 @@ def test_activity_session_detail_contains_per_class_and_model_statistics(
             "created_at": later,
         }
     )
-    server._save_activity_stat(
+    persistence._save_activity_stat(
         {
             "session_id": session_id,
             "label": "no_activity",
@@ -467,7 +467,7 @@ def test_activity_session_detail_contains_per_class_and_model_statistics(
             "created_at": later,
         }
     )
-    server._save_prediction(
+    persistence._save_prediction(
         {
             "session_id": session_id,
             "label": "walk_activity",
@@ -478,7 +478,7 @@ def test_activity_session_detail_contains_per_class_and_model_statistics(
             "created_at": later,
         }
     )
-    server._save_setting_change(session_id, "model", "rf", "svm", later)
+    persistence._save_setting_change(session_id, "model", "rf", "svm", later)
 
     assert client.get("/api/activity-sessions").status_code == 401
     client.post(

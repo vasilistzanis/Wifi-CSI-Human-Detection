@@ -11,10 +11,10 @@ of what the training pipeline actually does — not an approximation.
 
 Usage
 -----
-  python plot_data_augmentation.py
-  python plot_data_augmentation.py --file datasets/walk_activity/walk_activity_01_vasilis_.txt
-  python plot_data_augmentation.py --class-label fall
-  python plot_data_augmentation.py --save --no-show
+  python -m visualization.augmentation.plot_data_augmentation
+  python -m visualization.augmentation.plot_data_augmentation --file datasets/walk_activity/walk_activity_01_vasilis_.txt
+  python -m visualization.augmentation.plot_data_augmentation --class-label fall
+  python -m visualization.augmentation.plot_data_augmentation --save --no-show
 """
 
 import numpy as np
@@ -36,7 +36,7 @@ except ImportError:
     sys.exit(1)
 
 import config
-from plot_window_utils import setup_matplotlib, show_figure
+from visualization.shared.plot_window_utils import setup_matplotlib, show_figure
 import matplotlib.pyplot as plt
 
 RANDOM_SEED    = config.RANDOM_SEED

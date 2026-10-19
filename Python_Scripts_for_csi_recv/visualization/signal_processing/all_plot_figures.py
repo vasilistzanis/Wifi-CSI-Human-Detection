@@ -28,14 +28,14 @@ from csi_parser import (
 from data_preprocessing import CSIPipeline
 
 configure_console_output()
-from plot_window_utils import setup_matplotlib, show_all
+from visualization.shared.plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
 
 # ========================================================================
 # STYLE
 # ========================================================================
 
-from plot_styles import STYLE, PALETTE, _apply_style
+from visualization.shared.plot_styles import STYLE, PALETTE, _apply_style
 
 def _save_fig(fig, save_dir: Path, name: str):
     save_dir.mkdir(parents=True, exist_ok=True)

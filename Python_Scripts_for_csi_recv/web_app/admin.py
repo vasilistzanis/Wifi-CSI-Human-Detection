@@ -4,7 +4,7 @@ import argparse
 import getpass
 import re
 
-from web_app.server import _initialize_database, set_user_password
+from web_app.persistence import _initialize_database, set_user_password
 
 
 def main() -> int:

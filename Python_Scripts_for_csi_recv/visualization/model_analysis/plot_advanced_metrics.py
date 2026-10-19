@@ -12,11 +12,11 @@ Generates four publication-ready figures that complete the thesis evaluation:
 
 Usage
 -----
-  python plot_advanced_metrics.py                    # all 4 plots, default paths
-  python plot_advanced_metrics.py --save             # save PNG to models/plots/
-  python plot_advanced_metrics.py --no-roc           # skip ROC (fast, no model load)
-  python plot_advanced_metrics.py --model rf et      # ROC for RF + ET only
-  python plot_advanced_metrics.py --no-show --save   # headless / CI mode
+  python -m visualization.model_analysis.plot_advanced_metrics
+  python -m visualization.model_analysis.plot_advanced_metrics --save
+  python -m visualization.model_analysis.plot_advanced_metrics --no-roc
+  python -m visualization.model_analysis.plot_advanced_metrics --model rf et
+  python -m visualization.model_analysis.plot_advanced_metrics --no-show --save
 
 Requirements
 ------------
@@ -35,7 +35,7 @@ import numpy as np
 from csi_parser import configure_console_output
 configure_console_output()
 
-from plot_window_utils import setup_matplotlib, show_all
+from visualization.shared.plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
 
 try:
@@ -52,7 +52,9 @@ except ImportError as e:
 # STYLE
 # -----------------------------------------------------------------------
 
-from plot_styles import STYLE, CLASS_COLORS, MODEL_PALETTE, _apply_style
+from visualization.shared.plot_styles import (
+    STYLE, CLASS_COLORS, MODEL_PALETTE, _apply_style,
+)
 
 
 def _save_fig(fig, save_dir: Path, name: str):

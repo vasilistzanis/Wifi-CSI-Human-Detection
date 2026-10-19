@@ -4,7 +4,9 @@
 Shared visual theme for all thesis plotting scripts.
 
 Import what you need:
-    from plot_styles import STYLE, PALETTE, CLASS_COLORS, PCA_COLORS, MODEL_PALETTE, _apply_style
+    from visualization.shared.plot_styles import (
+        STYLE, PALETTE, CLASS_COLORS, PCA_COLORS, MODEL_PALETTE, _apply_style
+    )
 """
 
 import matplotlib.pyplot as plt

@@ -14,10 +14,10 @@ Methods:
   4. Feature Group Importance (aggregate by statistical category)
 
 Usage:
-  python explain_model_characteristics.py
-  python explain_model_characteristics.py --model svm --top 15
-  python explain_model_characteristics.py --model rf --save
-  python explain_model_characteristics.py --simulate
+  python -m visualization.model_analysis.explain_model_characteristics
+  python -m visualization.model_analysis.explain_model_characteristics --model svm --top 15
+  python -m visualization.model_analysis.explain_model_characteristics --model rf --save
+  python -m visualization.model_analysis.explain_model_characteristics --simulate
 """
 
 import sys
@@ -33,7 +33,7 @@ import config
 from csi_parser import configure_console_output
 configure_console_output()
 
-from plot_window_utils import setup_matplotlib, show_all
+from visualization.shared.plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
 
 # -- Local imports ---------------------------------------------------------
@@ -54,7 +54,7 @@ except ImportError:
 # STYLE  (matches all_plot_figures.py for thesis consistency)
 # ========================================================================
 
-from plot_styles import STYLE, PALETTE, _apply_style
+from visualization.shared.plot_styles import STYLE, PALETTE, _apply_style
 
 
 def _save_fig(fig, save_dir: Path, name: str):

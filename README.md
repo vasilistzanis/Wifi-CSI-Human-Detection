@@ -30,17 +30,35 @@ The Python ecosystem processes the raw serial data into a robust, real-time ML p
 
 ### Architecture
 - **`config.py`**: The Single Source of Truth (SSOT). Contains all hardware parameters (Baud rate, COM port) and DSP constants (Window size, PCA components).
-- **Data Acquisition:** `csi_logger.py` records raw serial output to CSV. `csi_parser.py` safely parses strings to matrices and handles packet loss tracking.
+- **Data Acquisition:** `apps/csi_logger.py` records raw serial output to CSV. `csi_parser.py` safely parses strings to matrices and handles packet loss tracking. The root-level `csi_logger.py` keeps the legacy command working.
 - **Signal Processing (DSP):** `data_preprocessing.py` implements the `CSIPipeline` (Null-subcarrier removal, Hampel filtering, Low-pass filtering, Temporal Difference, PCA, and Z-score scaling).
 - **Machine Learning:** `csi_ml_pipeline.py` applies physics-based augmentations (noise, shift, scale, time-warp) and trains multiple classifiers.
-- **Live Dashboards:** `live_predict.py` and `live_dashboard.py` load artifacts to predict and visualize human activity in real-time.
-- **Explainable AI (XAI):** `explain_model_characteristics.py` generates Feature Group and Permutation Importance charts to validate ML logic.
+- **Live Dashboards:** Implementations live under `Python_Scripts_for_csi_recv/apps/`; root-level launchers keep existing commands working.
+- **Explainable AI (XAI):** `visualization/model_analysis/explain_model_characteristics.py` generates Feature Group and Permutation Importance charts to validate ML logic.
 
 ### Scientific Plotting & Visualization
-The system includes advanced tools to visualize the data at every stage:
-- **`all_plot_figures.py`**: Generates 7 core scientific figures (Amplitude, Heatmap, SC Profile, Energy/Variance, Spectrogram, Phase, Synchronized Motion Analysis) with a `--compare` mode.
-- **`plot_lines_data_preprocessing.py`** & **`visualize_all_steps_heatmap_data_preprocessing.py`**: Visualize the exact effect of every DSP step.
-- **`plot_data_augmentation.py`**: Visualizes the effects of the physics-based augmentations on the waveforms. Supports a `--realistic` flag to toggle between educational and ML-equivalent parameters.
+Offline plotting tools are grouped under
+`Python_Scripts_for_csi_recv/visualization/` by purpose:
+
+- **`signal_processing/`**: thesis figures and views of each DSP stage.
+- **`augmentation/`**: visualizations of training augmentations.
+- **`model_analysis/`**: model metrics, pipeline views, and XAI charts.
+- **`shared/`**: common plot styling and Qt/Matplotlib window helpers.
+
+From `Python_Scripts_for_csi_recv/`, run them as Python modules so the project
+root and shared modules resolve correctly:
+
+```bash
+python -m visualization.signal_processing.all_plot_figures --file datasets/walk_activity/walk_activity_01_vasilis_.txt
+python -m visualization.augmentation.plot_data_augmentation --save --no-show
+python -m visualization.model_analysis.plot_ml_results
+python -m visualization.model_analysis.explain_model_characteristics --models_dir ./models --classes walk_activity no_activity
+```
+
+Runnable applications are organized under `Python_Scripts_for_csi_recv/apps/`,
+and research/benchmark runners under `Python_Scripts_for_csi_recv/experiments/`.
+Existing commands such as `python live_dashboard.py` remain available through
+small compatibility launchers in the project root.
 
 ---
 

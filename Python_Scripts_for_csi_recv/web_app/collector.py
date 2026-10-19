@@ -11,6 +11,7 @@ from serial.tools import list_ports
 
 import config
 from csi_forwarding import send_with_retry, validate_server_url
+from csi_serial import iter_csi_lines
 
 
 def _read_serial(
@@ -20,13 +21,7 @@ def _read_serial(
     errors: queue.Queue[Exception],
 ) -> None:
     try:
-        while not stopped.is_set():
-            raw_line = serial_port.readline()
-            if not raw_line:
-                continue
-            line = raw_line.decode("utf-8", errors="replace").strip()
-            if not line.startswith("CSI_DATA"):
-                continue
+        for line in iter_csi_lines(serial_port, stopped):
             try:
                 frames.put(line, timeout=0.5)
             except queue.Full:

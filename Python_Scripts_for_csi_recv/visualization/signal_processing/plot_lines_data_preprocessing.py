@@ -20,11 +20,11 @@ Pipeline steps visualized:
 
 
 Usage:
-  python plot_lines_data_preprocessing.py                          # latest file in datasets/
-  python plot_lines_data_preprocessing.py path/to/file.txt
-  python plot_lines_data_preprocessing.py file.txt --save
-  python plot_lines_data_preprocessing.py file.txt --n-subcarriers 6 --pca-components 5
-  python plot_lines_data_preprocessing.py file.txt --no-diff
+  python -m visualization.signal_processing.plot_lines_data_preprocessing
+  python -m visualization.signal_processing.plot_lines_data_preprocessing path/to/file.txt
+  python -m visualization.signal_processing.plot_lines_data_preprocessing file.txt --save
+  python -m visualization.signal_processing.plot_lines_data_preprocessing file.txt --n-subcarriers 6 --pca-components 5
+  python -m visualization.signal_processing.plot_lines_data_preprocessing file.txt --no-diff
 """
 
 
@@ -40,9 +40,9 @@ from sklearn.preprocessing import StandardScaler
 from csi_parser import configure_console_output
 configure_console_output()
 
-from plot_window_utils import setup_matplotlib, show_all
+from visualization.shared.plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
-from plot_styles import PCA_COLORS, _apply_style
+from visualization.shared.plot_styles import PCA_COLORS, _apply_style
 
 
 try:
@@ -50,7 +50,7 @@ try:
     from csi_parser import load_csi_matrix, resolve_path, get_latest_dataset
 except ImportError as e:
     print(f"[ERROR] Missing dependency: {e}")
-    print("   Make sure csi_parser.py is in the same directory")
+    print("   Run this module from Python_Scripts_for_csi_recv.")
     sys.exit(1)
 
 
@@ -58,7 +58,7 @@ try:
     from data_preprocessing import CSIPipeline
 except ImportError as e:
     print(f"[ERROR] Missing dependency: {e}")
-    print("   Make sure data_preprocessing.py is in the same directory")
+    print("   Run this module from Python_Scripts_for_csi_recv.")
     sys.exit(1)
 
 
@@ -181,7 +181,11 @@ def main():
         default_dir = resolve_path(config.DATASETS_DIR)
         if not default_dir.exists():
             print(f"[ERROR] datasets/ directory not found - pass a file explicitly")
-            print("   Use: python plot_lines_data_preprocessing.py <file.txt>")
+            print(
+                "   Use: python -m "
+                "visualization.signal_processing.plot_lines_data_preprocessing "
+                "<file.txt>"
+            )
             sys.exit(1)
         file_path = get_latest_dataset(default_dir)
         if file_path is None:
@@ -317,7 +321,7 @@ def main():
 
     raw_indices = select_subcarriers(n_sub, args.n_subcarriers)
     SC_COLORS  = get_color_palette(max(len(raw_indices), len(sc_indices), n_pca))
-    # PCA_COLORS imported from plot_styles (shared palette)
+    # PCA_COLORS imported from the shared visualization palette.
 
 
     def create_window():

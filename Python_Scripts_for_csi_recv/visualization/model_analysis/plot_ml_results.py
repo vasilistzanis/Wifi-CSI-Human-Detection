@@ -4,7 +4,7 @@ from pathlib import Path
 import seaborn as sns
 import numpy as np
 import config
-from plot_window_utils import setup_matplotlib, show_all
+from visualization.shared.plot_window_utils import setup_matplotlib, show_all
 import matplotlib.pyplot as plt
 
 from csi_parser import configure_console_output

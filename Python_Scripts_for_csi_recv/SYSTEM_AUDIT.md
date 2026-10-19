@@ -17,7 +17,7 @@
 - **Training:** file-level (recording-level) train/test split 80/20, seeded shuffle, fit DSP on TRAIN recordings only, augment 4 techniques × 4 augments **on raw windows before PCA**, CV = **StratifiedGroupKFold (5)** on non-augmented data.
 - **Models (HAR, window=100, step=50):** SVM, RF, ET, KNN, LR, GB, MLP, NB — all retrained @ v5; best on hold-out **GB 97.17 %, ET 97.12 %, RF 96.98 %, LR 96.85 %, SVM 96.80 %, MLP 96.53 %, KNN 93.56 %, NB 61.26 %**.
 - **Models (MOTION, window=40, step=8):** RF, GB, ET, LR — best **GB 96.65 %, ET 96.37 %, RF 96.22 %, LR 96.25 %**.
-- **Live stack:** `live_dashboard.py` uses a true 3-process design (GUI / Reader / Inference) backed by `multiprocessing.shared_memory` + `mp.Queue`. `live_predict.py` is the terminal twin.
+- **Live stack:** `live_dashboard.py` is the CLI launcher; the GUI, reader, and inference runtime are separated into `apps/desktop/dashboard_window.py`, `apps/desktop/desktop_reader.py`, and `apps/desktop/desktop_inference.py`, backed by `multiprocessing.shared_memory` + `mp.Queue`. `live_predict.py` is the terminal twin.
 - **Dataset on disk:** 50 walk + 50 no_activity recordings (~217 MB each side, total ~434 MB raw text).
 - **STALE-MEMORY notes for the AI reviewer:** older project memory mentions a `FallEventDetector` class in `live_dashboard.py` — **it no longer exists**; older notes mention `220-dim` features (v4) — **current is 250-dim (v5)**. Both deltas confirmed against current source.
 
@@ -25,30 +25,57 @@
 
 ## 1. Repository inventory (root files, with byte sizes)
 
+Runnable applications are implemented under `apps/`; benchmark and research
+runners are under `experiments/`. Small root-level wrappers keep the historical
+commands working. Offline plotting modules and shared helpers live under
+`visualization/`. Shared project modules such as `config.py`, `csi_parser.py`,
+`data_preprocessing.py`, and `csi_ml_pipeline.py` remain at the root because
+multiple applications import them.
+
 | File | Bytes | Role |
 |---|---|---|
-| `live_dashboard.py` | 121 594 | Multi-process Qt GUI dashboard (Monitor / Signal / Log / System / Settings pages). |
+| `live_dashboard.py` | 251 | Compatibility launcher for `apps/live_dashboard.py`. |
+| `apps/live_dashboard.py` | 8 317 | Desktop CLI and startup implementation. |
+| `apps/desktop/dashboard_window.py` | 25 499 | Main Qt window and runtime coordinator. |
+| `apps/desktop/dashboard_monitor.py` / `dashboard_pages.py` / `dashboard_settings.py` | 66 353 | Monitor, signal, log, system-info, and settings screens. |
+| `apps/desktop/dashboard_widgets.py` | 16 471 | Shared dashboard widgets, sidebar, and UI helpers. |
+| `apps/desktop/desktop_reader.py` | 13 624 | Serial/demo reader process and shared-memory snapshots. |
+| `apps/desktop/desktop_models.py` | 717 | Desktop model artifact loading. |
+| `apps/desktop/desktop_inference.py` | — | Child process and queue lifecycle for local desktop inference. |
+| `apps/desktop/dashboard_theme.py` | — | Shared desktop colors, labels, and stylesheets. |
 | `csi_ml_pipeline.py` | 67 805 | Training engine — augmentation, feature extraction, GroupKFold CV, GridSearchCV, save_models. |
-| `explain_model_characteristics.py` | 27 905 | XAI charts — permutation importance, group importance. |
-| `plot_advanced_metrics.py` | 27 132 | ROC + per-class accuracy bar charts from `metrics.json`. |
-| `all_plot_figures.py` | 27 069 | Seven thesis DSP figures (amp, heatmap, SC profile, energy, spectrogram, phase, sync motion). |
-| `visualize_ml_pipeline_view.py` | 21 939 | Visualises saved pipeline + PCA scatter + feature vector. |
-| `live_predict.py` | 21 723 | Terminal-only live inference (ANSI bar). |
-| `plot_lines_data_preprocessing.py` | 20 241 | 7 line-plot windows for each DSP step. |
+| `visualization/model_analysis/explain_model_characteristics.py` | 27 420 | XAI charts — permutation importance, group importance. |
+| `visualization/model_analysis/plot_advanced_metrics.py` | 26 523 | ROC + per-class accuracy bar charts from `metrics.json`. |
+| `visualization/signal_processing/all_plot_figures.py` | 26 544 | Seven thesis DSP figures (amp, heatmap, SC profile, energy, spectrogram, phase, sync motion). |
+| `visualization/model_analysis/visualize_ml_pipeline_view.py` | 21 652 | Visualises saved pipeline + PCA scatter + feature vector. |
+| `live_predict.py` | 281 | Compatibility launcher and import bridge for `apps/live_predict.py`. |
+| `apps/live_predict.py` | 21 229 | Terminal-only live inference (ANSI bar) and shared inference API. |
+| `visualization/signal_processing/plot_lines_data_preprocessing.py` | 19 926 | 7 line-plot windows for each DSP step. |
 | `data_preprocessing.py` | 19 168 | `CSIPipeline` + `load_csi_csv`. |
-| `benchmark_latency.py` | 18 541 | Multi-model end-to-end latency benchmark. |
-| `csi_logger.py` | 18 287 | Serial CSI recorder with activity presets and space-bar event markers. |
-| `live_csi_dual_view.py` | 18 061 | Two-window time-domain / current-frame Qt viewer. |
+| `benchmark_latency.py` | 271 | Compatibility launcher for `experiments/benchmark_latency.py`. |
+| `experiments/benchmark_latency.py` | 37 292 | Multi-model end-to-end latency benchmark. |
+| `experiment_runner.py` | 289 | Compatibility launcher for `experiments/experiment_runner.py`. |
+| `experiments/experiment_runner.py` | 40 787 | Cross-subject, cross-environment, and ablation experiments. |
+| `csi_logger.py` | 261 | Compatibility launcher for `apps/csi_logger.py`. |
+| `apps/csi_logger.py` | 17 883 | Serial CSI recorder with activity presets and space-bar event markers. |
+| `live_csi_dual_view.py` | 262 | Compatibility launcher for `apps/live_csi_dual_view.py`. |
+| `apps/live_csi_dual_view.py` | 18 154 | Two-window time-domain / current-frame Qt viewer. |
 | `config.py` | 18 027 | Single source of truth — all constants, CLI defaults, per-script presets. |
-| `visualize_all_steps_heatmap_data_preprocessing.py` | 13 928 | 7 heatmap windows of DSP transformations. |
-| `live_sensing_1.py` | 12 875 | "Oscilloscope" waveform with breathing color (calm→warn→peak). |
-| `plot_data_augmentation.py` | 12 187 | Visualises 4 augmentation techniques on filtered CSI. |
+| `visualization/signal_processing/visualize_all_steps_heatmap_data_preprocessing.py` | 13 667 | 7 heatmap windows of DSP transformations. |
+| `live_sensing_1.py` | 253 | Compatibility launcher for `apps/live_sensing_1.py`. |
+| `apps/live_sensing_1.py` | 12 554 | "Oscilloscope" waveform with breathing color (calm→warn→peak). |
+| `visualization/augmentation/plot_data_augmentation.py` | 12 086 | Visualises 4 augmentation techniques on filtered CSI. |
 | `csi_parser.py` | 10 088 | Shared line parser, SeqStats, IQ decoder. |
-| `plot_ml_results.py` | 7 038 | Plots metrics + confusion matrices from `metrics.json`. |
+| `visualization/model_analysis/plot_ml_results.py` | 6 924 | Plots metrics + confusion matrices from `metrics.json`. |
 | `README.md` | 5 905 | Quick start. |
-| `plot_window_utils.py` | 4 295 | Qt window-centering helper. |
-| `plot_styles.py` | 2 585 | Matplotlib style. |
+| `visualization/shared/plot_window_utils.py` | 4 295 | Qt window-centering helper. |
+| `visualization/shared/plot_styles.py` | 2 622 | Matplotlib style. |
 | `requirements.txt` | 341 | Dependencies (no version pins). |
+
+Offline plotting code is organized by purpose under `visualization/`:
+signal-processing figures, augmentation examples, model-analysis figures, and
+shared plotting helpers. Run offline plotters from this directory with
+`python -m visualization.<category>.<module>`.
 
 Subdirs:
 - `datasets/no_activity/` — 50 .txt + 50 derived .csv + many .png plots (≈ **217 MB** raw text in .txt files; min 1.36 MB, max 5.80 MB, avg 4.35 MB).
@@ -348,7 +375,16 @@ Inside `models_dir/`:
 
 ---
 
-## 8. `live_dashboard.py` — production live GUI (3-process design)
+## 8. Desktop dashboard — production live GUI (3-process design)
+
+The CLI implementation is `apps/live_dashboard.py`, with a root-level
+compatibility wrapper at `live_dashboard.py`. The dashboard UI, reader, models,
+and inference implementation are grouped under `apps/desktop/`. The main window
+is coordinated by `apps/desktop/dashboard_window.py`; the pages live in
+`apps/desktop/dashboard_monitor.py`, `apps/desktop/dashboard_pages.py`, and
+`apps/desktop/dashboard_settings.py`; shared controls are in
+`apps/desktop/dashboard_widgets.py`; and `apps/desktop/desktop_reader.py` owns
+serial/demo ingestion plus shared-memory snapshots.
 
 ### Architecture
 | Process | Role | Communication |
@@ -357,9 +393,9 @@ Inside `models_dir/`:
 | Reader | Owns serial port (or demo), pushes raw frames into shared memory + assembles inference windows. | Writes structured numpy view of `shared_memory.SharedMemory(create=True)`; pushes `(cm, frame_count)` into `mp.Queue(maxsize=2)` — newest only (drops stale with `get_nowait` first). |
 | Inference | Pulls cm from input queue, runs `pipeline.transform` + features + `model.predict_proba`. | Pushes `(raw_label, conf%, probs, latency_ms, frame_count)` into `mp.Queue(maxsize=8)`. |
 
-Reader → Inference Queue is supplied by reader and **handed** to InferenceProcess so that the GUI thread never touches the data path. Confirmed in `ReaderProcess.infer_in_q` / `InferenceProcess.__init__`.
+Reader → Inference Queue is supplied by reader and **handed** to InferenceProcess so that the GUI thread never touches the data path. Confirmed in `apps.desktop.desktop_reader.ReaderProcess.infer_in_q` / `apps.desktop.desktop_inference.InferenceProcess.__init__`.
 
-### Shared-state dtype (`_make_shared_dtype`)
+### Shared-state dtype (`apps.desktop.desktop_reader._make_shared_dtype`)
 Single struct view via `np.dtype([...])`:
 - `n_active i4`, `frame_count i8`, `wave_ptr i4`, `variance f8`, `mean_amp f8`, `connected i4`, `fps_n i8`, `fps_times f8[60]`, `wave_buf f4[waveform_len]`, `last_amp f4[max_subcarriers]`.
 
@@ -369,7 +405,7 @@ EMA-style accumulators inside the reader:
 
 FPS is computed by the GUI snapshot using `min(fps_n, 60)` most-recent timestamps.
 
-### Reader scheduling inside `_reader_process_fn`
+### Reader scheduling inside `apps.desktop.desktop_reader._reader_process_fn`
 Pushes window to inference every `step` frames and only when `len(deque) >= window_size`. **`step` default in dashboard = `DASHBOARD_STEP_SIZE = 15` frames (150 ms)**, distinct from training step (50) and `live_predict` step (10).
 
 ### OS-level tuning
